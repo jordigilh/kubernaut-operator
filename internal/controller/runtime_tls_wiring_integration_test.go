@@ -51,8 +51,27 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 	})
 
 	It("IT-TELEMETRY-AUDIT-515-001: blocks malformed client chains through Reconcile and resumes only after valid external material is restored", func() {
-		kn := newCRWithRouteDisabled()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
+		kn := newMinimalCR()
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
+		kn.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{
+			InternalCASecretName:  "kubernaut-internal-ca",
+			ServiceTLSSecretNames: certManagerServiceTLSSecretNames(),
+		}
+		runtimeSecrets, err := testRuntimeTLSSecrets(kn, nil, time.Now().Add(-time.Hour))
+		Expect(err).NotTo(HaveOccurred())
+		for _, secret := range runtimeSecrets {
+			Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+			DeferCleanup(func() {
+				deleteErr := k8sClient.Delete(context.Background(), secret)
+				Expect(deleteErr == nil || apierrors.IsNotFound(deleteErr)).To(BeTrue())
+			})
+		}
+		for _, webhook := range []client.Object{
+			resources.MutatingWebhookConfigurationWithCABundle(kn, runtimeSecrets[0].Data["ca.crt"]),
+			resources.ValidatingWebhookConfigurationWithCABundle(kn, runtimeSecrets[0].Data["ca.crt"]),
+		} {
+			Expect(k8sClient.Create(ctx, webhook)).To(Succeed())
+		}
 		kn.Spec.DataStorage.Telemetry = telemetrySecretSpec()
 		ca := telemetryCASecret("telemetry-ca", "ca.crt")
 		clientSecret := telemetryClientSecret()
@@ -70,7 +89,7 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 		r := newReconciler()
 		for range 2 {
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 		}
 		Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
@@ -81,7 +100,13 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 		Expect(condition.Message).To(ContainSubstring("invalid client certificate"))
 		jobs := &batchv1.JobList{}
 		Expect(k8sClient.List(ctx, jobs, client.InNamespace(kn.Namespace))).To(Succeed())
-		Expect(jobs.Items).To(BeEmpty(), "invalid client material must block migration, not only report a warning")
+		ownedJobs := make([]batchv1.Job, 0, len(jobs.Items))
+		for _, job := range jobs.Items {
+			if metav1.IsControlledBy(&job, kn) {
+				ownedJobs = append(ownedJobs, job)
+			}
+		}
+		Expect(ownedJobs).To(BeEmpty(), "invalid client material must block migration, not only report a warning")
 		clientSecret.Data[corev1.TLSCertKey] = validClientChain
 		Expect(k8sClient.Update(ctx, clientSecret)).To(Succeed())
 		reconcileToRunning(ctx)
@@ -96,50 +121,28 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 		kn.Spec.Monitoring.AlertManager.Enabled = ptr.To(false)
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		Expect(k8sClient.Update(ctx, kn)).To(Succeed())
+		trustFixture := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: resources.InterServiceCAConfigMapName, Namespace: kn.Namespace},
+			Data:       map[string]string{"ca.crt": string(runtimeSecrets[0].Data["ca.crt"])},
+		}
+		Expect(k8sClient.Create(ctx, trustFixture)).To(Succeed())
+		DeferCleanup(func() {
+			deleteErr := k8sClient.Delete(context.Background(), trustFixture)
+			Expect(deleteErr == nil || apierrors.IsNotFound(deleteErr)).To(BeTrue())
+		})
 		trust := &corev1.ConfigMap{}
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.InterServiceCAConfigMapName}, trust)).To(Succeed())
-		Expect(r.telemetryAmbientConfigMapToKubernaut(ctx, trust)).To(Equal(expected))
-		Expect(r.monitoringObjectToKubernaut(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "prometheus", Namespace: "monitoring"}})).To(Equal(expected))
+		Expect(r.telemetryAmbientConfigMapToKubernaut(ctx, trust)).To(BeEmpty())
+		Expect(r.monitoringObjectToKubernaut(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "prometheus", Namespace: "monitoring"}})).To(BeEmpty())
 		Expect(r.monitoringObjectToKubernaut(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "unrelated", Namespace: "monitoring"}})).To(BeEmpty())
 	})
 
-	for _, mode := range []kubernautv1alpha2.TLSMode{kubernautv1alpha2.TLSModeHook, kubernautv1alpha2.TLSModeDevelopmentSelfSigned} {
-		It("IT-TLS-AUDIT-515-001: persists development trust, serving material and webhook bundles through Reconcile for "+string(mode), func() {
-			kn := newCRWithRouteDisabled()
-			kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: mode,
-				DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}}
-			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
-			r := reconcileToRunning(ctx)
-			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(kn.Status.Phase).To(Equal(kubernautv1alpha2.PhaseRunning))
-			Expect(meta.IsStatusConditionTrue(kn.Status.Conditions, kubernautv1alpha2.ConditionTLSReady)).To(BeTrue())
-			ca := &corev1.Secret{}
-			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: "kubernaut-internal-ca"}, ca)).To(Succeed())
-			serving := &corev1.Secret{}
-			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.GatewayTLSSecretName}, serving)).To(Succeed())
-			Expect(resources.ValidateServingTLSSecretForService(serving, ca, resources.TLSServiceGateway, kn.Namespace)).To(Succeed())
-			Expect(serving.OwnerReferences).To(ContainElement(HaveField("UID", kn.UID)))
-			trust := &corev1.ConfigMap{}
-			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.TrustBundleConfigMapName}, trust)).To(Succeed())
-			Expect(trust.Data["ca.crt"]).To(Equal(string(ca.Data["ca.crt"])))
-			mutating := &admissionv1.MutatingWebhookConfiguration{}
-			Expect(k8sClient.Get(ctx, client.ObjectKey{Name: kn.Namespace + "-authwebhook-mutating"}, mutating)).To(Succeed())
-			Expect(mutating.Webhooks[0].ClientConfig.CABundle).To(Equal(ca.Data["ca.crt"]))
-			oldLeaf := append([]byte(nil), serving.Data[corev1.TLSCertKey]...)
-			r.now = func() time.Time { return time.Now().Add(29 * 24 * time.Hour) }
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			Expect(err).NotTo(HaveOccurred())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(serving), serving)).To(Succeed())
-			Expect(serving.Data[corev1.TLSCertKey]).NotTo(Equal(oldLeaf), "leaf rotation must remain wired after initial readiness")
-		})
-	}
-
-	for _, mode := range []kubernautv1alpha2.TLSMode{kubernautv1alpha2.TLSModeManual, kubernautv1alpha2.TLSModeAdministratorManaged} {
-		It("IT-TLS-AUDIT-515-002: validates and mounts external TLS without adopting its trust or Secrets for "+string(mode), func() {
-			kn := newCRWithRouteDisabled()
+	for _, mode := range []kubernautv1alpha2.TLSMode{kubernautv1alpha2.TLSModeManual} {
+		It("IT-TLS-AUDIT-515-001 IT-TLS-AUDIT-515-002: validates and mounts external TLS without adopting its trust or Secrets for "+string(mode), func() {
+			kn := newMinimalCR()
 			generator := kn.DeepCopy()
-			generator.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeHook}
-			material, err := resources.DevelopmentSelfSignedTLSSecrets(generator, nil, time.Now().Add(-time.Hour))
+			generator.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: kubernautv1alpha2.TLSModeManual}
+			material, err := testRuntimeTLSSecrets(generator, nil, time.Now().Add(-time.Hour))
 			Expect(err).NotTo(HaveOccurred())
 			for _, secret := range material {
 				secret.Labels, secret.OwnerReferences = nil, nil
@@ -150,16 +153,18 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 				})
 			}
 			kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{Mode: mode}
-			if mode == kubernautv1alpha2.TLSModeAdministratorManaged {
-				kn.Spec.TLS.AdministratorManaged = &kubernautv1alpha2.AdministratorManagedTLSConfig{
+			if mode == kubernautv1alpha2.TLSModeManual {
+				kn.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{
 					InternalCASecretName: material[0].Name, ServiceTLSSecretNames: certManagerServiceTLSSecretNames(),
 				}
 			}
-			kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceInterService}
 			trust := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: resources.InterServiceCAConfigMapName, Namespace: kn.Namespace},
 				Data: map[string]string{"ca.crt": string(material[0].Data["ca.crt"]), "administrator-key": "preserved"}}
 			Expect(k8sClient.Create(ctx, trust)).To(Succeed())
-			DeferCleanup(func() { Expect(k8sClient.Delete(context.Background(), trust)).To(Succeed()) })
+			DeferCleanup(func() {
+				deleteErr := k8sClient.Delete(context.Background(), trust)
+				Expect(deleteErr == nil || apierrors.IsNotFound(deleteErr)).To(BeTrue())
+			})
 			for _, object := range []client.Object{
 				resources.MutatingWebhookConfigurationWithCABundle(kn, material[0].Data["ca.crt"]),
 				resources.ValidatingWebhookConfigurationWithCABundle(kn, material[0].Data["ca.crt"]),
@@ -183,21 +188,10 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 			deployment := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.ComponentGateway}, deployment)).To(Succeed())
 			Expect(deployment.Spec.Template.Spec.Volumes).To(ContainElement(HaveField("Secret", PointTo(HaveField("SecretName", resources.GatewayTLSSecretName)))))
-			monitoringDeployment := &appsv1.Deployment{}
-			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.DeploymentName(resources.ComponentEffectivenessMonitor)}, monitoringDeployment)).To(Succeed())
-			monitoringVolume := findMonitoringDeploymentVolume(monitoringDeployment)
-			Expect(monitoringVolume).NotTo(BeNil())
-			if mode == kubernautv1alpha2.TLSModeManual {
-				Expect(monitoringVolume.ConfigMap).NotTo(BeNil())
-				Expect(monitoringVolume.ConfigMap.Name).To(Equal(resources.InterServiceCAConfigMapName))
-			} else {
-				Expect(monitoringVolume.ConfigMap).NotTo(BeNil())
-				Expect(monitoringVolume.ConfigMap.Name).To(Equal(resources.TrustBundleConfigMapName))
-			}
 		})
 	}
 
-	It("IT-MON-424-001 [AC-6, SC-8, SC-12, SC-13, SI-4; ASVS V12.3.1, V12.3.2, V13.3.1, V13.3.2]: validates and mounts a Secret-backed monitoring CA through Reconcile", func() {
+	It("IT-MON-563-001 [AC-6, SC-8, SC-12, SC-13, SI-4; SOC2 CC6.1, CC7.2; ASVS V12.3.1, V12.3.2, V13.3.1, V13.3.2]: validates and mounts a Secret-backed monitoring CA through Reconcile", func() {
 		monitoringCA := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "monitoring-ca", Namespace: testNamespace},
 			Data:       map[string][]byte{"ca.crt": telemetryCAPEM()},
@@ -208,9 +202,8 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 			Expect(deleteErr == nil || apierrors.IsNotFound(deleteErr)).To(BeTrue())
 		})
 
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
 			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: monitoringCA.Name},
 		}
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
@@ -219,47 +212,29 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 		for _, component := range []string{resources.ComponentEffectivenessMonitor, resources.ComponentKubernautAgent, resources.ComponentAPIFrontend} {
 			deployment := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.DeploymentName(component)}, deployment)).To(Succeed(), component)
+			Expect(deployment.Spec.Template.Annotations).To(HaveKey(resources.AnnotationMonitoringMaterialRevision), component)
 			volume := findMonitoringDeploymentVolume(deployment)
 			Expect(volume).NotTo(BeNil(), component)
 			Expect(volume.Secret).NotTo(BeNil(), component)
 			Expect(volume.Secret.SecretName).To(Equal(monitoringCA.Name), component)
+			var mounted bool
+			for _, container := range deployment.Spec.Template.Spec.Containers {
+				for _, mount := range container.VolumeMounts {
+					if mount.Name != resources.MonitoringTLSCAVolumeName {
+						continue
+					}
+					mounted = true
+					Expect(mount.MountPath).To(Equal(resources.MonitoringTLSCADir), component)
+					Expect(mount.ReadOnly).To(BeTrue(), component)
+				}
+			}
+			Expect(mounted).To(BeTrue(), component)
 		}
 	})
 
-	It("IT-MON-424-002 [AC-6, SC-8, SC-12, SC-13, SI-4; ASVS V12.3.1, V12.3.2, V13.3.1, V13.3.2]: validates and mounts a ConfigMap-backed monitoring CA through Reconcile", func() {
-		monitoringCA := &corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{Name: "monitoring-ca-config", Namespace: testNamespace},
-			Data:       map[string]string{"ca.crt": string(telemetryCAPEM())},
-		}
-		Expect(k8sClient.Create(ctx, monitoringCA)).To(Succeed())
-		DeferCleanup(func() {
-			deleteErr := k8sClient.Delete(context.Background(), monitoringCA)
-			Expect(deleteErr == nil || apierrors.IsNotFound(deleteErr)).To(BeTrue())
-		})
-
-		kn := newCRWithRouteDisabled()
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:             kubernautv1alpha2.MonitoringTLSSourceConfigMap,
-			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: monitoringCA.Name},
-		}
-		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
-		reconcileToRunning(ctx)
-
-		for _, component := range []string{resources.ComponentEffectivenessMonitor, resources.ComponentKubernautAgent, resources.ComponentAPIFrontend} {
-			deployment := &appsv1.Deployment{}
-			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: resources.DeploymentName(component)}, deployment)).To(Succeed(), component)
-			volume := findMonitoringDeploymentVolume(deployment)
-			Expect(volume).NotTo(BeNil(), component)
-			Expect(volume.ConfigMap).NotTo(BeNil(), component)
-			Expect(volume.ConfigMap.Name).To(Equal(monitoringCA.Name), component)
-			Expect(findMonitoringVolumeMount(deployment)).To(BeTrue(), component)
-			Expect(deployment.Spec.Template.Annotations).To(HaveKeyWithValue(resources.AnnotationMonitoringMaterialRevision, HaveLen(64)), component)
-		}
-	})
-
-	It("IT-MON-424-003 [SC-8, SC-13, SI-4; ASVS V12.3.1, V12.3.2, V13.3.1, V13.3.2]: uses the system trust store without a monitoring CA volume", func() {
-		kn := newCRWithRouteDisabled()
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSystem}
+	It("IT-MON-563-002 [SC-8, SC-13, SC-17, SI-4; SOC2 CC6.1, CC7.2; ASVS V12.3.1, V12.3.2, V13.3.4]: uses system trust without a monitoring CA volume", func() {
+		kn := newMinimalCR()
+		kn.Spec.Monitoring.TLS = nil
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 		reconcileToRunning(ctx)
 
@@ -273,10 +248,13 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 			configMap := &corev1.ConfigMap{}
 			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: name}, configMap)).To(Succeed(), name)
 			Expect(configMap.Data).NotTo(ContainElement(ContainSubstring(resources.MonitoringTLSCAFile)), name)
+			if name == "effectivenessmonitor-config" {
+				Expect(configMap.Data["effectivenessmonitor.yaml"]).To(ContainSubstring("tlsCaFile: /etc/tls-ca/service-ca.crt"), name)
+			}
 		}
 	})
 
-	It("IT-MON-424-004 [AC-6, CM-3, SC-8, SC-12, SC-13, SI-4; ASVS V12.3.1, V12.3.2, V12.3.4, V13.3.1, V13.3.2, V16.5.2]: preserves the last-known-good monitoring Deployments on invalid rotation and rolls all consumers after valid rotation", func() {
+	It("IT-MON-563-003 [AC-6, CM-3, SC-8, SC-12, SC-13, SI-4; SOC2 CC7.2, CC8.1; ASVS V12.3.1, V12.3.2, V13.3.4, V16.5.2]: preserves last-known-good Deployments on invalid rotation and rolls all consumers after valid rotation", func() {
 		monitoringCA := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "monitoring-ca", Namespace: testNamespace},
 			Data:       map[string][]byte{"ca.crt": telemetryCAPEM()},
@@ -287,9 +265,8 @@ var _ = Describe("runtime TLS real-API reconciliation wiring", func() {
 			Expect(deleteErr == nil || apierrors.IsNotFound(deleteErr)).To(BeTrue())
 		})
 
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
 			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: monitoringCA.Name},
 		}
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
@@ -330,15 +307,6 @@ func findMonitoringDeploymentVolume(deployment *appsv1.Deployment) *corev1.Volum
 		}
 	}
 	return nil
-}
-
-func findMonitoringVolumeMount(deployment *appsv1.Deployment) bool {
-	for _, mount := range deployment.Spec.Template.Spec.Containers[0].VolumeMounts {
-		if mount.Name == resources.MonitoringTLSCAVolumeName && mount.MountPath == resources.MonitoringTLSCADir {
-			return mount.ReadOnly
-		}
-	}
-	return false
 }
 
 func monitoringDeploymentRevisions(ctx context.Context) map[string]string {

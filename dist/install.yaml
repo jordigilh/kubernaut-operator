@@ -7,7 +7,6 @@ metadata:
     control-plane: controller-manager
   name: kubernaut-operator-system
 ---
----
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -59,8 +58,9 @@ spec:
             description: |-
               KubernautSpec defines the desired state of a Kubernaut deployment on
               Kubernetes. The operator deploys all Kubernaut services into the CR's
-              namespace; OpenShift monitoring, service-CA, and Routes are optional
-              capability-gated adapters.
+              namespace; OpenShift monitoring and service-CA are optional capability-gated
+              adapters. External exposure resources, including Routes, remain
+              administrator-owned.
 
               v1alpha2 is the sole served/storage shape for this CRD. Older objects must
               follow the documented export/transform/recreate migration procedure. See
@@ -121,6 +121,12 @@ spec:
                         - ERROR
                         type: string
                     type: object
+                  lowConfidenceFloor:
+                    description: |-
+                      Optional floor for auto-proceeding with a Kubernaut Agent-selected
+                      workflow during investigation. Expressed as a decimal string, e.g.
+                      "0.7", and rendered as a numeric value in the AI Analysis config.
+                    type: string
                   policy:
                     description: |-
                       Policy ConfigMap reference. Required.
@@ -309,9 +315,9 @@ spec:
                         type: string
                     type: object
                   enabled:
-                    default: true
+                    default: false
                     description: |-
-                      Whether the API Frontend component is deployed. Defaults to true.
+                      Whether the API Frontend component is deployed. Defaults to false.
                       Set to false to skip all AF resources (Deployment, Service, RBAC, etc.).
                     type: boolean
                   fleet:
@@ -339,33 +345,6 @@ spec:
                     maximum: 65535
                     minimum: 1024
                     type: integer
-                  ingress:
-                    description: |-
-                      Ingress configures portable Kubernetes exposure. It is independent from
-                      the optional OpenShift Route above.
-                    properties:
-                      annotations:
-                        additionalProperties:
-                          type: string
-                        description: |-
-                          Optional controller-specific annotations. The operator does not add
-                          OpenShift Route annotations to this object.
-                        type: object
-                      enabled:
-                        default: false
-                        description: Whether to create the Ingress. Defaults to false.
-                        type: boolean
-                      host:
-                        description: External DNS name covered by TLSSecretName.
-                        type: string
-                      ingressClassName:
-                        description: IngressClassName identifies the installed ingress
-                          controller.
-                        type: string
-                      tlsSecretName:
-                        description: Existing Secret containing tls.crt and tls.key.
-                        type: string
-                    type: object
                   llmProfileRef:
                     description: |-
                       Reference to a named profile in spec.llmProfiles used for API
@@ -600,21 +579,6 @@ spec:
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
                     type: object
-                  route:
-                    description: |-
-                      Route configuration for OCP external access (FedRAMP SC-8).
-                      Disabled by default; set route.enabled=true to expose AF via an
-                      OpenShift Route with reencrypt TLS termination.
-                    properties:
-                      enabled:
-                        default: false
-                        description: Whether to create an OCP Route for the API Frontend.
-                        type: boolean
-                      hostname:
-                        description: Hostname override. When empty, the OCP router
-                          auto-generates a hostname.
-                        type: string
-                    type: object
                   session:
                     description: |-
                       Session configures AF's MCP/A2A session lifecycle. When unset,
@@ -767,6 +731,22 @@ spec:
                     description: OIDC authentication configuration for the console
                       oauth2-proxy.
                     properties:
+                      providerLogoutURL:
+                        description: |-
+                          ProviderLogoutURL is the provider-discovered OIDC end_session_endpoint
+                          used by oauth2-proxy for server-side logout. Keep the literal {id_token}
+                          placeholder where the provider requires an ID token hint; oauth2-proxy
+                          replaces it server-side. The endpoint must use HTTPS and match the
+                          effective Console OIDC provider authority.
+                        pattern: ^https://.+
+                        type: string
+                      redirectURL:
+                        description: |-
+                          Explicit public Console URL used for the oauth2-proxy callback. The
+                          administrator owns the Route, Ingress, or Gateway API resource serving
+                          this URL; the operator does not infer it from a platform ingress domain.
+                        pattern: ^https://.+
+                        type: string
                       secretName:
                         description: |-
                           Name of the pre-existing Secret containing OIDC credentials.
@@ -774,39 +754,19 @@ spec:
                         minLength: 1
                         type: string
                     type: object
+                  enableRawThinking:
+                    default: false
+                    description: |-
+                      Whether the console's raw LLM extended-thinking panel and its
+                      "Hide/Show raw thinking" header button are enabled. Defaults to false
+                      for new users; set to true only when an administrator explicitly wants
+                      the diagnostic view exposed.
+                    type: boolean
                   enabled:
                     default: false
                     description: Whether the Console component is deployed. Defaults
                       to false (opt-in).
                     type: boolean
-                  ingress:
-                    description: |-
-                      Ingress configures portable Kubernetes exposure. It is independent from
-                      the optional OpenShift Route above and is disabled unless explicitly
-                      enabled.
-                    properties:
-                      annotations:
-                        additionalProperties:
-                          type: string
-                        description: |-
-                          Optional controller-specific annotations. The operator does not add
-                          OpenShift Route annotations to this object.
-                        type: object
-                      enabled:
-                        default: false
-                        description: Whether to create the Ingress. Defaults to false.
-                        type: boolean
-                      host:
-                        description: External DNS name covered by TLSSecretName.
-                        type: string
-                      ingressClassName:
-                        description: IngressClassName identifies the installed ingress
-                          controller.
-                        type: string
-                      tlsSecretName:
-                        description: Existing Secret containing tls.crt and tls.key.
-                        type: string
-                    type: object
                   resources:
                     description: Resource requirements for the console container.
                     properties:
@@ -866,47 +826,82 @@ spec:
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
                     type: object
-                  route:
-                    description: OCP Route configuration for external access.
-                    properties:
-                      enabled:
-                        default: true
-                        description: Whether to create an OCP Route. Defaults to true
-                          on OpenShift.
-                        type: boolean
-                      host:
-                        description: Explicit hostname. Empty = auto-derived from
-                          namespace.
-                        type: string
-                    type: object
                 type: object
               dataStorage:
                 description: DataStorage service settings.
                 properties:
-                  auditHashKey:
-                    description: |-
-                      AuditHashKey configures the mandatory keyed HMAC-SHA256 audit hash chain
-                      (FedRAMP AU-9, SOC 2 CC8.1). When ExistingSecret is empty, the operator
-                      creates and preserves a stable Secret automatically. When set, the named
-                      administrator-managed Secret is validated and mounted read-only.
+                  audit:
+                    description: Audit groups retention, export signing, and audit-chain
+                      key settings.
                     properties:
-                      existingSecret:
+                      hashKey:
                         description: |-
-                          ExistingSecret names an administrator-managed Secret. When empty, the
-                          operator provisions the stable default Secret.
-                        type: string
-                      secretKey:
-                        default: hmacKey
-                        description: SecretKey is the key inside the mounted audit
-                          YAML file.
-                        pattern: ^[A-Za-z0-9._-]+$
-                        type: string
+                          HashKey configures the mandatory keyed HMAC-SHA256 audit chain
+                          (FedRAMP AU-9, SOC 2 CC8.1).
+                        properties:
+                          existingSecret:
+                            description: |-
+                              ExistingSecret names an administrator-managed Secret. When empty, the
+                              operator provisions the stable default Secret.
+                            type: string
+                          secretKey:
+                            default: hmacKey
+                            description: SecretKey is the key inside the mounted audit
+                              YAML file.
+                            pattern: ^[A-Za-z0-9._-]+$
+                            type: string
+                        type: object
+                      retention:
+                        description: Retention configures periodic purge of expired
+                          audit events (FedRAMP AU-11).
+                        properties:
+                          batchSize:
+                            default: 1000
+                            description: Maximum number of rows deleted per batch.
+                            minimum: 1
+                            type: integer
+                          defaultDays:
+                            default: 2555
+                            description: |-
+                              Number of days to retain audit events before purge.
+                              Clamped to a maximum of 2555 (≈7 years per ADR-034 / SOC 2 / ISO 27001).
+                            maximum: 2555
+                            minimum: 1
+                            type: integer
+                          enabled:
+                            default: true
+                            description: |-
+                              Whether the retention purge worker is active.
+                              Defaults to true to preserve the DataStorage production retention floor.
+                              Set false explicitly for controlled development environments.
+                            type: boolean
+                          interval:
+                            default: 24h
+                            description: How often the purge worker runs. Must be
+                              a valid Go duration string.
+                            type: string
+                        type: object
+                      signingCertificate:
+                        description: |-
+                          SigningCertificate configures the audit export signing certificate
+                          (FedRAMP AU-9). When set, the named Secret is mounted read-only.
+                        properties:
+                          mountPath:
+                            default: /etc/certs
+                            description: Mount path inside the container. Defaults
+                              to /etc/certs.
+                            type: string
+                          secretName:
+                            description: Name of the Kubernetes Secret containing
+                              the signing cert (tls.crt, tls.key).
+                            type: string
+                        required:
+                        - secretName
+                        type: object
                     type: object
                   database:
-                    description: |-
-                      Database connection-pool tuning for the DataStorage PostgreSQL
-                      connection. When unset, defaults match the operator's prior
-                      hardcoded behavior (#260).
+                    description: Database configures DataStorage's PostgreSQL connection
+                      pool.
                     properties:
                       connMaxIdleTime:
                         default: 10m
@@ -950,6 +945,18 @@ spec:
                         - WARN
                         - ERROR
                         type: string
+                    type: object
+                  redis:
+                    description: |-
+                      Redis configures DataStorage-specific Redis/Valkey behavior.
+                      Connection address, credentials, and TLS remain in spec.valkey.
+                    properties:
+                      dlqMaxLen:
+                        default: 10000
+                        description: Maximum Redis DLQ stream length. Zero is a valid
+                          explicit bound.
+                        minimum: 0
+                        type: integer
                     type: object
                   resources:
                     description: Resource requirements.
@@ -1010,39 +1017,46 @@ spec:
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
                     type: object
-                  retention:
-                    description: Retention configures periodic purge of expired audit
-                      events (FedRAMP AU-11).
-                    properties:
-                      batchSize:
-                        default: 1000
-                        description: Maximum number of rows deleted per batch.
-                        minimum: 1
-                        type: integer
-                      defaultDays:
-                        default: 2555
-                        description: |-
-                          Number of days to retain audit events before purge.
-                          Clamped to a maximum of 2555 (≈7 years per ADR-034 / SOC 2 / ISO 27001).
-                        maximum: 2555
-                        minimum: 1
-                        type: integer
-                      enabled:
-                        description: |-
-                          Whether the retention purge worker is active.
-                          Defaults to false (safe default — no data is deleted without opt-in).
-                        type: boolean
-                      interval:
-                        default: 24h
-                        description: How often the purge worker runs. Must be a valid
-                          Go duration string.
-                        type: string
-                    type: object
                   server:
-                    description: |-
-                      Server timeout tuning for the DataStorage HTTP server.
-                      When unset, defaults match the operator's prior hardcoded behavior (#260).
+                    description: Server configures DataStorage's HTTP server and admission
+                      safeguards.
                     properties:
+                      corsAllowedOrigins:
+                        description: Cross-origin origins. Empty denies all cross-origin
+                          requests.
+                        items:
+                          type: string
+                        type: array
+                      maxBodySize:
+                        default: "5242880"
+                        description: |-
+                          Maximum request body size in bytes. The DataStorage service applies its
+                          existing 1 MiB–50 MiB safety clamp and 5 MiB default.
+                        type: string
+                      maxConcurrentRequests:
+                        default: 100
+                        description: Maximum concurrent HTTP requests. Zero disables
+                          the concurrency limit.
+                        minimum: 0
+                        type: integer
+                      rateLimit:
+                        description: |-
+                          Optional per-IP rate limiting. The rendered service contract keeps the
+                          safeguard enabled; this object controls its rate and burst values.
+                        properties:
+                          burst:
+                            default: 100
+                            description: Token-bucket burst size. Non-positive values
+                              use the service default.
+                            minimum: 0
+                            type: integer
+                          requestsPerSecond:
+                            default: 50
+                            description: Sustained integer requests per second. Non-positive
+                              values use the service default.
+                            minimum: 0
+                            type: integer
+                        type: object
                       readTimeout:
                         default: 30s
                         description: HTTP server read timeout. Must be a valid Go
@@ -1053,23 +1067,6 @@ spec:
                         description: HTTP server write timeout. Must be a valid Go
                           duration string.
                         type: string
-                    type: object
-                  signingCert:
-                    description: |-
-                      SigningCert configures the audit export signing certificate (FedRAMP AU-9).
-                      When set, the named Secret is mounted into the DS pod at /etc/certs.
-                    properties:
-                      mountPath:
-                        default: /etc/certs
-                        description: Mount path inside the container. Defaults to
-                          /etc/certs.
-                        type: string
-                      secretName:
-                        description: Name of the Kubernetes Secret containing the
-                          signing cert (tls.crt, tls.key).
-                        type: string
-                    required:
-                    - secretName
                     type: object
                   telemetry:
                     description: OpenTelemetry distributed-trace export configuration.
@@ -1322,6 +1319,40 @@ spec:
                         description: Namespace restricting MCP Gateway provider CRD
                           watches and RBAC.
                         type: string
+                      tls:
+                        description: |-
+                          TLS selects the CA trust source for MCP Gateway session connections.
+                          Omitted source defaults to the operator's resolved inter-service trust;
+                          this is a trust-source override, not a TLS disable switch.
+                        properties:
+                          caCertSecretRef:
+                            description: Secret/key containing CA PEM when source=secret.
+                            properties:
+                              key:
+                                default: ca.crt
+                                description: Key within the Secret containing the
+                                  CA PEM.
+                                type: string
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          caFile:
+                            description: Absolute path to administrator-provided CA
+                              material when source=file.
+                            type: string
+                          source:
+                            description: Source of the CA bundle. Omitted defaults
+                              to interService.
+                            enum:
+                            - interService
+                            - system
+                            - file
+                            - secret
+                            type: string
+                        type: object
                       type:
                         description: MCP Gateway provider. Supported values are eaigw
                           and kuadrant.
@@ -1564,23 +1595,35 @@ spec:
               gateway:
                 description: Gateway service settings.
                 properties:
-                  alertManagerTokenSecretName:
+                  auth:
                     description: |-
-                      Name of a Secret (in this Kubernaut CR's namespace) containing a
-                      bearer token AlertManager presents when calling Gateway's webhook
-                      endpoint. The Secret must contain a "token" key holding a valid
-                      Kubernetes ServiceAccount token for an identity authorized to call
-                      this Gateway (bound to the generated gateway-signal-source
-                      ClusterRole -- see docs/security/credentials-and-tls.md).
-
-                      This is a bring-your-own credential, consistent with
-                      spec.postgresql.secretName/spec.llmProfiles[*].credentialsSecretName:
-                      the operator never mints or stores this token itself. When unset,
-                      the generated AlertmanagerConfig omits webhook authentication
-                      entirely (Gateway will reject unauthenticated calls) and the CR's
-                      ConditionAlertManagerAuthConfigured status condition explains why.
-                      See docs/installation/03-deploy.md "Configure AlertManager".
-                    type: string
+                      Authentication configures Gateway TokenReview/SAR enforcement and the
+                      AlertManager bearer credential used by the operator-managed webhook
+                      adapter. Authentication is disabled by default so a minimal Gateway can
+                      deploy without requiring an additional administrator-owned token Secret.
+                    properties:
+                      alertManager:
+                        description: |-
+                          AlertManager configures the administrator-owned bearer credential used by
+                          the operator-managed AlertmanagerConfig webhook.
+                        properties:
+                          tokenSecretName:
+                            description: |-
+                              Name of the administrator-owned Secret containing the Kubernetes
+                              ServiceAccount bearer token. The operator emits only a SecretKeySelector;
+                              token bytes never enter rendered configuration, status, or logs.
+                            type: string
+                        type: object
+                      enabled:
+                        default: false
+                        description: |-
+                          Whether Gateway TokenReview/SAR authentication is enforced. Unset
+                          defaults to false so the minimal Gateway deployment does not require an
+                          additional AlertManager token Secret. Set true together with
+                          alertManager.tokenSecretName to enable authenticated operator-managed
+                          Alertmanager delivery.
+                        type: boolean
+                    type: object
                   config:
                     description: Gateway server and middleware configuration.
                     properties:
@@ -1768,33 +1811,6 @@ spec:
                           against the same shared spec.fleet.oauth2.tokenURL).
                         type: string
                     type: object
-                  ingress:
-                    description: |-
-                      Ingress configures portable Kubernetes exposure. It is independent from
-                      the optional OpenShift Route above.
-                    properties:
-                      annotations:
-                        additionalProperties:
-                          type: string
-                        description: |-
-                          Optional controller-specific annotations. The operator does not add
-                          OpenShift Route annotations to this object.
-                        type: object
-                      enabled:
-                        default: false
-                        description: Whether to create the Ingress. Defaults to false.
-                        type: boolean
-                      host:
-                        description: External DNS name covered by TLSSecretName.
-                        type: string
-                      ingressClassName:
-                        description: IngressClassName identifies the installed ingress
-                          controller.
-                        type: string
-                      tlsSecretName:
-                        description: Existing Secret containing tls.crt and tls.key.
-                        type: string
-                    type: object
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:
@@ -1868,18 +1884,6 @@ spec:
                           otherwise to an implementation-defined value. Requests cannot exceed Limits.
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
-                    type: object
-                  route:
-                    description: Route configuration for OCP external access.
-                    properties:
-                      enabled:
-                        default: true
-                        description: Whether to create an OCP Route for the Gateway.
-                        type: boolean
-                      hostname:
-                        description: Hostname override. When empty, the OCP router
-                          auto-generates a hostname.
-                        type: string
                     type: object
                 type: object
               image:
@@ -2174,6 +2178,13 @@ spec:
                   session:
                     description: Session configuration.
                     properties:
+                      maxConcurrentInvestigations:
+                        default: 50
+                        description: |-
+                          Maximum number of investigations that may run concurrently on one
+                          Kubernaut Agent replica. The default matches the upstream Helm profile.
+                        minimum: 1
+                        type: integer
                       ttl:
                         default: 30m
                         description: Session time-to-live.
@@ -2292,8 +2303,9 @@ spec:
                   description: |-
                     LLMProfileSpec defines a single, named LLM provider configuration.
                     Profiles live in spec.llmProfiles and are referenced by name (llmProfileRef)
-                    from KA, API Frontend, and API Frontend's severity-triage configuration,
-                    decoupling each component's LLM identity from a single shared config.
+                    from KA's sibling investigation, workflow-discovery, and alignment agents,
+                    API Frontend, and API Frontend's severity-triage configuration, decoupling
+                    each component's LLM identity from a single shared config.
                   properties:
                     azureApiVersion:
                       description: Azure OpenAI API version.
@@ -2403,6 +2415,22 @@ spec:
                       description: Path to a CA certificate file for TLS to the LLM
                         endpoint.
                       type: string
+                    tlsCaSecretRef:
+                      description: |-
+                        Optional Secret containing the PEM CA certificate used by the LLM
+                        endpoint. The default key is "ca.crt". When set, tlsCaFile must name
+                        the deterministic path where the operator mounts the selected key.
+                      properties:
+                        key:
+                          default: ca.crt
+                          description: Key within the Secret containing the CA PEM.
+                          type: string
+                        name:
+                          description: Name of the Secret.
+                          type: string
+                      required:
+                      - name
+                      type: object
                     tlsCertFile:
                       description: |-
                         Path to a client certificate file for mTLS to the LLM endpoint.
@@ -2495,24 +2523,9 @@ spec:
                       Prometheus and AlertManager. This is client trust only; it does not
                       configure serving certificates for any Kubernaut component.
                     properties:
-                      caCertConfigMapRef:
-                        description: ConfigMap containing the PEM-encoded CA bundle
-                          when source=configMap.
-                        properties:
-                          key:
-                            default: ca.crt
-                            description: 'Key within the ConfigMap containing the
-                              CA PEM. Default: "ca.crt".'
-                            type: string
-                          name:
-                            description: Name of the ConfigMap.
-                            type: string
-                        required:
-                        - name
-                        type: object
                       caCertSecretRef:
-                        description: Secret containing the PEM-encoded CA bundle when
-                          source=secret.
+                        description: Secret containing the PEM-encoded monitoring
+                          CA bundle.
                         properties:
                           key:
                             default: ca.crt
@@ -2524,52 +2537,23 @@ spec:
                         required:
                         - name
                         type: object
-                      source:
-                        description: Source of the monitoring CA bundle.
-                        enum:
-                        - interService
-                        - system
-                        - secret
-                        - configMap
-                        type: string
                     type: object
                 type: object
               networkPolicies:
                 description: |-
-                  NetworkPolicies selects and tunes the supported native policy adapter.
-                  Provider policy resources are created only after active installation and
-                  runtime GVK/schema compatibility are positively identified; no raw
-                  Kubernetes NetworkPolicy or static API-server CIDR fallback is used.
+                  NetworkPolicies configures operator-managed, ingress-only standard
+                  Kubernetes NetworkPolicy objects. Egress and API-server reachability remain
+                  administrator-owned; applied objects do not attest CNI enforcement.
                 properties:
-                  apiServerCIDR:
-                    description: |-
-                      Primary K8s API server backend CIDR, for environments where default
-                      detection doesn't resolve correctly. Deprecated: native policy adapters
-                      use provider-native API-server identity and reject static CIDRs.
-                    type: string
-                  apiServerCIDRs:
-                    description: |-
-                      Additional API server backend endpoint IPs as /32 CIDRs, for HA
-                      clusters with multiple control-plane nodes. Deprecated: native policy
-                      adapters do not accept static API-server CIDRs.
-                    items:
-                      type: string
-                    type: array
-                  apiServerPort:
-                    format: int32
-                    maximum: 65535
-                    minimum: 1
-                    type: integer
                   apifrontend:
                     description: |-
-                      NetworkPolicyNamedIngressOverride extends NetworkPolicyIngressOverride
-                      with a namespace-name allowlist, mirroring the subset of components
-                      (Gateway, APIFrontend, Console) the upstream Helm chart exposes this
-                      simpler option on.
+                      NetworkPolicyNamedIngressOverride extends NetworkPolicyIngressOverride with
+                      an exact namespace-name allowlist.
                     properties:
                       ingressCIDRs:
                         items:
                           type: string
+                        maxItems: 16
                         type: array
                       ingressNamespaceSelectors:
                         items:
@@ -2621,22 +2605,23 @@ spec:
                               type: object
                           type: object
                           x-kubernetes-map-type: atomic
+                        maxItems: 16
                         type: array
                       ingressNamespaces:
                         items:
                           type: string
+                        maxItems: 16
                         type: array
                     type: object
                   console:
                     description: |-
-                      NetworkPolicyNamedIngressOverride extends NetworkPolicyIngressOverride
-                      with a namespace-name allowlist, mirroring the subset of components
-                      (Gateway, APIFrontend, Console) the upstream Helm chart exposes this
-                      simpler option on.
+                      NetworkPolicyNamedIngressOverride extends NetworkPolicyIngressOverride with
+                      an exact namespace-name allowlist.
                     properties:
                       ingressCIDRs:
                         items:
                           type: string
+                        maxItems: 16
                         type: array
                       ingressNamespaceSelectors:
                         items:
@@ -2688,19 +2673,23 @@ spec:
                               type: object
                           type: object
                           x-kubernetes-map-type: atomic
+                        maxItems: 16
                         type: array
                       ingressNamespaces:
                         items:
                           type: string
+                        maxItems: 16
                         type: array
                     type: object
                   datastorage:
-                    description: Helm exposes only CIDR/selector overrides here (no
-                      ingressNamespaces).
+                    description: |-
+                      NetworkPolicyIngressOverride adds standard NetworkPolicy ingress peers
+                      beyond the operator's default same-namespace component allow rule.
                     properties:
                       ingressCIDRs:
                         items:
                           type: string
+                        maxItems: 16
                         type: array
                       ingressNamespaceSelectors:
                         items:
@@ -2752,32 +2741,17 @@ spec:
                               type: object
                           type: object
                           x-kubernetes-map-type: atomic
+                        maxItems: 16
                         type: array
-                    type: object
-                  externalWebhooks:
-                    description: NetworkPolicyEgressOverride overrides a single egress
-                      allow rule's target.
-                    properties:
-                      cidr:
-                        description: |-
-                          Legacy field: native provider adapters do not render arbitrary CIDR
-                          destinations. Non-empty values are rejected during reconciliation rather
-                          than becoming an unsafe allow-all policy or being silently ignored.
-                        type: string
-                      port:
-                        format: int32
-                        maximum: 65535
-                        minimum: 1
-                        type: integer
                     type: object
                   gateway:
-                    description: |-
-                      Gateway also exposes a simple ingressNamespaces name-list, matching
-                      Helm's networkPolicies.gateway.*.
+                    description: Optional standard NetworkPolicy ingress peers for
+                      the named component.
                     properties:
                       ingressCIDRs:
                         items:
                           type: string
+                        maxItems: 16
                         type: array
                       ingressNamespaceSelectors:
                         items:
@@ -2829,47 +2803,23 @@ spec:
                               type: object
                           type: object
                           x-kubernetes-map-type: atomic
+                        maxItems: 16
                         type: array
                       ingressNamespaces:
                         items:
                           type: string
+                        maxItems: 16
                         type: array
-                    type: object
-                  idp:
-                    description: |-
-                      NetworkPolicyIdPEgressOverride is NetworkPolicyEgressOverride plus a
-                      second port, for deployments where a service must reach two IdPs on two
-                      different ports.
-                    properties:
-                      cidr:
-                        description: |-
-                          Legacy field: native provider adapters do not render arbitrary CIDR
-                          destinations. Non-empty values are rejected during reconciliation rather
-                          than becoming an unsafe allow-all policy or being silently ignored.
-                        type: string
-                      extraPorts:
-                        items:
-                          format: int32
-                          type: integer
-                        type: array
-                      port:
-                        format: int32
-                        maximum: 65535
-                        minimum: 1
-                        type: integer
                     type: object
                   kubernautAgent:
                     description: |-
-                      NetworkPolicyIngressOverride adds allowed ingress sources beyond the
-                      operator's default same-namespace/component allow rules. CIDRs cover
-                      traffic not associated with any pod/namespace (e.g. NodePort-sourced
-                      host traffic, a hostNetwork-mode ingress controller); selectors cover
-                      cases the simple namespace-name list (NetworkPolicyNamedIngressOverride)
-                      cannot express.
+                      NetworkPolicyIngressOverride adds standard NetworkPolicy ingress peers
+                      beyond the operator's default same-namespace component allow rule.
                     properties:
                       ingressCIDRs:
                         items:
                           type: string
+                        maxItems: 16
                         type: array
                       ingressNamespaceSelectors:
                         items:
@@ -2921,112 +2871,18 @@ spec:
                               type: object
                           type: object
                           x-kubernetes-map-type: atomic
+                        maxItems: 16
                         type: array
                     type: object
-                  llm:
-                    description: NetworkPolicyEgressOverride overrides a single egress
-                      allow rule's target.
-                    properties:
-                      cidr:
-                        description: |-
-                          Legacy field: native provider adapters do not render arbitrary CIDR
-                          destinations. Non-empty values are rejected during reconciliation rather
-                          than becoming an unsafe allow-all policy or being silently ignored.
-                        type: string
-                      port:
-                        format: int32
-                        maximum: 65535
-                        minimum: 1
-                        type: integer
-                    type: object
-                  mcpGateway:
-                    description: NetworkPolicyEgressOverride overrides a single egress
-                      allow rule's target.
-                    properties:
-                      cidr:
-                        description: |-
-                          Legacy field: native provider adapters do not render arbitrary CIDR
-                          destinations. Non-empty values are rejected during reconciliation rather
-                          than becoming an unsafe allow-all policy or being silently ignored.
-                        type: string
-                      port:
-                        format: int32
-                        maximum: 65535
-                        minimum: 1
-                        type: integer
-                    type: object
-                  mode:
-                    default: Required
-                    description: |-
-                      Mode requires a qualified native provider by default. Inherited is an
-                      explicit administrator acknowledgement that isolation is supplied outside
-                      this operator; it does not attest that such protection has been verified.
-                      Existing native policies are retained in Inherited mode, not silently
-                      pruned on a discovery failure or opt-out. See PR-515-AUDIT-REMEDIATION.md.
-                    enum:
-                    - Required
-                    - Inherited
-                    type: string
-                  monitoring:
-                    description: |-
-                      NetworkPolicyMonitoringOverride overrides where/how the monitoring-stack
-                      ingress/egress rules (Prometheus scrape, AlertManager webhook) are shaped.
-                    properties:
-                      alertManagerPort:
-                        format: int32
-                        maximum: 65535
-                        minimum: 1
-                        type: integer
-                      namespace:
-                        type: string
-                      prometheusPort:
-                        format: int32
-                        maximum: 65535
-                        minimum: 1
-                        type: integer
-                    type: object
-                  prometheus:
-                    description: NetworkPolicyEgressOverride overrides a single egress
-                      allow rule's target.
-                    properties:
-                      cidr:
-                        description: |-
-                          Legacy field: native provider adapters do not render arbitrary CIDR
-                          destinations. Non-empty values are rejected during reconciliation rather
-                          than becoming an unsafe allow-all policy or being silently ignored.
-                        type: string
-                      port:
-                        format: int32
-                        maximum: 65535
-                        minimum: 1
-                        type: integer
-                    type: object
-                  provider:
-                    default: Auto
-                    description: |-
-                      NetworkPoliciesSpec configures the common traffic intent submitted to a
-                      positively identified native policy provider. Provider resources are
-                      created only when the selected provider is active, schema-compatible, and
-                      within the supported release range; generic Kubernetes without a supported
-                      provider fails closed without a raw NetworkPolicy fallback.
-                      Provider selects the native policy provider. Auto requires exactly one
-                      active, supported provider installation; an explicit provider is still
-                      validated against its discovered GVK, schema, and release range.
-                    enum:
-                    - Auto
-                    - Cilium
-                    - Calico
-                    - OVN
-                    type: string
                   scrapeSources:
                     description: |-
-                      ScrapeSources authorizes explicitly identified scraper pods, only on
-                      generated component metrics ports. An empty list grants no external
-                      scraper access; a Prometheus query URL is not a scraper identity.
+                      ScrapeSources authorizes explicitly identified scraper pods on generated
+                      component metrics ports. An empty list grants no external scraper access.
                     items:
                       description: |-
-                        MetricsScrapeSource is a bounded native-policy ingress identity. Only exact
-                        pod label matches are accepted, never namespace-only or wildcard access.
+                        MetricsScrapeSource is a bounded standard-NetworkPolicy ingress identity.
+                        Only exact pod label matches are accepted, never namespace-only or wildcard
+                        access.
                       properties:
                         namespace:
                           description: Namespace is the exact, administrator-selected
@@ -3053,6 +2909,49 @@ spec:
               notification:
                 description: Notification controller settings.
                 properties:
+                  credentials:
+                    description: |-
+                      Provider-neutral credentials projected into the Notification credentials directory.
+                      Each name is the file name used by routing credentialRef values.
+                    items:
+                      description: NotificationCredentialSpec maps one namespace-local
+                        Secret key to a named credential file.
+                      properties:
+                        name:
+                          description: Name is the projected credential file name
+                            and routing credentialRef value.
+                          maxLength: 63
+                          minLength: 1
+                          pattern: ^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$
+                          type: string
+                        secretRef:
+                          description: SecretRef identifies the namespace-local Secret
+                            key containing the credential.
+                          properties:
+                            key:
+                              description: Key is the Secret data key containing the
+                                credential.
+                              minLength: 1
+                              pattern: ^[A-Za-z0-9._-]+$
+                              type: string
+                            name:
+                              description: Name is the Secret name.
+                              maxLength: 253
+                              minLength: 1
+                              pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                              type: string
+                          required:
+                          - key
+                          - name
+                          type: object
+                      required:
+                      - name
+                      - secretRef
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:
@@ -3138,24 +3037,14 @@ spec:
                     required:
                     - configMapName
                     type: object
-                  slack:
-                    description: Slack quickstart shortcut.
-                    properties:
-                      channel:
-                        default: '#kubernaut-alerts'
-                        description: Slack channel for notifications.
-                        type: string
-                      secretName:
-                        description: |-
-                          Name of the Secret containing the Slack webhook URL (key: "webhook-url").
-                          Empty = no Slack, console-only delivery.
-                        type: string
-                    type: object
                 type: object
               postgresql:
                 description: |-
-                  BYO PostgreSQL connection. The operator validates the secret and derives
-                  the DataStorage db-secrets.yaml Secret automatically.
+                  BYO PostgreSQL connection. The operator validates and mounts this
+                  administrator-owned Secret directly; it never creates a competing
+                  DataStorage credential Secret. Required keys are POSTGRES_USER,
+                  POSTGRES_PASSWORD, POSTGRES_DB, and db-secrets.yaml containing matching
+                  username/password values.
                 properties:
                   host:
                     description: PostgreSQL hostname or service DNS.
@@ -3171,7 +3060,8 @@ spec:
                   secretName:
                     description: |-
                       Name of the Secret containing PostgreSQL credentials.
-                      Required keys: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB.
+                      Required keys: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, and
+                      db-secrets.yaml containing matching username/password values.
                     minLength: 1
                     type: string
                   sslMode:
@@ -3447,17 +3337,6 @@ spec:
                     required:
                     - configMapName
                     type: object
-                  proactiveSignalMappings:
-                    description: |-
-                      Optional proactive signal mappings ConfigMap reference.
-                      Must contain key "proactive-signal-mappings.yaml".
-                    properties:
-                      configMapName:
-                        description: Name of the ConfigMap.
-                        type: string
-                    required:
-                    - configMapName
-                    type: object
                   resources:
                     description: Resource requirements.
                     properties:
@@ -3527,28 +3406,6 @@ spec:
                   adapter retain the service-CA behavior; generic clusters must select one
                   of the documented source modes before TLS-backed workloads are ready.
                 properties:
-                  administratorManaged:
-                    description: |-
-                      References administrator-owned internal CA and service serving Secrets.
-                      The operator validates these objects but does not mutate or delete them.
-                    properties:
-                      internalCASecretName:
-                        description: |-
-                          Secret containing the public internal CA under ca.crt.
-                          Required when mode=AdministratorManaged. In other modes this field is
-                          ignored unless it is used as an explicit output-name override.
-                        type: string
-                      serviceTLSSecretNames:
-                        additionalProperties:
-                          type: string
-                        description: |-
-                          Serving Secret names keyed by component: gateway, datastorage,
-                          kubernautagent, apifrontend, and authwebhook. Each Secret contains
-                          tls.crt and tls.key with SANs covering its Service DNS names.
-                          Required when mode=AdministratorManaged. Provisioned cert-manager mode
-                          fills omitted entries with the stable operator defaults.
-                        type: object
-                    type: object
                   certManager:
                     description: |-
                       References cert-manager issuer output Secrets. cert-manager must already
@@ -3556,59 +3413,52 @@ spec:
                     properties:
                       internalCASecretName:
                         description: |-
-                          Public CA Secret containing ca.crt for administrator-managed material or
+                          Public CA Secret containing ca.crt for manual material or
                           tls.crt for cert-manager Certificate output.
                           Required for reference-only mode. Provisioning mode defaults this to the
                           dedicated inter-service CA Secret unless an override is supplied here or
                           in Provisioning.
                         type: string
                       issuer:
-                        description: |-
-                          Issuer is the legacy operator spelling for the cert-manager issuer
-                          reference. It remains accepted for existing CRs.
+                        description: Issuer is the concise cert-manager issuer reference.
                         properties:
                           group:
                             default: cert-manager.io
                             description: API group, normally cert-manager.io.
                             type: string
                           kind:
-                            description: |-
-                              Issuer kind, normally Issuer or ClusterIssuer. The lower-case Helm mode
-                              defaults to ClusterIssuer; legacy title-case mode defaults to Issuer.
+                            description: Issuer kind, normally Issuer or ClusterIssuer.
                             type: string
                           name:
                             description: |-
-                              Issuer name. When empty in Helm-compatible cert-manager mode, the
-                              controller selects the sole Issuer/ClusterIssuer in scope, matching the
-                              chart's live-cluster lookup behavior.
+                              Issuer name. When empty, the controller may select the sole
+                              Issuer/ClusterIssuer in scope.
                             type: string
                         type: object
                       issuerRef:
                         description: |-
-                          IssuerRef mirrors Helm tls.certManager.issuerRef. When populated it takes
-                          precedence over the legacy Issuer field.
+                          IssuerRef is the structured cert-manager issuer reference. When populated
+                          it takes precedence over Issuer.
                         properties:
                           group:
                             default: cert-manager.io
                             description: API group, normally cert-manager.io.
                             type: string
                           kind:
-                            description: |-
-                              Issuer kind, normally Issuer or ClusterIssuer. The lower-case Helm mode
-                              defaults to ClusterIssuer; legacy title-case mode defaults to Issuer.
+                            description: Issuer kind, normally Issuer or ClusterIssuer.
                             type: string
                           name:
                             description: |-
-                              Issuer name. When empty in Helm-compatible cert-manager mode, the
-                              controller selects the sole Issuer/ClusterIssuer in scope, matching the
-                              chart's live-cluster lookup behavior.
+                              Issuer name. When empty, the controller may select the sole
+                              Issuer/ClusterIssuer in scope.
                             type: string
                         type: object
                       provisioning:
                         description: |-
-                          Provisioning enables operator-owned cert-manager Issuer and Certificate
-                          resources. cert-manager remains the owner of generated output Secrets.
-                          When omitted, the existing reference-only contract is preserved.
+                          Provisioning controls optional operator reconciliation of cert-manager
+                          Issuer and Certificate resources. It defaults to reference-only; set
+                          enabled=true to reconcile these objects. cert-manager remains the owner of
+                          generated output Secrets.
                         properties:
                           bootstrapIssuerName:
                             default: kubernaut-interservice-bootstrap-issuer
@@ -3670,42 +3520,8 @@ spec:
                           type: string
                         description: |-
                           Serving Secret names keyed by component, with the same keys as the
-                          administrator-managed mode. Required for reference-only mode;
+                          manual mode. Required for reference-only mode;
                           provisioning mode fills omitted entries with stable defaults.
-                        type: object
-                    type: object
-                  developmentSelfSigned:
-                    description: Configures the explicit development-only self-signed
-                      provisioner.
-                    properties:
-                      caSecretName:
-                        description: Secret name for the generated CA. Defaults to
-                          kubernaut-internal-ca.
-                        type: string
-                      rotationBefore:
-                        default: 168h
-                        description: How long before expiry the operator should rotate
-                          generated leaves.
-                        type: string
-                    type: object
-                  hooks:
-                    description: |-
-                      Hooks mirrors Helm hooks.tlsCerts. Helm hook Jobs are replaced by the
-                      operator's reconciliation loop, while the extra SAN input remains the
-                      same migration-compatible configuration surface.
-                    properties:
-                      tlsCerts:
-                        description: |-
-                          TLSCerts configures the self-signed certificate SAN additions used by the
-                          Helm tls-cert-job. The operator reconciles the equivalent Secrets directly.
-                        properties:
-                          extraSANs:
-                            description: |-
-                              Additional DNS SANs for inter-service certificates. When non-empty, the
-                              loopback IP 127.0.0.1 is also included, matching the chart behavior.
-                            items:
-                              type: string
-                            type: array
                         type: object
                     type: object
                   interService:
@@ -3724,17 +3540,36 @@ spec:
                           server-side TLS.
                         type: string
                     type: object
+                  manual:
+                    description: |-
+                      References administrator- or external-PKI-owned internal CA and serving
+                      Secrets. The operator validates these objects but does not mutate or
+                      delete them.
+                    properties:
+                      internalCASecretName:
+                        description: |-
+                          Secret containing the public internal CA under ca.crt.
+                          Required when mode=manual with explicit Secret material.
+                        type: string
+                      serviceTLSSecretNames:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          Serving Secret names keyed by component: gateway, datastorage,
+                          kubernautagent, apifrontend, and authwebhook. Each Secret contains
+                          tls.crt and tls.key with SANs covering its Service DNS names.
+                          Required when mode=manual with explicit Secret material. Empty values use
+                          the stable service names used by the operator's manual source.
+                        type: object
+                    type: object
                   mode:
                     description: |-
                       Source mode. Empty selects only a positively discovered OpenShift
                       service-CA adapter; generic clusters must not treat it as plaintext.
                     enum:
-                    - hook
                     - cert-manager
                     - manual
-                    - AdministratorManaged
-                    - CertManager
-                    - DevelopmentSelfSigned
+                    - service-ca
                     type: string
                 type: object
               valkey:
@@ -4376,32 +4211,12 @@ rules:
   - list
   - watch
 - apiGroups:
-  - cilium.io
-  resources:
-  - ciliumnetworkpolicies
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
   - config.openshift.io
   resources:
   - apiservers
   - clusterversions
   - ingresses
   - networks
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - discovery.k8s.io
-  resources:
-  - endpointslices
   verbs:
   - get
   - list
@@ -4449,7 +4264,7 @@ rules:
 - apiGroups:
   - networking.k8s.io
   resources:
-  - ingresses
+  - networkpolicies
   verbs:
   - create
   - delete
@@ -4471,40 +4286,6 @@ rules:
   - update
   - watch
 - apiGroups:
-  - policy.networking.k8s.io
-  resources:
-  - adminnetworkpolicies
-  - baselineadminnetworkpolicies
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - projectcalico.org
-  resources:
-  - networkpolicies
-  - tier.networkpolicies
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - projectcalico.org
-  resources:
-  - tiers
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
   - rbac.authorization.k8s.io
   resources:
   - clusterrolebindings
@@ -4521,25 +4302,6 @@ rules:
   - patch
   - update
   - watch
-- apiGroups:
-  - route.openshift.io
-  resources:
-  - routes
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - route.openshift.io
-  resources:
-  - routes/custom-host
-  verbs:
-  - create
-  - update
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -4666,40 +4428,40 @@ spec:
         - /manager
         env:
         - name: RELATED_IMAGE_GATEWAY
-          value: quay.io/kubernaut-ai/gateway@sha256:172f431253256e285d6c7dbe691c1d3684bf12e057e3014fac28b831838ffd6e
+          value: quay.io/kubernaut-ai/gateway@sha256:163b73718e2b5d95d5a5505baeb35b431e28408d2b634ed47fead9e24acfea58
         - name: RELATED_IMAGE_DATA_STORAGE
-          value: quay.io/kubernaut-ai/datastorage@sha256:479ffe81ba370c172d1980c39654a691f6973a217dfbe8e54d1582f79ea32bb9
+          value: quay.io/kubernaut-ai/datastorage@sha256:4b32f3201f2f876ee7636003592cd6bf216f480634576c5f873a44bffe727084
         - name: RELATED_IMAGE_AIANALYSIS
-          value: quay.io/kubernaut-ai/aianalysis@sha256:efeeb6d272c84f81d29e80dbfd253ebd87710f6dc1e07009ee038257cfac0272
+          value: quay.io/kubernaut-ai/aianalysis@sha256:36330cfc86e3aa5c5525066a921b655e5a5109b04efa2e852dd1e368f994a04d
         - name: RELATED_IMAGE_SIGNALPROCESSING
-          value: quay.io/kubernaut-ai/signalprocessing@sha256:8d55f05b8473bf5fd59adbe99d7a900bbb05ecd88f7e3c8928957361054cf5d1
+          value: quay.io/kubernaut-ai/signalprocessing@sha256:67043980d66bd782aadf76bd2c4344995197fda67f92ed62474cf3780633770c
         - name: RELATED_IMAGE_REMEDIATIONORCHESTRATOR
-          value: quay.io/kubernaut-ai/remediationorchestrator@sha256:2a1fe303267215cec4de3b13c4c4d9d63683e6970d5c93d5c5910d4f4a5a801b
+          value: quay.io/kubernaut-ai/remediationorchestrator@sha256:86cde42501683be6c61f7fc577a00fdbc6f26e849f795c03ffee69032d846cd7
         - name: RELATED_IMAGE_WORKFLOWEXECUTION
-          value: quay.io/kubernaut-ai/workflowexecution@sha256:e77ab6bb30d6ad75f924dac83c9ccb3b0ef82bc3a95fb6d3da4933e6bb7eb822
+          value: quay.io/kubernaut-ai/workflowexecution@sha256:7865bd09537a497d0608077d9c6fb380c64ca41c67e90d7d7c02abdb38b06800
         - name: RELATED_IMAGE_EFFECTIVENESSMONITOR
-          value: quay.io/kubernaut-ai/effectivenessmonitor@sha256:ee33961a25779a76be0bcd9bcb318b9e9c6c34a938685b8f92965842451261af
+          value: quay.io/kubernaut-ai/effectivenessmonitor@sha256:d4b57690d596f64b9e6a85ee0e37206e93186c2fccb410e93dcac5088511e332
         - name: RELATED_IMAGE_NOTIFICATION
-          value: quay.io/kubernaut-ai/notification@sha256:b0003fc81a5334ca0b50110c4490f5700141687d6dffe52fbb48203d4083bb79
+          value: quay.io/kubernaut-ai/notification@sha256:34b04d8e441fef4ab8246b9227abd15f336774814ffc88564eef496d848a02f7
         - name: RELATED_IMAGE_KUBERNAUT_AGENT
-          value: quay.io/kubernaut-ai/kubernautagent@sha256:8cf804f386be939eff3372497d98ca941f4f91714d27f3b91318e728bc35d615
+          value: quay.io/kubernaut-ai/kubernautagent@sha256:dee64e07d21ec82eaf10a9569a13aea023d8511b19e6ae512306ec22bec40f72
         - name: RELATED_IMAGE_AUTHWEBHOOK
-          value: quay.io/kubernaut-ai/authwebhook@sha256:9da1338831a86afa9a3dbf1f1026c898a2d03d84f1f40203b087c7243bce2780
+          value: quay.io/kubernaut-ai/authwebhook@sha256:4f81055a9b8ba9003e9c8ec1739ee5e3cf523e68b3b8d66b178e12eca75fae7f
         - name: RELATED_IMAGE_API_FRONTEND
-          value: quay.io/kubernaut-ai/apifrontend@sha256:17eaa216809dc6bef4984baec309e39f5205c8b8129ee34839a42b7902c98513
+          value: quay.io/kubernaut-ai/apifrontend@sha256:9993d71cfc7eff94f2e19ad40d845cbb3cfe7579b5d680d344303daed1e98d36
         - name: RELATED_IMAGE_FLEETMETADATACACHE
-          value: quay.io/kubernaut-ai/fleetmetadatacache@sha256:c315aeb4afb2f71e9c5ba439c387c4925823513ef1a5225e9db7c4bc6937cc54
+          value: quay.io/kubernaut-ai/fleetmetadatacache@sha256:a59fa06ea41692fbd76f01c84bbe77ab767620151f2daef8a55594a00177ecaa
         - name: RELATED_IMAGE_DB_MIGRATE
-          value: quay.io/kubernaut-ai/db-migrate@sha256:6b7611cd2e93d250707ab530b0a7512d3bb1b9f0a5521d445089df0f66b5d2a6
+          value: quay.io/kubernaut-ai/db-migrate@sha256:dbecf98c652b0cd9f98214179cfeba3d8488f34d6b73b76a18340b6c4291fc3d
         - name: RELATED_IMAGE_CONSOLE
-          value: quay.io/kubernaut-ai/kubernaut-console@sha256:98f75c56b8f2a4e2ee0276e31f353175b91dec9e95478775843590c37f876062
+          value: quay.io/kubernaut-ai/kubernaut-console@sha256:85cdbb3596ba96873e5b30b1c861b6b96900427b61bd6001640c1789ad6c2edb
         - name: RELATED_IMAGE_OAUTH2_PROXY
           value: quay.io/oauth2-proxy/oauth2-proxy@sha256:37c1570c0427e02fc7c947ef2c04e8995b8347b7abc9fcf1dbb4e376a4b221a7
         - name: RELATED_IMAGE_INIT_POSTGRES
           value: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
         - name: RELATED_IMAGE_INIT_UBI_MINIMAL
           value: registry.access.redhat.com/ubi10/ubi-minimal@sha256:7dc60d7777e010c50f5e041ff069112b379c3d5eef2823d20871c67cf663f10c
-        image: quay.io/kubernaut-ai/kubernaut-operator:1.6.0-rc20
+        image: quay.io/kubernaut-ai/kubernaut-operator-image:1.6.0-rc30
         livenessProbe:
           httpGet:
             path: /healthz

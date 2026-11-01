@@ -22,20 +22,26 @@ import (
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
+	"github.com/jordigilh/kubernaut-operator/internal/policy"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
+const (
+	operatorManagedBy = "kubernaut-operator"
+	managedPolicyTrue = "true"
+)
+
 // checkResourceOwnership is the common write/cleanup gate from
-// docs/design/ISSUE-514-OWNERSHIP-CONTRACT.md. Provider policies retain their
-// separate, stricter gate. Only public object/owner metadata is logged.
+// docs/design/ISSUE-514-OWNERSHIP-CONTRACT.md. Only public object/owner
+// metadata is logged.
 func (r *KubernautReconciler) checkResourceOwnership(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, obj client.Object, controllerOwned bool) error {
 	if err := resources.ResourceOwnershipError(kn, obj, controllerOwned); err != nil {
 		conflict := r.reportOwnershipConflict(ctx, kn, obj, err)
@@ -82,7 +88,7 @@ func ownershipMetadataMatches(desired, existing client.Object) bool {
 // authorization. Restricted PSA cannot override operator provenance or an owner.
 func administratorWorkflowNamespaceReady(namespace *corev1.Namespace) bool {
 	if !namespace.DeletionTimestamp.IsZero() || len(namespace.OwnerReferences) != 0 ||
-		namespace.Labels["app.kubernetes.io/managed-by"] == "kubernaut-operator" ||
+		namespace.Labels["app.kubernetes.io/managed-by"] == operatorManagedBy ||
 		namespace.Annotations[resources.AnnotationOwnerNamespace] != "" ||
 		namespace.Annotations[resources.AnnotationOwnerUID] != "" || namespace.Labels == nil {
 		return false
@@ -130,20 +136,38 @@ func (r *KubernautReconciler) deleteObservedResource(ctx context.Context, obj cl
 	return r.Delete(ctx, obj, opts...)
 }
 
-// deleteObservedProviderPolicy is called only after the five-marker selector.
-// The independent owner/scope/lifecycle veto still applies before deletion.
-func (r *KubernautReconciler) deleteObservedProviderPolicy(ctx context.Context, obj *unstructured.Unstructured) error {
-	logger := logf.FromContext(ctx).WithValues("kind", obj.GetKind(), "namespace", obj.GetNamespace(),
+// deleteObservedNetworkPolicy is called only after the managed-policy and
+// instance label selectors. The independent owner/scope/lifecycle veto still
+// applies before deletion.
+func (r *KubernautReconciler) deleteObservedNetworkPolicy(ctx context.Context, obj client.Object, instance string) error {
+	logger := logf.FromContext(ctx).WithValues("kind", r.resourceKind(ctx, obj), "namespace", obj.GetNamespace(),
 		"name", obj.GetName(), "ownerReferences", obj.GetOwnerReferences(), "ownershipLabels", obj.GetLabels(),
 		"objectResourceVersion", obj.GetResourceVersion())
-	if err := providerPolicyOwnershipError(obj, obj); err != nil {
-		logger.Error(err, "native policy preserved outside ownership contract")
+	labels := obj.GetLabels()
+	if labels[policy.ManagedPolicyLabel] != managedPolicyTrue || labels[policy.ManagedByLabel] != operatorManagedBy ||
+		labels[policy.PolicyNamespaceLabel] != obj.GetNamespace() || labels["app.kubernetes.io/instance"] != instance {
+		logger.Info("NetworkPolicy preserved outside ownership contract")
 		return nil //nolint:nilerr // diagnosed preservation is successful cleanup, not permission to delete
 	}
+	expected := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{
+		Name:      obj.GetName(),
+		Namespace: obj.GetNamespace(),
+		Labels: map[string]string{
+			policy.ManagedPolicyLabel:    managedPolicyTrue,
+			policy.ManagedByLabel:        operatorManagedBy,
+			policy.PolicyNamespaceLabel:  obj.GetNamespace(),
+			"app.kubernetes.io/instance": instance,
+		},
+	}}
+	if err := policy.OwnershipError(obj, expected); err != nil {
+		conflict := fmt.Errorf("refusing to delete NetworkPolicy %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
+		logger.Error(conflict, "NetworkPolicy preserved outside ownership contract")
+		return fmt.Errorf("%w: %w", resources.ErrOwnershipConflict, conflict)
+	}
 	if err := client.IgnoreNotFound(r.deleteObservedResource(ctx, obj)); err != nil {
-		logger.Error(err, "native policy deletion failed")
+		logger.Error(err, "NetworkPolicy deletion failed")
 		return err
 	}
-	logger.Info("native policy deleted")
+	logger.Info("NetworkPolicy deleted")
 	return nil
 }

@@ -21,7 +21,6 @@ import (
 	"os"
 	"strings"
 
-	routev1 "github.com/openshift/api/route/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/utils/ptr"
@@ -36,8 +35,7 @@ func testKubernautWithConsole() *kubernautv1alpha2.Kubernaut {
 	kn := testKubernaut()
 	kn.Spec.Console = kubernautv1alpha2.ConsoleSpec{
 		Enabled: ptr.To(true),
-		Auth:    kubernautv1alpha2.ConsoleAuthSpec{SecretName: "console-oidc-creds"},
-		Route:   kubernautv1alpha2.ConsoleRouteSpec{Enabled: ptr.To(true)},
+		Auth:    kubernautv1alpha2.ConsoleAuthSpec{SecretName: "console-oidc-creds", RedirectURL: "https://console.example.com/oauth2/callback"},
 	}
 	return kn
 }
@@ -45,6 +43,14 @@ func testKubernautWithConsole() *kubernautv1alpha2.Kubernaut {
 var _ = Describe("Console Resources", func() {
 
 	Context("ConsoleDeployment", func() {
+		It("UT-EXP-565-CONSOLE-003 [AC-6, SC-8, SI-10; SOC2 CC6.1, CC8.1; ASVS v5.0.0-V2.2.1, v5.0.0-V12.2.1]: rejects a missing administrator-owned callback before deployment", func() {
+			kn := testKubernautWithConsole()
+			kn.Spec.Console.Auth.RedirectURL = ""
+
+			dep, err := ConsoleDeployment(kn)
+			Expect(dep).To(BeNil())
+			Expect(err).To(MatchError(ContainSubstring("redirectURL")))
+		})
 
 		It("UT-CD-01 [CM-6, CC8.1]: rejects deployment when container image is unresolvable", func() {
 			kn := testKubernautWithConsole()
@@ -52,7 +58,7 @@ var _ = Describe("Console Resources", func() {
 			Expect(os.Unsetenv("RELATED_IMAGE_CONSOLE")).To(Succeed())
 			defer func() { Expect(os.Setenv("RELATED_IMAGE_CONSOLE", saved)).To(Succeed()) }()
 
-			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			dep, err := ConsoleDeployment(kn)
 			Expect(err).To(HaveOccurred())
 			Expect(dep).To(BeNil())
 			Expect(err.Error()).To(ContainSubstring("console"))
@@ -63,7 +69,7 @@ var _ = Describe("Console Resources", func() {
 			kn.Spec.APIFrontend.Auth.IssuerURL = ""
 			kn.Spec.APIFrontend.Auth.JWTProviders = nil
 
-			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			dep, err := ConsoleDeployment(kn)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("effective OIDC issuer"))
 			Expect(dep).To(BeNil())
@@ -74,7 +80,7 @@ var _ = Describe("Console Resources", func() {
 			kn := testKubernautWithConsole()
 			kn.Spec.APIFrontend.Auth.IssuerURL = issuer
 
-			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			dep, err := ConsoleDeployment(kn)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dep.Spec.Template.Spec.Containers[0].Args).To(ContainElement("--oidc-issuer-url=" + issuer))
 
@@ -96,7 +102,7 @@ var _ = Describe("Console Resources", func() {
 				},
 			}
 
-			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			dep, err := ConsoleDeployment(kn)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dep.Spec.Template.Spec.Containers[0].Args).To(ContainElement("--oidc-issuer-url=" + issuer))
 
@@ -107,11 +113,80 @@ var _ = Describe("Console Resources", func() {
 			Expect(data).To(ContainSubstring("name: secondary"))
 		})
 
+		It("UT-CD-483-001 [AC-12, CC6.1/CC6.3; ASVS V3.3/V7.2.1]: renders the provider logout URL only in oauth2-proxy", func() {
+			const logoutURL = "https://idp.example.com/realms/kubernaut/protocol/openid-connect/logout?id_token_hint={id_token}"
+			kn := testKubernautWithConsole()
+			kn.Spec.Console.Auth.ProviderLogoutURL = logoutURL
+
+			dep, err := ConsoleDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			oauth2 := dep.Spec.Template.Spec.Containers[0]
+			Expect(oauth2.Args).To(ContainElement("--backend-logout-url=" + logoutURL))
+			Expect(oauth2.Env).To(ContainElement(corev1.EnvVar{Name: "SSL_CERT_FILE", Value: "/etc/ssl/combined/ca-bundle.crt"}))
+			Expect(oauth2.VolumeMounts).To(ContainElement(corev1.VolumeMount{
+				Name: "combined-ca", MountPath: "/etc/ssl/combined", ReadOnly: true,
+			}))
+
+			Expect(dep.Spec.Template.Spec.InitContainers).To(HaveLen(1))
+			init := dep.Spec.Template.Spec.InitContainers[0]
+			Expect(init.Name).To(Equal("build-ca-bundle"))
+			Expect(init.Image).To(Equal("registry.access.redhat.com/ubi10/ubi-minimal:latest"))
+			Expect(init.Command).To(ContainElement(ContainSubstring("/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem")))
+			Expect(init.Command).To(ContainElement(ContainSubstring("\"$1\"")))
+			Expect(init.Command).To(ContainElement(InterServiceTLSCAFileFor(kn)))
+			Expect(init.Command).To(ContainElement(ContainSubstring("/combined/ca-bundle.crt")))
+			Expect(init.VolumeMounts).To(ContainElements(
+				corev1.VolumeMount{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
+				corev1.VolumeMount{Name: "combined-ca", MountPath: "/combined"},
+			))
+			Expect(dep.Spec.Template.Spec.Volumes).To(ContainElements(
+				corev1.Volume{Name: "combined-ca", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+			))
+		})
+
+		It("UT-CD-483-002 [AC-6; ASVS V5/V8]: rejects unsafe logout URLs when the builder is called directly", func() {
+			for _, value := range []string{
+				"http://idp.example.com/logout?id_token_hint={id_token}",
+				"https://other.example.com/logout?id_token_hint={id_token}",
+				"https://idp.example.com/logout#fragment",
+				"https://idp.example.com/logout?rd=https://console.example.com",
+			} {
+				kn := testKubernautWithConsole()
+				kn.Spec.Console.Auth.ProviderLogoutURL = value
+
+				dep, err := ConsoleDeployment(kn)
+				Expect(err).To(HaveOccurred(), value)
+				Expect(err.Error()).To(ContainSubstring("providerLogoutURL"), value)
+				Expect(dep).To(BeNil(), value)
+			}
+		})
+
+		It("UT-CD-483-003 [SC-8; ASVS V8]: fails closed when the CA-bundle init image is unavailable", func() {
+			const logoutURL = "https://idp.example.com/logout?id_token_hint={id_token}"
+			kn := testKubernautWithConsole()
+			kn.Spec.Console.Auth.ProviderLogoutURL = logoutURL
+			saved, hadImage := os.LookupEnv("RELATED_IMAGE_INIT_UBI_MINIMAL")
+			Expect(os.Unsetenv("RELATED_IMAGE_INIT_UBI_MINIMAL")).To(Succeed())
+			defer func() {
+				if hadImage {
+					Expect(os.Setenv("RELATED_IMAGE_INIT_UBI_MINIMAL", saved)).To(Succeed())
+					return
+				}
+				Expect(os.Unsetenv("RELATED_IMAGE_INIT_UBI_MINIMAL")).To(Succeed())
+			}()
+
+			dep, err := ConsoleDeployment(kn)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("init-ubi-minimal"))
+			Expect(dep).To(BeNil())
+		})
+
 		It("UT-CD-03 [IA-5, CC6.1]: rejects deployment when auth secret name is missing", func() {
 			kn := testKubernautWithConsole()
 			kn.Spec.Console.Auth.SecretName = ""
 
-			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			dep, err := ConsoleDeployment(kn)
 			Expect(err).To(HaveOccurred())
 			Expect(dep).To(BeNil())
 			Expect(err.Error()).To(ContainSubstring("secretName"))
@@ -120,7 +195,7 @@ var _ = Describe("Console Resources", func() {
 		It("UT-CD-04 [SC-7, CC6.6]: produces hardened pod spec with oauth2-proxy sidecar", func() {
 			kn := testKubernautWithConsole()
 
-			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			dep, err := ConsoleDeployment(kn)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dep).NotTo(BeNil())
 
@@ -142,6 +217,10 @@ var _ = Describe("Console Resources", func() {
 			Expect(*oauth2.SecurityContext.ReadOnlyRootFilesystem).To(BeTrue())
 			Expect(*oauth2.SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
 			Expect(oauth2.SecurityContext.RunAsUser).To(BeNil(), "hardcoded RunAsUser breaks OCP restricted SCC")
+			Expect(oauth2.Resources.Requests[corev1.ResourceCPU]).To(Equal(resource.MustParse("100m")))
+			Expect(oauth2.Resources.Requests[corev1.ResourceMemory]).To(Equal(resource.MustParse("128Mi")))
+			Expect(oauth2.Resources.Limits[corev1.ResourceCPU]).To(Equal(resource.MustParse("500m")))
+			Expect(oauth2.Resources.Limits[corev1.ResourceMemory]).To(Equal(resource.MustParse("256Mi")))
 			Expect(oauth2.Ports).To(HaveLen(1))
 			Expect(oauth2.Ports[0].ContainerPort).To(Equal(consoleProxyPort))
 			Expect(oauth2.Env).To(HaveLen(3))
@@ -157,6 +236,10 @@ var _ = Describe("Console Resources", func() {
 			Expect(console.ImagePullPolicy).To(Equal(corev1.PullIfNotPresent))
 			Expect(*console.SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
 			Expect(console.SecurityContext.RunAsUser).To(BeNil(), "hardcoded RunAsUser breaks OCP restricted SCC")
+			Expect(console.Resources.Requests[corev1.ResourceCPU]).To(Equal(resource.MustParse("100m")))
+			Expect(console.Resources.Requests[corev1.ResourceMemory]).To(Equal(resource.MustParse("128Mi")))
+			Expect(console.Resources.Limits[corev1.ResourceCPU]).To(Equal(resource.MustParse("500m")))
+			Expect(console.Resources.Limits[corev1.ResourceMemory]).To(Equal(resource.MustParse("256Mi")))
 			Expect(console.VolumeMounts).To(HaveLen(4))
 
 			Expect(spec.Volumes).To(HaveLen(3))
@@ -164,6 +247,25 @@ var _ = Describe("Console Resources", func() {
 			Expect(spec.Volumes[1].Name).To(Equal("nginx-config"))
 			Expect(spec.Volumes[1].ConfigMap.Name).To(Equal(ComponentConsole + "-nginx"))
 			Expect(spec.Volumes[2].Name).To(Equal("tls-ca"))
+		})
+
+		It("applies spec.console.resources to both long-running containers", func() {
+			kn := testKubernautWithConsole()
+			kn.Spec.Console.Resources = corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("250m"),
+					corev1.ResourceMemory: resource.MustParse("256Mi"),
+				},
+				Limits: corev1.ResourceList{
+					corev1.ResourceCPU:    resource.MustParse("750m"),
+					corev1.ResourceMemory: resource.MustParse("512Mi"),
+				},
+			}
+
+			dep, err := ConsoleDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(dep.Spec.Template.Spec.Containers[0].Resources).To(Equal(kn.Spec.Console.Resources))
+			Expect(dep.Spec.Template.Spec.Containers[1].Resources).To(Equal(kn.Spec.Console.Resources))
 		})
 	})
 
@@ -255,7 +357,7 @@ var _ = Describe("Console Resources", func() {
 
 		It("UT-CD-198-001 [SC-8]: console container mounts tls-ca volume at /etc/tls-ca", func() {
 			kn := testKubernautWithConsole()
-			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			dep, err := ConsoleDeployment(kn)
 			Expect(err).NotTo(HaveOccurred())
 
 			console := dep.Spec.Template.Spec.Containers[1]
@@ -273,7 +375,7 @@ var _ = Describe("Console Resources", func() {
 
 		It("UT-CD-198-002 [CM-6]: tls-ca volume sources from the trust-bundle ConfigMap", func() {
 			kn := testKubernautWithConsole()
-			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			dep, err := ConsoleDeployment(kn)
 			Expect(err).NotTo(HaveOccurred())
 
 			found := false
@@ -288,15 +390,35 @@ var _ = Describe("Console Resources", func() {
 	})
 
 	Context("ConsoleNginxConfigMap runtime-config.js (#314)", func() {
-		It("UT-CN-314-001 [CM-6, CC8.1]: serves runtime-config.js with raw-thinking enabled by default", func() {
+		It("UT-CN-476-001 [CM-6, SI-10, CC8.1]: hides raw thinking by default", func() {
 			kn := testKubernautWithConsole()
 			cm := ConsoleNginxConfigMap(kn)
 			serverConf := cm.Data["server.conf"]
 
 			Expect(serverConf).To(ContainSubstring("location = /runtime-config.js"),
 				"must serve /runtime-config.js as an exact-match location so the console's unconditional script tag load resolves")
+			Expect(serverConf).To(ContainSubstring("window.__KUBERNAUT_CONFIG__ = { enableRawThinking: false };"),
+				"new deployments must hide raw thinking unless an administrator explicitly enables diagnostics")
+		})
+
+		It("UT-CN-476-002 [CM-6, SI-10, CC8.1]: preserves an explicit disabled setting", func() {
+			kn := testKubernautWithConsole()
+			kn.Spec.Console.EnableRawThinking = ptr.To(false)
+			cm := ConsoleNginxConfigMap(kn)
+			serverConf := cm.Data["server.conf"]
+
+			Expect(serverConf).To(ContainSubstring("window.__KUBERNAUT_CONFIG__ = { enableRawThinking: false };"),
+				"an explicit false setting must keep raw thinking hidden")
+		})
+
+		It("UT-CN-476-003 [CM-6, SI-10, CC8.1]: preserves an explicit diagnostic override", func() {
+			kn := testKubernautWithConsole()
+			kn.Spec.Console.EnableRawThinking = ptr.To(true)
+			cm := ConsoleNginxConfigMap(kn)
+			serverConf := cm.Data["server.conf"]
+
 			Expect(serverConf).To(ContainSubstring("window.__KUBERNAUT_CONFIG__ = { enableRawThinking: true };"),
-				"default must match the console's own default (enabled) to avoid a behavior change for existing deployments")
+				"administrators must be able to enable raw thinking explicitly for diagnostics")
 		})
 
 		It("UT-CN-314-004 [SC-8]: serves runtime-config.js with a JavaScript content type and no-cache", func() {
@@ -320,7 +442,7 @@ var _ = Describe("Console Resources", func() {
 
 		It("UT-CD-309-001 [SC-8, CC6.1]: does not disable TLS verification on the oauth2-proxy sidecar", func() {
 			kn := testKubernautWithConsole()
-			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			dep, err := ConsoleDeployment(kn)
 			Expect(err).NotTo(HaveOccurred())
 
 			oauth2 := dep.Spec.Template.Spec.Containers[0]
@@ -333,7 +455,7 @@ var _ = Describe("Console Resources", func() {
 
 		It("UT-CD-309-002 [SC-8, CC6.1]: points oauth2-proxy at the mounted CA bundle for issuer TLS verification", func() {
 			kn := testKubernautWithConsole()
-			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			dep, err := ConsoleDeployment(kn)
 			Expect(err).NotTo(HaveOccurred())
 
 			oauth2 := dep.Spec.Template.Spec.Containers[0]
@@ -343,7 +465,7 @@ var _ = Describe("Console Resources", func() {
 
 		It("UT-CD-309-003 [SC-8]: oauth2-proxy container mounts tls-ca volume at /etc/tls-ca", func() {
 			kn := testKubernautWithConsole()
-			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			dep, err := ConsoleDeployment(kn)
 			Expect(err).NotTo(HaveOccurred())
 
 			oauth2 := dep.Spec.Template.Spec.Containers[0]
@@ -359,8 +481,13 @@ var _ = Describe("Console Resources", func() {
 
 		It("UT-TLS-491-008 [SC-8; SOC2 CC6; ASVS v5.0.0-V12.2.1, v5.0.0-V13.2.1] uses the Helm TLS paths and preserves the system trust store", func() {
 			kn := testKubernautWithConsole()
-			kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
-			dep, err := ConsoleDeployment(kn, testIngressDomain)
+			kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
+				Mode: kubernautv1alpha2.TLSModeCertManager,
+				CertManager: &kubernautv1alpha2.CertManagerTLSConfig{
+					Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{},
+				},
+			}
+			dep, err := ConsoleDeployment(kn)
 			Expect(err).NotTo(HaveOccurred())
 
 			oauth2 := dep.Spec.Template.Spec.Containers[0]
@@ -384,91 +511,12 @@ var _ = Describe("Console Resources", func() {
 		})
 	})
 
-	Context("ConsoleRoute", func() {
-		It("UT-CR-01 [SC-7, CC6.6]: creates route by default with edge TLS", func() {
-			kn := testKubernautWithConsole()
-			kn.Spec.Console.Route.Enabled = nil
-
-			route := ConsoleRoute(kn)
-			Expect(route).NotTo(BeNil())
-			Expect(route.Name).To(Equal(ComponentConsole))
-			Expect(route.Spec.TLS).NotTo(BeNil())
-			Expect(route.Spec.TLS.Termination).To(Equal(routev1.TLSTerminationEdge))
-			Expect(route.Spec.TLS.InsecureEdgeTerminationPolicy).To(Equal(routev1.InsecureEdgeTerminationPolicyRedirect))
-			Expect(route.Spec.To.Name).To(Equal(ComponentConsole))
-			Expect(*route.Spec.To.Weight).To(Equal(int32(100)))
-			Expect(route.Spec.Host).To(BeEmpty())
-		})
-
-		It("UT-CR-02 [SC-7, CC6.6]: suppressed when explicitly disabled", func() {
-			kn := testKubernautWithConsole()
-			kn.Spec.Console.Route.Enabled = ptr.To(false)
-
-			route := ConsoleRoute(kn)
-			Expect(route).To(BeNil())
-		})
-
-		It("UT-CR-03 [AC-4, CC6.1]: custom hostname propagates to route spec", func() {
-			kn := testKubernautWithConsole()
-			kn.Spec.Console.Route.Host = "console.example.com"
-
-			route := ConsoleRoute(kn)
-			Expect(route).NotTo(BeNil())
-			Expect(route.Spec.Host).To(Equal("console.example.com"))
-		})
-
-		It("UT-CR-04 [#268]: sets HAProxy timeout annotation for SSE streaming", func() {
-			// The A2A investigation stream (list_alerts, RCA, workflow
-			// discovery) routinely runs several minutes. OCP HAProxy
-			// routes default to a 30s server timeout, which silently
-			// kills the stream mid-investigation ("context canceled")
-			// and drops the train-of-thought/decision UI. GatewayRoute
-			// and APIFrontendRoute already carry this annotation;
-			// ConsoleRoute is the actual externally-reachable ingress
-			// for the console's A2A calls and must carry it too.
-			kn := testKubernautWithConsole()
-
-			route := ConsoleRoute(kn)
-			Expect(route).NotTo(BeNil())
-			Expect(route.Annotations).To(HaveKeyWithValue("haproxy.router.openshift.io/timeout", routeSSETimeout),
-				"console route should have HAProxy timeout annotation for SSE streams")
-		})
-	})
-
-	Context("ConsoleRouteStub", func() {
-		It("UT-CRS-01 [CM-6]: contains only the lookup key for cleanup", func() {
-			kn := testKubernautWithConsole()
-			stub := ConsoleRouteStub(kn)
-
-			Expect(stub.Name).To(Equal(ComponentConsole))
-			Expect(stub.Namespace).To(Equal(testSystemNamespace))
-			Expect(stub.Spec).To(Equal(routev1.RouteSpec{}))
-		})
-	})
-
 	Context("consoleRedirectURL", func() {
-		It("UT-CRU-01 [IA-5, CC6.1]: uses custom route host when configured", func() {
+		It("UT-CRU-01 [IA-5, CC6.1; ASVS v5.0.0-V2.2.1]: uses the explicit administrator-owned callback URL", func() {
 			kn := testKubernautWithConsole()
-			kn.Spec.Console.Route.Host = "console.example.com"
 
-			url := consoleRedirectURL(kn, testIngressDomain)
+			url := consoleRedirectURL(kn)
 			Expect(url).To(Equal("https://console.example.com/oauth2/callback"))
-		})
-
-		It("UT-CRU-02 [IA-5, CC6.1]: uses cluster ingress domain when route host is empty", func() {
-			kn := testKubernautWithConsole()
-			kn.Spec.Console.Route.Host = ""
-
-			url := consoleRedirectURL(kn, testIngressDomain)
-			Expect(url).To(Equal("https://kubernaut-console-kubernaut-system.apps.test.example.com/oauth2/callback"))
-		})
-
-		It("UT-CRU-03 [IA-5, CC6.1]: falls back to apps.cluster.local when ingress domain is empty", func() {
-			kn := testKubernautWithConsole()
-			kn.Spec.Console.Route.Host = ""
-
-			url := consoleRedirectURL(kn, "")
-			Expect(url).To(Equal("https://kubernaut-console-kubernaut-system.apps.cluster.local/oauth2/callback"))
 		})
 	})
 
@@ -478,10 +526,10 @@ var _ = Describe("Console Resources", func() {
 			kn.Spec.Console.Resources = corev1.ResourceRequirements{}
 
 			res := consoleContainerResources(kn)
-			Expect(res.Requests[corev1.ResourceCPU]).To(Equal(resource.MustParse("10m")))
-			Expect(res.Requests[corev1.ResourceMemory]).To(Equal(resource.MustParse("16Mi")))
-			Expect(res.Limits[corev1.ResourceCPU]).To(Equal(resource.MustParse("50m")))
-			Expect(res.Limits[corev1.ResourceMemory]).To(Equal(resource.MustParse("64Mi")))
+			Expect(res.Requests[corev1.ResourceCPU]).To(Equal(resource.MustParse("100m")))
+			Expect(res.Requests[corev1.ResourceMemory]).To(Equal(resource.MustParse("128Mi")))
+			Expect(res.Limits[corev1.ResourceCPU]).To(Equal(resource.MustParse("500m")))
+			Expect(res.Limits[corev1.ResourceMemory]).To(Equal(resource.MustParse("256Mi")))
 		})
 
 		It("UT-CCR-02 [CM-6, CC8.1]: operator overrides take precedence", func() {

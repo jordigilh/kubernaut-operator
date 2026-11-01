@@ -60,8 +60,8 @@ qualification or an alternative to the mandatory five-marker policy identity.
   artifact, not this exhaustive gate's denominator.
 - `hack/verify-test-pyramid.sh` checks production callers, actual envtest
   Reconcile entry points and the installed-operator Kind journey artifact.
-- `hack/validate-security-traceability.sh` checks versioned references and all
-  executable IDs. This static check does **not** count as running the live lane.
+- The traceability matrices remain versioned documentation; executable tests and
+  live lanes provide the validation evidence.
 - `test/e2e/kind/scenarios_test.go` installs the real operator via Helm, drives
   public CR APIs, observes failures/recovery/upgrade/reinstall and checks that
   administrator object UID, resourceVersion, metadata and content are unchanged.

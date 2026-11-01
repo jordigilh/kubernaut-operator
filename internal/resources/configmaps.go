@@ -65,6 +65,7 @@ type gatewayServerYAML struct {
 	ListenAddr            string        `json:"listenAddr" yaml:"listenAddr"`
 	HealthAddr            string        `json:"healthAddr" yaml:"healthAddr"`
 	MetricsAddr           string        `json:"metricsAddr" yaml:"metricsAddr"`
+	AuthenticationEnabled bool          `json:"authenticationEnabled" yaml:"authenticationEnabled"`
 	MaxConcurrentRequests int           `json:"maxConcurrentRequests" yaml:"maxConcurrentRequests"`
 	ReadTimeout           string        `json:"readTimeout" yaml:"readTimeout"`
 	WriteTimeout          string        `json:"writeTimeout" yaml:"writeTimeout"`
@@ -115,6 +116,7 @@ func gatewayServerConfig(knV2 *kubernautv1alpha2.Kubernaut, gwCfg *kubernautv1al
 		ListenAddr:            ":8443",
 		HealthAddr:            ":8081",
 		MetricsAddr:           ":9090",
+		AuthenticationEnabled: knV2.Spec.Gateway.Auth.AuthenticationEnabled(),
 		MaxConcurrentRequests: 100,
 		ReadTimeout:           "3600s",
 		WriteTimeout:          "3600s",
@@ -226,13 +228,14 @@ type fleetConfigYAML struct {
 	// instead (#464). GW/RO's admission validation (validateFleetConfig)
 	// still requires non-empty values regardless of which components
 	// render them, so this is safe.
-	Backend            string           `json:"backend,omitempty" yaml:"backend,omitempty"`
-	Endpoint           string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
-	TLSCAFile          string           `json:"tlsCAFile,omitempty" yaml:"tlsCAFile,omitempty"`
-	TokenPath          string           `json:"tokenPath,omitempty" yaml:"tokenPath,omitempty"`
-	MCPGatewayEndpoint string           `json:"mcpGatewayEndpoint,omitempty" yaml:"mcpGatewayEndpoint,omitempty"`
-	MCPGatewayType     string           `json:"mcpGatewayType,omitempty" yaml:"mcpGatewayType,omitempty"`
-	OAuth2             *fleetOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	Backend             string           `json:"backend,omitempty" yaml:"backend,omitempty"`
+	Endpoint            string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	TLSCAFile           string           `json:"tlsCAFile,omitempty" yaml:"tlsCAFile,omitempty"`
+	TokenPath           string           `json:"tokenPath,omitempty" yaml:"tokenPath,omitempty"`
+	MCPGatewayEndpoint  string           `json:"mcpGatewayEndpoint,omitempty" yaml:"mcpGatewayEndpoint,omitempty"`
+	MCPGatewayType      string           `json:"mcpGatewayType,omitempty" yaml:"mcpGatewayType,omitempty"`
+	MCPGatewayTLSCAFile string           `json:"mcpGatewayTLSCAFile,omitempty" yaml:"mcpGatewayTLSCAFile,omitempty"`
+	OAuth2              *fleetOAuth2YAML `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
 
 	// Namespace scopes AF/EM's ClusterRegistry to a single namespace's MCP
 	// Gateway CRDs (registry.RegistryConfig{Namespace: ...}, kubernaut#1720
@@ -321,9 +324,12 @@ type fleetOAuth2YAML struct {
 // volume mounts added in deployments.go (GatewayDeployment /
 // RemediationOrchestratorDeployment).
 const (
-	fleetCAMountPath       = "/etc/fleet-tls/scope-check/ca.crt"
-	fleetOAuth2CAMountPath = "/etc/fleet-tls/oauth2/ca.crt"
-	fleetTokenMountPath    = "/etc/fleet-token/token"
+	fleetCAMountPath            = "/etc/fleet-tls/scope-check/ca.crt"
+	fleetOAuth2CAMountPath      = "/etc/fleet-tls/oauth2/ca.crt"
+	fleetMCPGatewayCAMountDir   = "/etc/fleet-tls/mcp-gateway"
+	fleetMCPGatewayCAMountPath  = "/etc/fleet-tls/mcp-gateway/ca.crt"
+	fleetMCPGatewayCAVolumeName = "fleet-mcp-gateway-ca"
+	fleetTokenMountPath         = "/etc/fleet-token/token"
 )
 
 // apifrontendTLSCAFile is AF's own combined inter-service CA bundle mount
@@ -378,12 +384,13 @@ func resolveFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefO
 		return nil
 	}
 	cfg := &fleetConfigYAML{
-		Enabled:            true,
-		Backend:            fleet.ScopeCheck.Backend,
-		Endpoint:           resolveFleetEndpoint(knV2),
-		MCPGatewayEndpoint: fleet.MCPGateway.Endpoint,
-		MCPGatewayType:     fleet.MCPGateway.Type,
-		Resilience:         resolveMCPClient(knV2),
+		Enabled:             true,
+		Backend:             fleet.ScopeCheck.Backend,
+		Endpoint:            resolveFleetEndpoint(knV2),
+		MCPGatewayEndpoint:  fleet.MCPGateway.Endpoint,
+		MCPGatewayType:      fleet.MCPGateway.Type,
+		MCPGatewayTLSCAFile: resolveFleetTrustCAFile(fleet.MCPGateway.TLS, defaultOAuth2CAFile, fleetMCPGatewayCAMountPath),
+		Resilience:          resolveMCPClient(knV2),
 	}
 	var scopeTLS *kubernautv1alpha2.FleetTrustSpec
 	var tokenRef *kubernautv1alpha2.SecretKeyRef
@@ -456,14 +463,25 @@ type gatewayCORSYAML struct {
 }
 
 type dataStorageServerYAML struct {
-	Port          int           `json:"port" yaml:"port"`
-	Host          string        `json:"host" yaml:"host"`
-	HealthPort    int           `json:"healthPort" yaml:"healthPort"`
-	MetricsPort   int           `json:"metricsPort" yaml:"metricsPort"`
-	ReadTimeout   string        `json:"readTimeout" yaml:"readTimeout"`
-	WriteTimeout  string        `json:"writeTimeout" yaml:"writeTimeout"`
-	TLS           tlsConfigYAML `json:"tls" yaml:"tls"`
-	SignerCertDir string        `json:"signerCertDir,omitempty" yaml:"signerCertDir,omitempty"`
+	Port                     int                      `json:"port" yaml:"port"`
+	Host                     string                   `json:"host" yaml:"host"`
+	HealthPort               int                      `json:"healthPort" yaml:"healthPort"`
+	MetricsPort              int                      `json:"metricsPort" yaml:"metricsPort"`
+	ReadTimeout              string                   `json:"readTimeout" yaml:"readTimeout"`
+	WriteTimeout             string                   `json:"writeTimeout" yaml:"writeTimeout"`
+	EndpointPropagationDelay string                   `json:"endpointPropagationDelay,omitempty" yaml:"endpointPropagationDelay,omitempty"`
+	MaxBodySize              string                   `json:"maxBodySize,omitempty" yaml:"maxBodySize,omitempty"`
+	MaxConcurrentRequests    int                      `json:"maxConcurrentRequests" yaml:"maxConcurrentRequests"`
+	CORSAllowedOrigins       []string                 `json:"corsAllowedOrigins,omitempty" yaml:"corsAllowedOrigins,omitempty"`
+	RateLimit                dataStorageRateLimitYAML `json:"rateLimit" yaml:"rateLimit"`
+	TLS                      tlsConfigYAML            `json:"tls" yaml:"tls"`
+	SignerCertDir            string                   `json:"signerCertDir,omitempty" yaml:"signerCertDir,omitempty"`
+}
+
+type dataStorageRateLimitYAML struct {
+	Enabled           bool    `json:"enabled" yaml:"enabled"`
+	RequestsPerSecond float64 `json:"requestsPerSecond" yaml:"requestsPerSecond"`
+	Burst             int     `json:"burst" yaml:"burst"`
 }
 
 type dataStorageDatabaseYAML struct {
@@ -506,16 +524,15 @@ type dataStorageLoggingYAML struct {
 }
 
 type dataStorageConfigYAML struct {
-	TLSProfile               string                    `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
-	Server                   dataStorageServerYAML     `json:"server" yaml:"server"`
-	Database                 dataStorageDatabaseYAML   `json:"database" yaml:"database"`
-	Redis                    dataStorageRedisYAML      `json:"redis" yaml:"redis"`
-	Logging                  dataStorageLoggingYAML    `json:"logging" yaml:"logging"`
-	EndpointPropagationDelay string                    `json:"endpointPropagationDelay,omitempty" yaml:"endpointPropagationDelay,omitempty"`
-	Retention                *dataStorageRetentionYAML `json:"retention,omitempty" yaml:"retention,omitempty"`
-	Audit                    *dataStorageAuditYAML     `json:"audit" yaml:"audit"`
-	Telemetry                *telemetryYAML            `json:"telemetry,omitempty" yaml:"telemetry,omitempty"`
-	Debug                    debugYAML                 `json:"debug" yaml:"debug"`
+	TLSProfile string                    `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
+	Server     dataStorageServerYAML     `json:"server" yaml:"server"`
+	Database   dataStorageDatabaseYAML   `json:"database" yaml:"database"`
+	Redis      dataStorageRedisYAML      `json:"redis" yaml:"redis"`
+	Logging    dataStorageLoggingYAML    `json:"logging" yaml:"logging"`
+	Retention  *dataStorageRetentionYAML `json:"retention,omitempty" yaml:"retention,omitempty"`
+	Audit      *dataStorageAuditYAML     `json:"audit" yaml:"audit"`
+	Telemetry  *telemetryYAML            `json:"telemetry,omitempty" yaml:"telemetry,omitempty"`
+	Debug      debugYAML                 `json:"debug" yaml:"debug"`
 }
 
 type dataStorageRetentionYAML struct {
@@ -551,12 +568,14 @@ type aiAnalysisDatastorageYAML struct {
 }
 
 type aiAnalysisRegoYAML struct {
-	PolicyPath          string `json:"policyPath" yaml:"policyPath"`
-	ConfidenceThreshold string `json:"confidenceThreshold,omitempty" yaml:"confidenceThreshold,omitempty"`
+	PolicyPath          string   `json:"policyPath" yaml:"policyPath"`
+	ConfidenceThreshold string   `json:"confidenceThreshold,omitempty" yaml:"confidenceThreshold,omitempty"`
+	LowConfidenceFloor  *float64 `json:"lowConfidenceFloor,omitempty" yaml:"lowConfidenceFloor,omitempty"`
 }
 
 // aiAnalysisConfigYAML embeds controllerConfig under "controller" via controllerBlock.
 type aiAnalysisConfigYAML struct {
+	TLSCAFile   string                       `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 	TLSProfile  string                       `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Logging     loggingYAML                  `json:"logging" yaml:"logging"`
 	Controller  controllerBlock              `json:"controller" yaml:"controller"`
@@ -593,6 +612,7 @@ type signalProcessingDatastorageYAML struct {
 
 // signalProcessingConfigYAML embeds controllerConfig under "controller" via controllerBlock.
 type signalProcessingConfigYAML struct {
+	TLSCAFile   string                          `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 	TLSProfile  string                          `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Logging     loggingYAML                     `json:"logging" yaml:"logging"`
 	Controller  controllerBlock                 `json:"controller" yaml:"controller"`
@@ -611,11 +631,12 @@ type signalProcessingConfigYAML struct {
 // validation error, since YAML unmarshal leaves the zero value on a key
 // mismatch.
 type signalProcessingFleetYAML struct {
-	Endpoint       string               `json:"endpoint" yaml:"endpoint"`
-	OAuth2         *fleetOAuth2YAML     `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
-	MCPGatewayType string               `json:"mcpGatewayType,omitempty" yaml:"mcpGatewayType,omitempty"`
-	Namespace      string               `json:"namespace,omitempty" yaml:"namespace,omitempty"`
-	Resilience     *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
+	Endpoint            string               `json:"endpoint" yaml:"endpoint"`
+	OAuth2              *fleetOAuth2YAML     `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	MCPGatewayType      string               `json:"mcpGatewayType,omitempty" yaml:"mcpGatewayType,omitempty"`
+	MCPGatewayTLSCAFile string               `json:"mcpGatewayTLSCAFile,omitempty" yaml:"mcpGatewayTLSCAFile,omitempty"`
+	Namespace           string               `json:"namespace,omitempty" yaml:"namespace,omitempty"`
+	Resilience          *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
 }
 
 // resolveSignalProcessingFleetConfig builds the fleet: block rendered into
@@ -633,10 +654,11 @@ func resolveSignalProcessingFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) *sign
 	}
 	override := knV2.Spec.SignalProcessing.Fleet
 	cfg := &signalProcessingFleetYAML{
-		Endpoint:       fleet.MCPGateway.Endpoint,
-		MCPGatewayType: fleet.MCPGateway.Type,
-		Namespace:      fleet.MCPGateway.Namespace,
-		Resilience:     resolveMCPClient(knV2),
+		Endpoint:            fleet.MCPGateway.Endpoint,
+		MCPGatewayType:      fleet.MCPGateway.Type,
+		MCPGatewayTLSCAFile: resolveFleetTrustCAFile(fleet.MCPGateway.TLS, InterServiceTLSCAFileFor(knV2), fleetMCPGatewayCAMountPath),
+		Namespace:           fleet.MCPGateway.Namespace,
+		Resilience:          resolveMCPClient(knV2),
 	}
 	cfg.OAuth2 = &fleetOAuth2YAML{
 		Enabled:              true,
@@ -698,6 +720,7 @@ type roDatastorageYAML struct {
 }
 
 type remediationOrchestratorConfigYAML struct {
+	TLSCAFile               string                 `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 	TLSProfile              string                 `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Controller              controllerBlock        `json:"controller" yaml:"controller"`
 	Logging                 loggingYAML            `json:"logging" yaml:"logging"`
@@ -752,6 +775,7 @@ type weTektonYAML struct {
 }
 
 type workflowExecutionConfigYAML struct {
+	TLSCAFile   string                        `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 	TLSProfile  string                        `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Logging     loggingYAML                   `json:"logging" yaml:"logging"`
 	Execution   weExecutionYAML               `json:"execution" yaml:"execution"`
@@ -771,9 +795,10 @@ type workflowExecutionConfigYAML struct {
 // Backend/MCPServerRegistration CRDs so there is no namespace field either
 // (DD-235).
 type weFleetYAML struct {
-	Endpoint   string               `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
-	OAuth2     *fleetOAuth2YAML     `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
-	Resilience *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
+	Endpoint            string               `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	MCPGatewayTLSCAFile string               `json:"mcpGatewayTLSCAFile,omitempty" yaml:"mcpGatewayTLSCAFile,omitempty"`
+	OAuth2              *fleetOAuth2YAML     `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	Resilience          *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
 }
 
 // resolveWEFleetConfig builds the fleet: block rendered into
@@ -793,8 +818,9 @@ func resolveWEFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, defaultOAuth2CAFile
 		return nil
 	}
 	cfg := &weFleetYAML{
-		Endpoint:   fleet.MCPGateway.Endpoint,
-		Resilience: resolveMCPClient(knV2),
+		Endpoint:            fleet.MCPGateway.Endpoint,
+		MCPGatewayTLSCAFile: resolveFleetTrustCAFile(fleet.MCPGateway.TLS, defaultOAuth2CAFile, fleetMCPGatewayCAMountPath),
+		Resilience:          resolveMCPClient(knV2),
 		OAuth2: &fleetOAuth2YAML{
 			Enabled:              true,
 			TokenURL:             fleet.OAuth2.TokenURL,
@@ -828,6 +854,7 @@ type emExternalYAML struct {
 }
 
 type effectivenessMonitorConfigYAML struct {
+	TLSCAFile   string            `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 	TLSProfile  string            `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Logging     loggingYAML       `json:"logging" yaml:"logging"`
 	Assessment  emAssessmentYAML  `json:"assessment" yaml:"assessment"`
@@ -885,6 +912,7 @@ type notificationDatastorageYAML struct {
 
 // notificationControllerConfigYAML embeds controllerConfig under "controller" via controllerBlock.
 type notificationControllerConfigYAML struct {
+	TLSCAFile   string                      `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 	TLSProfile  string                      `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Logging     loggingYAML                 `json:"logging" yaml:"logging"`
 	Controller  controllerBlock             `json:"controller" yaml:"controller"`
@@ -893,22 +921,9 @@ type notificationControllerConfigYAML struct {
 	Debug       debugYAML                   `json:"debug" yaml:"debug"`
 }
 
-type notificationRoutingSlackRoute struct {
+type notificationRoutingRoute struct {
 	Receiver string            `json:"receiver" yaml:"receiver"`
 	MatchRE  map[string]string `json:"matchRe,omitempty" yaml:"matchRe,omitempty"`
-}
-
-type notificationRoutingSlackReceiver struct {
-	Name  string `json:"name" yaml:"name"`
-	Slack struct {
-		Channel               string `json:"channel" yaml:"channel"`
-		CredentialsSecretName string `json:"credentialsSecretName" yaml:"credentialsSecretName"`
-	} `json:"slack" yaml:"slack"`
-}
-
-type notificationRoutingSlackYAML struct {
-	Route     notificationRoutingSlackRoute      `json:"route" yaml:"route"`
-	Receivers []notificationRoutingSlackReceiver `json:"receivers" yaml:"receivers"`
 }
 
 type notificationRoutingConsoleReceiver struct {
@@ -917,7 +932,7 @@ type notificationRoutingConsoleReceiver struct {
 }
 
 type notificationRoutingConsoleYAML struct {
-	Route     notificationRoutingSlackRoute        `json:"route" yaml:"route"`
+	Route     notificationRoutingRoute             `json:"route" yaml:"route"`
 	Receivers []notificationRoutingConsoleReceiver `json:"receivers" yaml:"receivers"`
 }
 
@@ -966,7 +981,8 @@ type kaAuditYAML struct {
 }
 
 type kaSessionYAML struct {
-	TTL string `json:"ttl" yaml:"ttl"`
+	TTL                         string `json:"ttl,omitempty" yaml:"ttl,omitempty"`
+	MaxConcurrentInvestigations int    `json:"maxConcurrentInvestigations" yaml:"maxConcurrentInvestigations"`
 }
 
 type kaAIYAML struct {
@@ -1042,9 +1058,22 @@ type kaAlignmentYAML struct {
 }
 
 type kaAlignLLMYAML struct {
-	Provider string `json:"provider,omitempty" yaml:"provider,omitempty"`
-	Model    string `json:"model,omitempty" yaml:"model,omitempty"`
-	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	Provider        string           `json:"provider,omitempty" yaml:"provider,omitempty"`
+	Model           string           `json:"model,omitempty" yaml:"model,omitempty"`
+	Endpoint        string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	APIKeyFile      string           `json:"apiKeyFile,omitempty" yaml:"apiKeyFile,omitempty"`
+	Temperature     *float64         `json:"temperature,omitempty" yaml:"temperature,omitempty"` //nolint:musttag
+	MaxRetries      int              `json:"maxRetries,omitempty" yaml:"maxRetries,omitempty"`
+	TimeoutSeconds  int              `json:"timeoutSeconds,omitempty" yaml:"timeoutSeconds,omitempty"`
+	VertexProject   string           `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
+	VertexLocation  string           `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
+	BedrockRegion   string           `json:"bedrockRegion,omitempty" yaml:"bedrockRegion,omitempty"`
+	AzureApiVersion string           `json:"azureApiVersion,omitempty" yaml:"azureApiVersion,omitempty"`
+	TLSCaFile       string           `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
+	TLSCertFile     string           `json:"tlsCertFile,omitempty" yaml:"tlsCertFile,omitempty"`
+	TLSKeyFile      string           `json:"tlsKeyFile,omitempty" yaml:"tlsKeyFile,omitempty"`
+	OAuth2          *kaOAuth2YAML    `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	Reasoning       *kaReasoningYAML `json:"reasoning,omitempty" yaml:"reasoning,omitempty"`
 }
 
 type kaSummarizerYAML struct {
@@ -1081,10 +1110,11 @@ type kaIntegrationsYAML struct {
 // GatewayDiscoverer (Kuadrant vs EAIGW) and register the
 // list_clusters/list_tools_for_cluster tools (ADR-068 decision #11).
 type kaFleetYAML struct {
-	Endpoint    string               `json:"endpoint" yaml:"endpoint"`
-	GatewayType string               `json:"gatewayType" yaml:"gatewayType"`
-	OAuth2      *kaFleetOAuth2YAML   `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
-	Resilience  *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
+	Endpoint            string               `json:"endpoint" yaml:"endpoint"`
+	GatewayType         string               `json:"gatewayType" yaml:"gatewayType"`
+	MCPGatewayTLSCAFile string               `json:"mcpGatewayTLSCAFile,omitempty" yaml:"mcpGatewayTLSCAFile,omitempty"`
+	OAuth2              *kaFleetOAuth2YAML   `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	Resilience          *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
 }
 
 // kaFleetOAuth2YAML mirrors upstream internal/kubernautagent/config.FleetOAuth2.
@@ -1111,9 +1141,10 @@ func resolveKAFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) *kaFleetYAML {
 		return nil
 	}
 	cfg := &kaFleetYAML{
-		Endpoint:    fleet.MCPGateway.Endpoint,
-		GatewayType: fleet.MCPGateway.Type,
-		Resilience:  resolveMCPClient(knV2),
+		Endpoint:            fleet.MCPGateway.Endpoint,
+		GatewayType:         fleet.MCPGateway.Type,
+		MCPGatewayTLSCAFile: resolveFleetTrustCAFile(fleet.MCPGateway.TLS, InterServiceTLSCAFileFor(knV2), fleetMCPGatewayCAMountPath),
+		Resilience:          resolveMCPClient(knV2),
 		OAuth2: &kaFleetOAuth2YAML{
 			Enabled:              true,
 			TokenURL:             fleet.OAuth2.TokenURL,
@@ -1173,27 +1204,29 @@ type llmRuntimeYAML struct {
 	PhaseModels    map[string]llmPhaseOverrideYAML `json:"phaseModels,omitempty" yaml:"phaseModels,omitempty"`
 }
 
-// llmPhaseOverrideYAML carries a phase override's fully-resolved fields,
-// including its own credentials when the phase's profile names a
-// credentialsSecretName different from the primary profile's (#233).
-// APIKeyFile is only populated in that cross-credential case -- when the
-// phase's profile shares the primary profile's credentialsSecretName, the
-// phase keeps authenticating via KA's already-mounted base credentials and
-// no dedicated Secret volume is created. This split relies on
-// kubernaut#1728, which fixed KA's LLMOverrideConfig to resolve each
-// phase's own APIKeyFile independently rather than silently reusing the
-// base profile's already-resolved API key (kubernaut#1726). Reasoning is
-// exempted from the restart-required LLM-identity lock upstream
-// (DD-LLM-008), so it is forwarded like any other per-phase override.
+// llmPhaseOverrideYAML carries a workflow-discovery profile's complete
+// effective fields. It intentionally includes an APIKeyFile even when the
+// profile shares the base Secret: workflow discovery is a sibling agent, so
+// its selected profile must remain explicit rather than relying on accidental
+// base inheritance. Upstream kubernaut#2515 makes the same full-profile
+// contract available to phase and alignment configuration.
 type llmPhaseOverrideYAML struct {
-	Provider       string           `json:"provider,omitempty" yaml:"provider,omitempty"`
-	Model          string           `json:"model,omitempty" yaml:"model,omitempty"`
-	Endpoint       string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
-	APIKeyFile     string           `json:"apiKeyFile,omitempty" yaml:"apiKeyFile,omitempty"`
-	Temperature    *float64         `json:"temperature,omitempty" yaml:"temperature,omitempty"` //nolint:musttag
-	VertexProject  string           `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
-	VertexLocation string           `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
-	Reasoning      *kaReasoningYAML `json:"reasoning,omitempty" yaml:"reasoning,omitempty"`
+	Provider        string           `json:"provider,omitempty" yaml:"provider,omitempty"`
+	Model           string           `json:"model,omitempty" yaml:"model,omitempty"`
+	Endpoint        string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+	APIKeyFile      string           `json:"apiKeyFile,omitempty" yaml:"apiKeyFile,omitempty"`
+	Temperature     *float64         `json:"temperature,omitempty" yaml:"temperature,omitempty"` //nolint:musttag
+	MaxRetries      int              `json:"maxRetries,omitempty" yaml:"maxRetries,omitempty"`
+	TimeoutSeconds  int              `json:"timeoutSeconds,omitempty" yaml:"timeoutSeconds,omitempty"`
+	VertexProject   string           `json:"vertexProject,omitempty" yaml:"vertexProject,omitempty"`
+	VertexLocation  string           `json:"vertexLocation,omitempty" yaml:"vertexLocation,omitempty"`
+	BedrockRegion   string           `json:"bedrockRegion,omitempty" yaml:"bedrockRegion,omitempty"`
+	AzureApiVersion string           `json:"azureApiVersion,omitempty" yaml:"azureApiVersion,omitempty"`
+	TLSCaFile       string           `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
+	TLSCertFile     string           `json:"tlsCertFile,omitempty" yaml:"tlsCertFile,omitempty"`
+	TLSKeyFile      string           `json:"tlsKeyFile,omitempty" yaml:"tlsKeyFile,omitempty"`
+	OAuth2          *kaOAuth2YAML    `json:"oauth2,omitempty" yaml:"oauth2,omitempty"`
+	Reasoning       *kaReasoningYAML `json:"reasoning,omitempty" yaml:"reasoning,omitempty"`
 }
 
 type authWebhookWebhookYAML struct {
@@ -1217,6 +1250,7 @@ type authWebhookDatastorageYAML struct {
 }
 
 type authWebhookConfigYAML struct {
+	TLSCAFile   string                     `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 	TLSProfile  string                     `json:"tlsProfile,omitempty" yaml:"tlsProfile,omitempty"`
 	Logging     loggingYAML                `json:"logging" yaml:"logging"`
 	Webhook     authWebhookWebhookYAML     `json:"webhook" yaml:"webhook"`
@@ -1332,8 +1366,8 @@ func GatewayConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.K
 }
 
 // DataStorageConfigMap builds the data-storage config ConfigMap. The dbName and
-// dbUser parameters must match the values written into the DataStorageDBSecret
-// to avoid a config/secret mismatch.
+// dbUser parameters must match the identity in the user-owned PostgreSQL Secret
+// and its db-secrets.yaml document to avoid a config/secret mismatch.
 func DataStorageConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, dbName, dbUser string, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	pgPort := PostgreSQLPort(kn)
@@ -1341,7 +1375,7 @@ func DataStorageConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 	auditHashKey := DataStorageAuditHashKeyReferenceFor(knV2)
 	cfg := dataStorageConfigYAML{
 		TLSProfile: o.tlsProfile,
-		Server:     dataStorageServerConfig(kn, knV2),
+		Server:     dataStorageServerConfig(knV2),
 		Database: func() dataStorageDatabaseYAML {
 			sslMode := withDefault(kn.Spec.PostgreSQL.SSLMode, DefaultSSLMode)
 			db := dataStorageDatabaseYAML{
@@ -1371,13 +1405,12 @@ func DataStorageConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 			}
 			return db
 		}(),
-		Redis: dataStorageRedisConfig(kn),
+		Redis: dataStorageRedisConfig(kn, knV2),
 		Logging: dataStorageLoggingYAML{
-			Level:  withDefault(kn.Spec.DataStorage.Logging.Level, "info"),
+			Level:  withDefault(knV2.Spec.DataStorage.Logging.Level, "info"),
 			Format: "json",
 		},
-		EndpointPropagationDelay: withDefault(kn.Spec.DataStorage.EndpointPropagationDelay, "10s"),
-		Retention:                dataStorageRetentionConfig(kn),
+		Retention: dataStorageRetentionConfig(knV2),
 		Audit: &dataStorageAuditYAML{
 			HashKeySecretsFile: DataStorageAuditHashKeySecretsFile,
 			HashKeyKey:         auditHashKey.SecretKey,
@@ -1389,47 +1422,76 @@ func DataStorageConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 }
 
 func dataStorageRetentionConfig(kn *kubernautv1alpha2.Kubernaut) *dataStorageRetentionYAML {
-	r := kn.Spec.DataStorage.Retention
-	if r == nil {
-		return nil
+	var r *kubernautv1alpha2.RetentionSpec
+	if kn.Spec.DataStorage.Audit != nil {
+		r = kn.Spec.DataStorage.Audit.Retention
 	}
-	days := intPtrDefault(r.DefaultDays, 2555)
+	enabled := true
+	interval := "24h"
+	batchSize := 1000
+	days := 2555
+	if r != nil {
+		if r.Enabled != nil {
+			enabled = *r.Enabled
+		}
+		interval = withDefault(r.Interval, interval)
+		batchSize = intPtrDefault(r.BatchSize, batchSize)
+		days = intPtrDefault(r.DefaultDays, days)
+	}
 	if days > 2555 {
 		days = 2555
 	}
 	return &dataStorageRetentionYAML{
-		Enabled:     r.Enabled != nil && *r.Enabled,
-		Interval:    withDefault(r.Interval, "24h"),
-		BatchSize:   intPtrDefault(r.BatchSize, 1000),
+		Enabled:     enabled,
+		Interval:    interval,
+		BatchSize:   batchSize,
 		DefaultDays: days,
 	}
 }
 
-func dataStorageServerConfig(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) dataStorageServerYAML {
+func dataStorageServerConfig(knV2 *kubernautv1alpha2.Kubernaut) dataStorageServerYAML {
 	s := dataStorageServerYAML{
-		Port:         8443,
-		Host:         "0.0.0.0",
-		HealthPort:   8081,
-		MetricsPort:  9090,
-		ReadTimeout:  "30s",
-		WriteTimeout: "30s",
-		TLS:          tlsConfigYAML{CertDir: InterServiceTLSCertDirFor(knV2)},
+		Port:                     8443,
+		Host:                     "0.0.0.0",
+		HealthPort:               8081,
+		MetricsPort:              9090,
+		ReadTimeout:              "30s",
+		WriteTimeout:             "30s",
+		EndpointPropagationDelay: "10s",
+		MaxBodySize:              "5242880",
+		MaxConcurrentRequests:    100,
+		RateLimit: dataStorageRateLimitYAML{
+			Enabled:           true,
+			RequestsPerSecond: 50,
+			Burst:             100,
+		},
+		TLS: tlsConfigYAML{CertDir: InterServiceTLSCertDirFor(knV2)},
 	}
+	s.EndpointPropagationDelay = withDefault(knV2.Spec.DataStorage.EndpointPropagationDelay, s.EndpointPropagationDelay)
 	// #260: v1alpha2-only addition, defaulting to the operator's prior
 	// hardcoded values above.
 	if srv := knV2.Spec.DataStorage.Server; srv != nil {
 		s.ReadTimeout = withDefault(srv.ReadTimeout, s.ReadTimeout)
 		s.WriteTimeout = withDefault(srv.WriteTimeout, s.WriteTimeout)
+		s.MaxBodySize = withDefault(srv.MaxBodySize, s.MaxBodySize)
+		s.MaxConcurrentRequests = intPtrDefault(srv.MaxConcurrentRequests, s.MaxConcurrentRequests)
+		s.CORSAllowedOrigins = srv.CORSAllowedOrigins
+		if rate := srv.RateLimit; rate != nil {
+			if rate.RequestsPerSecond != nil {
+				s.RateLimit.RequestsPerSecond = float64(*rate.RequestsPerSecond)
+			}
+			s.RateLimit.Burst = intPtrDefault(rate.Burst, s.RateLimit.Burst)
+		}
 	}
 	dir := "/etc/certs"
-	if sc := kn.Spec.DataStorage.SigningCert; sc != nil && sc.MountPath != "" {
-		dir = sc.MountPath
+	if knV2.Spec.DataStorage.Audit != nil && knV2.Spec.DataStorage.Audit.SigningCertificate != nil && knV2.Spec.DataStorage.Audit.SigningCertificate.MountPath != "" {
+		dir = knV2.Spec.DataStorage.Audit.SigningCertificate.MountPath
 	}
 	s.SignerCertDir = dir
 	return s
 }
 
-func dataStorageRedisConfig(kn *kubernautv1alpha2.Kubernaut) dataStorageRedisYAML {
+func dataStorageRedisConfig(kn, knV2 *kubernautv1alpha2.Kubernaut) dataStorageRedisYAML {
 	valkeyHost := kn.Spec.Valkey.Host
 	valkeyPort := kn.Spec.Valkey.Port
 	if valkeyPort == 0 {
@@ -1439,7 +1501,7 @@ func dataStorageRedisConfig(kn *kubernautv1alpha2.Kubernaut) dataStorageRedisYAM
 		Addr:             fmt.Sprintf("%s:%d", valkeyHost, valkeyPort),
 		DB:               0,
 		DLQStreamName:    "dlq-stream",
-		DLQMaxLen:        1000,
+		DLQMaxLen:        10000,
 		DLQConsumerGroup: "dlq-group",
 		SecretsFile:      "/etc/datastorage/secrets/valkey-secrets.yaml",
 		PasswordKey:      "password",
@@ -1457,6 +1519,9 @@ func dataStorageRedisConfig(kn *kubernautv1alpha2.Kubernaut) dataStorageRedisYAM
 			t.KeyFile = "/etc/valkey-tls/client/tls.key"
 		}
 	}
+	if knV2.Spec.DataStorage.Redis != nil {
+		r.DLQMaxLen = intPtrDefault(knV2.Spec.DataStorage.Redis.DLQMaxLen, r.DLQMaxLen)
+	}
 	r.TLS = t
 	return r
 }
@@ -1465,13 +1530,21 @@ func dataStorageRedisConfig(kn *kubernautv1alpha2.Kubernaut) dataStorageRedisYAM
 func AIAnalysisConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	ns := kn.Namespace
+	lowConfidenceFloor, hasLowConfidenceFloor, err := parseLowConfidenceFloor(kn.Spec.AIAnalysis.LowConfidenceFloor)
+	if err != nil {
+		return nil, err
+	}
 	rego := aiAnalysisRegoYAML{
 		PolicyPath: "/etc/aianalysis/policies/approval.rego",
+	}
+	if hasLowConfidenceFloor {
+		rego.LowConfidenceFloor = &lowConfidenceFloor
 	}
 	if kn.Spec.AIAnalysis.ConfidenceThreshold != "" {
 		rego.ConfidenceThreshold = kn.Spec.AIAnalysis.ConfidenceThreshold
 	}
 	cfg := aiAnalysisConfigYAML{
+		TLSCAFile:  InterServiceTLSCAFileFor(knV2),
 		TLSProfile: o.tlsProfile,
 		Logging:    loggingYAML{Level: withDefault(kn.Spec.AIAnalysis.Logging.Level, "info")},
 		Controller: newControllerBlock("aianalysis.kubernaut.ai"),
@@ -1497,6 +1570,18 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha
 	return yamlConfigMap(ObjectMeta(kn, "aianalysis-config", ComponentAIAnalysis), "config.yaml", "aianalysis config", cfg)
 }
 
+func parseLowConfidenceFloor(raw string) (float64, bool, error) {
+	if raw == "" {
+		return 0, false, nil
+	}
+
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil || !(value > 0 && value <= 1) {
+		return 0, false, fmt.Errorf("invalid aiAnalysis.lowConfidenceFloor %q: expected a number greater than 0 and at most 1", raw)
+	}
+	return value, true, nil
+}
+
 // SignalProcessingConfigMap builds the signalprocessing-config ConfigMap.
 func SignalProcessingConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
@@ -1508,6 +1593,7 @@ func SignalProcessingConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv
 		MaxRetries:    3,
 	}
 	cfg := signalProcessingConfigYAML{
+		TLSCAFile:  InterServiceTLSCAFileFor(knV2),
 		TLSProfile: o.tlsProfile,
 		Logging:    loggingYAML{Level: withDefault(kn.Spec.SignalProcessing.Logging.Level, "info")},
 		Controller: newControllerBlock("signalprocessing.kubernaut.ai"),
@@ -1532,15 +1618,12 @@ func SignalProcessingConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv
 	return yamlConfigMap(ObjectMeta(kn, "signalprocessing-config", ComponentSignalProcessing), "config.yaml", "signalprocessing config", cfg)
 }
 
-// ProactiveSignalMappingsConfigMap builds the default signalprocessing-proactive-signal-mappings
-// ConfigMap with BR-SP-106 proactive signal mode mappings. Returns nil when the user
-// provides their own ConfigMap via spec.signalProcessing.proactiveSignalMappings.
+// ProactiveSignalMappingsConfigMap builds the built-in Signal Processing mappings
+// ConfigMap with BR-SP-106 proactive signal mode mappings. The operator
+// intentionally exposes no CRD override; see docs/design/ADR-CRD-002-signalprocessing-proactive-mappings.md.
 func ProactiveSignalMappingsConfigMap(kn *kubernautv1alpha2.Kubernaut) *corev1.ConfigMap {
-	if kn.Spec.SignalProcessing.ProactiveSignalMappings != nil {
-		return nil
-	}
 	return &corev1.ConfigMap{
-		ObjectMeta: ObjectMeta(kn, "signalprocessing-proactive-signal-mappings", ComponentSignalProcessing),
+		ObjectMeta: ObjectMeta(kn, SignalProcessingProactiveSignalMappingsConfigMapName, ComponentSignalProcessing),
 		Data: map[string]string{
 			"proactive-signal-mappings.yaml": `proactive_signal_mappings:
   PredictedOOMKill: OOMKilled
@@ -1558,6 +1641,7 @@ func RemediationOrchestratorConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kub
 	ro := &kn.Spec.RemediationOrchestrator
 	ns := kn.Namespace
 	cfg := remediationOrchestratorConfigYAML{
+		TLSCAFile:  InterServiceTLSCAFileFor(knV2),
 		TLSProfile: o.tlsProfile,
 		Controller: newControllerBlock("remediationorchestrator.kubernaut.ai"),
 		Logging:    loggingYAML{Level: withDefault(ro.Logging.Level, "info")},
@@ -1629,7 +1713,12 @@ func WorkflowExecutionConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernaut
 	if we.FailedExecutionRetentionSeconds != nil {
 		retentionSeconds = *we.FailedExecutionRetentionSeconds
 	}
+	tlsCAFile := InterServiceTLSCAFileFor(knV2)
+	if we.Ansible.CACertSecretRef != nil {
+		tlsCAFile = "/etc/combined-ca/ca-bundle.crt"
+	}
 	cfg := workflowExecutionConfigYAML{
+		TLSCAFile:  tlsCAFile,
 		TLSProfile: o.tlsProfile,
 		Logging:    loggingYAML{Level: withDefault(we.Logging.Level, "info")},
 		Execution: weExecutionYAML{
@@ -1683,8 +1772,9 @@ func EffectivenessMonitorConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubern
 	o := resolveOpts(opts)
 	em := &kn.Spec.EffectivenessMonitor
 	cfg := effectivenessMonitorConfigYAML{
+		TLSCAFile:  InterServiceTLSCAFileFor(knV2),
 		TLSProfile: o.tlsProfile,
-		Logging:    loggingYAML{Level: withDefault(em.Logging.Level, "info")},
+		Logging:    loggingYAML{Level: withDefault(em.Logging.Level, "INFO")},
 		Assessment: emAssessmentYAML{
 			StabilizationWindow: withDefault(em.Assessment.StabilizationWindow, "30s"),
 			ValidityWindow:      withDefault(em.Assessment.ValidityWindow, "300s"),
@@ -1731,6 +1821,7 @@ func NotificationControllerConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kube
 		Buffer:    buf,
 	}
 	cfg := notificationControllerConfigYAML{
+		TLSCAFile:  InterServiceTLSCAFileFor(knV2),
 		TLSProfile: o.tlsProfile,
 		Logging:    loggingYAML{Level: withDefault(kn.Spec.Notification.Logging.Level, "info")},
 		Controller: newControllerBlock("notification.kubernaut.ai"),
@@ -1756,31 +1847,12 @@ func NotificationControllerConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kube
 	return yamlConfigMap(ObjectMeta(kn, "notification-controller-config", ComponentNotification), "config.yaml", "notification-controller config", cfg)
 }
 
-// NotificationRoutingConfigMap builds the notification-routing-config ConfigMap.
-// When Slack is configured, routes are generated; otherwise a console-only fallback is used.
+// NotificationRoutingConfigMap builds the provider-neutral console fallback routing ConfigMap.
+// Provider-specific routes are supplied through an administrator-owned ConfigMap.
 func NotificationRoutingConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
-	slack := kn.Spec.Notification.Slack
-	channel := slack.Channel
-	if channel == "" {
-		channel = "#kubernaut-alerts"
-	}
 	metadata := ObjectMeta(kn, "notification-routing-config", ComponentNotification)
-	if slack.SecretName != "" {
-		cfg := notificationRoutingSlackYAML{
-			Route: notificationRoutingSlackRoute{
-				Receiver: "slack",
-				MatchRE:  map[string]string{"severity": ".*"},
-			},
-			Receivers: []notificationRoutingSlackReceiver{
-				{Name: "slack"},
-			},
-		}
-		cfg.Receivers[0].Slack.Channel = channel
-		cfg.Receivers[0].Slack.CredentialsSecretName = slack.SecretName
-		return yamlConfigMap(metadata, "routing.yaml", "notification-routing slack config", cfg)
-	}
 	console := notificationRoutingConsoleYAML{
-		Route: notificationRoutingSlackRoute{
+		Route: notificationRoutingRoute{
 			Receiver: "console",
 		},
 		Receivers: []notificationRoutingConsoleReceiver{
@@ -1790,11 +1862,15 @@ func NotificationRoutingConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.Conf
 	return yamlConfigMap(metadata, "routing.yaml", "notification-routing console config", console)
 }
 
-// KubernautAgentConfigMap builds the kubernaut-agent-config ConfigMap.
 // applyKALLMProfileFields copies the optional provider-specific and
 // credential fields from a resolved LLM profile onto llmCfg, leaving zero
 // values (and thus YAML omission) for anything the profile doesn't set.
 func applyKALLMProfileFields(llmCfg *kaLLMYAML, profile kubernautv1alpha2.LLMProfileSpec) {
+	applyKALLMProfileFieldsForRole(llmCfg, profile, llmTLSRoleInvestigation)
+}
+
+// applyKALLMProfileFieldsForRole applies provider and credential fields for a role-specific LLM profile.
+func applyKALLMProfileFieldsForRole(llmCfg *kaLLMYAML, profile kubernautv1alpha2.LLMProfileSpec, role string) {
 	if profile.VertexProject != "" {
 		llmCfg.VertexProject = profile.VertexProject
 	}
@@ -1807,14 +1883,15 @@ func applyKALLMProfileFields(llmCfg *kaLLMYAML, profile kubernautv1alpha2.LLMPro
 	if profile.AzureAPIVersion != "" {
 		llmCfg.AzureApiVersion = profile.AzureAPIVersion
 	}
-	if profile.TLSCaFile != "" {
-		llmCfg.TLSCaFile = profile.TLSCaFile
+	caFile, certFile, keyFile := llmTLSMaterialPathsForRole(profile, profile, role)
+	if caFile != "" {
+		llmCfg.TLSCaFile = caFile
 	}
-	if profile.TLSCertFile != "" {
-		llmCfg.TLSCertFile = profile.TLSCertFile
+	if certFile != "" {
+		llmCfg.TLSCertFile = certFile
 	}
-	if profile.TLSKeyFile != "" {
-		llmCfg.TLSKeyFile = profile.TLSKeyFile
+	if keyFile != "" {
+		llmCfg.TLSKeyFile = keyFile
 	}
 	if profile.OAuth2.Enabled {
 		llmCfg.OAuth2 = &kaOAuth2YAML{
@@ -1830,11 +1907,11 @@ func applyKALLMProfileFields(llmCfg *kaLLMYAML, profile kubernautv1alpha2.LLMPro
 // kaAlignmentConfig builds the AI alignment-check config block, or nil when
 // alignment checking is disabled.
 //
-// #423: llmProfileRef (v1alpha2 AlignmentCheckSpec, F5) replaces the
-// v1alpha1 AlignmentCheckLLMSpec literal-field pattern. The profile reference
-// is the only supported v1alpha2 source because it follows the same credential
-// resolution path as every other LLM consumer.
-func kaAlignmentConfig(kn *kubernautv1alpha2.Kubernaut, ac kubernautv1alpha2.AlignmentCheckSpec, llmProfileRef string) *kaAlignmentYAML {
+// #419: alignment check is a sibling agent, not a partial override of the
+// investigation agent. Its profile is resolved independently and rendered as
+// a complete LLM configuration so provider, credential, OAuth2, TLS, and
+// tuning fields cannot be inherited accidentally from investigation.
+func kaAlignmentConfig(kn *kubernautv1alpha2.Kubernaut, ac kubernautv1alpha2.AlignmentCheckSpec, kaProfile kubernautv1alpha2.LLMProfileSpec) *kaAlignmentYAML {
 	if !ac.Enabled {
 		return nil
 	}
@@ -1843,16 +1920,54 @@ func kaAlignmentConfig(kn *kubernautv1alpha2.Kubernaut, ac kubernautv1alpha2.Ali
 		Timeout:       withDefault(ac.Timeout, "10s"),
 		MaxStepTokens: intDefault(ac.MaxStepTokens, 500),
 	}
-	if llmProfileRef != "" {
-		if profile, ok := ResolveLLMProfile(kn, llmProfileRef); ok {
-			cfg.LLM = &kaAlignLLMYAML{
-				Provider: profile.Provider,
-				Model:    profile.Model,
-				Endpoint: profile.Endpoint,
-			}
-		}
+	if profile, ok := ResolveLLMProfile(kn, EffectiveAlignmentCheckLLMProfileRef(kn)); ok {
+		cfg.LLM = kaAlignmentLLMConfig(profile, kaProfile)
 	}
 	return cfg
+}
+
+func kaAlignmentLLMConfig(profile, kaProfile kubernautv1alpha2.LLMProfileSpec) *kaAlignLLMYAML {
+	credentialsMountPath := "/etc/kubernaut-agent/credentials"
+	if profile.CredentialsSecretName != "" && profile.CredentialsSecretName != kaProfile.CredentialsSecretName {
+		credentialsMountPath = alignmentCredentialsMountPath
+	}
+	credFile := llmCredentialsFileAPIKey
+	if profile.Provider == LLMProviderVertexAI {
+		credFile = llmCredentialsFileVertexJSON
+	}
+
+	llm := &kaAlignLLMYAML{
+		Provider:        profile.Provider,
+		Model:           profile.Model,
+		Endpoint:        profile.Endpoint,
+		Temperature:     parseLLMTemperature(profile.Temperature),
+		MaxRetries:      intPtrDefault(profile.MaxRetries, 3),
+		TimeoutSeconds:  intPtrDefault(profile.TimeoutSeconds, 120),
+		VertexProject:   profile.VertexProject,
+		VertexLocation:  profile.VertexLocation,
+		BedrockRegion:   profile.BedrockRegion,
+		AzureApiVersion: profile.AzureAPIVersion,
+		TLSCaFile:       profile.TLSCaFile,
+		Reasoning:       kaReasoningFromSpec(profile.Reasoning),
+	}
+	llm.TLSCaFile, llm.TLSCertFile, llm.TLSKeyFile = llmTLSMaterialPathsForRole(profile, kaProfile, llmTLSRoleAlignment)
+	if profile.CredentialsSecretName != "" {
+		llm.APIKeyFile = credentialsMountPath + "/" + credFile
+	}
+	if profile.OAuth2.Enabled {
+		credentialsDir := alignmentOAuth2MountPath
+		if kaProfile.OAuth2.Enabled && profile.OAuth2.CredentialsSecretRef != "" &&
+			profile.OAuth2.CredentialsSecretRef == kaProfile.OAuth2.CredentialsSecretRef {
+			credentialsDir = "/etc/kubernaut-agent/oauth2"
+		}
+		llm.OAuth2 = &kaOAuth2YAML{
+			Enabled:        true,
+			TokenURL:       profile.OAuth2.TokenURL,
+			CredentialsDir: credentialsDir,
+			Scopes:         profile.OAuth2.Scopes,
+		}
+	}
+	return llm
 }
 
 // kaSafetyConfig builds the AI safety-guardrail config block (prompt
@@ -1929,6 +2044,7 @@ func kaToolsConfig(knV2 *kubernautv1alpha2.Kubernaut) *kaIntegrationsToolsYAML {
 	}
 }
 
+// KubernautAgentConfigMap builds the kubernaut-agent-config ConfigMap.
 func KubernautAgentConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	ns := kn.Namespace
@@ -1936,6 +2052,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1a
 	kaProfile, _ := ResolveLLMProfile(kn, EffectiveInvestigationLLMProfileRef(kn))
 	maxTurns := intPtrDefault(ka.Investigation.MaxTurns, 40)
 	maxEvidenceHandoffBytes := intPtrDefault(ka.WorkflowDiscovery.MaxEvidenceHandoffBytes, 262144)
+	maxConcurrentInvestigations := intDefault(ka.Session.MaxConcurrentInvestigations, 50)
 
 	cfg := kubernautAgentConfigYAML{
 		Runtime: kaRuntimeYAML{
@@ -1979,13 +2096,14 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1a
 		}
 	}
 
-	if ttl := ka.Session.TTL; ttl != "" {
-		cfg.Runtime.Session = &kaSessionYAML{TTL: ttl}
+	cfg.Runtime.Session = &kaSessionYAML{
+		TTL:                         ka.Session.TTL,
+		MaxConcurrentInvestigations: maxConcurrentInvestigations,
 	}
 
 	applyKALLMProfileFields(&cfg.AI.LLM, kaProfile)
 
-	cfg.AI.AlignmentCheck = kaAlignmentConfig(kn, ka.AlignmentCheck, knV2.Spec.KubernautAgent.AlignmentCheck.LLMProfileRef)
+	cfg.AI.AlignmentCheck = kaAlignmentConfig(kn, ka.AlignmentCheck, kaProfile)
 
 	threshold := intDefault(ka.Summarizer.Threshold, 8000)
 	maxOutput := intDefault(ka.Summarizer.MaxToolOutputSize, 100000)
@@ -2030,29 +2148,48 @@ func parseLLMTemperature(s string) *float64 {
 // credential handling on top of the base agent profile.
 func resolveKAPhaseModelOverride(kn *kubernautv1alpha2.Kubernaut, phase, ref string, kaProfile kubernautv1alpha2.LLMProfileSpec) llmPhaseOverrideYAML {
 	phaseProfile, _ := ResolveLLMProfile(kn, ref)
+	credentialsMountPath := "/etc/kubernaut-agent/credentials"
+	if phaseProfile.CredentialsSecretName != "" && phaseProfile.CredentialsSecretName != kaProfile.CredentialsSecretName {
+		credentialsMountPath = phaseCredentialsMountPath(phase)
+	}
+	credFile := llmCredentialsFileAPIKey
+	if phaseProfile.Provider == LLMProviderVertexAI {
+		credFile = llmCredentialsFileVertexJSON
+	}
 	override := llmPhaseOverrideYAML{
-		Provider:       phaseProfile.Provider,
-		Model:          phaseProfile.Model,
-		Endpoint:       phaseProfile.Endpoint,
-		VertexProject:  phaseProfile.VertexProject,
-		VertexLocation: phaseProfile.VertexLocation,
-		Reasoning:      kaReasoningFromSpec(phaseProfile.Reasoning),
+		Provider: phaseProfile.Provider,
+		Model:    phaseProfile.Model,
+		Endpoint: phaseProfile.Endpoint,
 		// #241: a phase's own temperature is independently configurable
 		// from the base agent's -- mirrors the base-profile fix (#239) so a
 		// phase pinned to a model that rejects an explicit temperature can
 		// omit it even when the base agent sets one, and vice versa.
-		Temperature: parseLLMTemperature(phaseProfile.Temperature),
+		Temperature:     parseLLMTemperature(phaseProfile.Temperature),
+		MaxRetries:      intPtrDefault(phaseProfile.MaxRetries, 3),
+		TimeoutSeconds:  intPtrDefault(phaseProfile.TimeoutSeconds, 120),
+		VertexProject:   phaseProfile.VertexProject,
+		VertexLocation:  phaseProfile.VertexLocation,
+		BedrockRegion:   phaseProfile.BedrockRegion,
+		AzureApiVersion: phaseProfile.AzureAPIVersion,
+		TLSCaFile:       phaseProfile.TLSCaFile,
+		Reasoning:       kaReasoningFromSpec(phaseProfile.Reasoning),
 	}
-	// #233: only render a dedicated apiKeyFile when the phase's profile
-	// names a different credentialsSecretName than KA's own -- otherwise
-	// the phase keeps using KA's already-mounted base credentials (see
-	// phaseCredentialsMountPath/deployments.go).
-	if phaseProfile.CredentialsSecretName != "" && phaseProfile.CredentialsSecretName != kaProfile.CredentialsSecretName {
-		credFile := llmCredentialsFileAPIKey
-		if phaseProfile.Provider == LLMProviderVertexAI {
-			credFile = llmCredentialsFileVertexJSON
+	override.TLSCaFile, override.TLSCertFile, override.TLSKeyFile = llmTLSMaterialPathsForRole(phaseProfile, kaProfile, llmTLSRoleWorkflowDiscovery)
+	if phaseProfile.CredentialsSecretName != "" {
+		override.APIKeyFile = credentialsMountPath + "/" + credFile
+	}
+	if phaseProfile.OAuth2.Enabled {
+		credentialsDir := workflowOAuth2MountPath
+		if kaProfile.OAuth2.Enabled && phaseProfile.OAuth2.CredentialsSecretRef != "" &&
+			phaseProfile.OAuth2.CredentialsSecretRef == kaProfile.OAuth2.CredentialsSecretRef {
+			credentialsDir = "/etc/kubernaut-agent/oauth2"
 		}
-		override.APIKeyFile = phaseCredentialsMountPath(phase) + "/" + credFile
+		override.OAuth2 = &kaOAuth2YAML{
+			Enabled:        true,
+			TokenURL:       phaseProfile.OAuth2.TokenURL,
+			CredentialsDir: credentialsDir,
+			Scopes:         phaseProfile.OAuth2.Scopes,
+		}
 	}
 	return override
 }
@@ -2106,6 +2243,7 @@ func AuthWebhookConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 		Buffer:    buf,
 	}
 	cfg := authWebhookConfigYAML{
+		TLSCAFile:  InterServiceTLSCAFileFor(knV2),
 		TLSProfile: o.tlsProfile,
 		Logging:    loggingYAML{Level: withDefault(kn.Spec.AuthWebhook.Logging.Level, "info")},
 		Webhook: authWebhookWebhookYAML{
@@ -2151,6 +2289,7 @@ func APIFrontendServiceCAConfigMap(kn *kubernautv1alpha2.Kubernaut) *corev1.Conf
 	return serviceCAConfigMap(kn, "apifrontend-service-ca", ComponentAPIFrontend)
 }
 
+// serviceCAConfigMap creates a service-CA injection ConfigMap for a component.
 func serviceCAConfigMap(kn *kubernautv1alpha2.Kubernaut, name, component string) *corev1.ConfigMap {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: ObjectMeta(kn, name, component),
@@ -2161,6 +2300,7 @@ func serviceCAConfigMap(kn *kubernautv1alpha2.Kubernaut, name, component string)
 	return cm
 }
 
+// withDefault returns val when it is non-empty, otherwise it returns def.
 func withDefault(val, def string) string {
 	if val == "" {
 		return def
@@ -2168,6 +2308,7 @@ func withDefault(val, def string) string {
 	return val
 }
 
+// intDefault returns val when it is non-zero, otherwise it returns def.
 func intDefault(val, def int) int {
 	if val != 0 {
 		return val
@@ -2535,7 +2676,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 			KABearerTokenFile: "/var/run/secrets/kubernetes.io/serviceaccount/token",
 			KATLSCAFile:       apifrontendTLSCAFile,
 			DSTLSCAFile:       apifrontendTLSCAFile,
-			LLM:               afAgentLLMConfig(afProfile),
+			LLM:               afAgentLLMConfigForRole(afProfile, afProfile, llmTLSRoleAPIFrontend),
 		},
 		MCP: afMCPConfig(knV2),
 		AgentCard: afAgentCardYAML{
@@ -2602,8 +2743,8 @@ func afSeverityTriageConfig(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1al
 	case st != nil && st.LLMProfileRef != "":
 		triageProfile, ok := ResolveLLMProfile(kn, st.LLMProfileRef)
 		if ok {
-			llm := afAgentLLMConfig(triageProfile)
 			afProfile, _ := ResolveLLMProfile(kn, AFLLMProfileRef(kn))
+			llm := afAgentLLMConfigForRole(triageProfile, afProfile, llmTLSRoleSeverityTriage)
 			if triageProfile.CredentialsSecretName != "" &&
 				triageProfile.CredentialsSecretName != afProfile.CredentialsSecretName {
 				credFile := llmCredentialsFileAPIKey
@@ -2632,6 +2773,10 @@ func afSeverityTriageConfig(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1al
 //
 // This translation will be removed when upstream normalizes (kubernaut#1488).
 func afAgentLLMConfig(llm kubernautv1alpha2.LLMProfileSpec) afAgentLLMYAML {
+	return afAgentLLMConfigForRole(llm, llm, llmTLSRoleAPIFrontend)
+}
+
+func afAgentLLMConfigForRole(llm, base kubernautv1alpha2.LLMProfileSpec, role string) afAgentLLMYAML {
 	provider := llm.Provider
 	if provider == "" {
 		provider = LLMProviderVertexAI
@@ -2648,15 +2793,16 @@ func afAgentLLMConfig(llm kubernautv1alpha2.LLMProfileSpec) afAgentLLMYAML {
 		endpoint = strings.TrimRight(endpoint, "/") + "/v1"
 	}
 
+	caFile, certFile, keyFile := llmTLSMaterialPathsForRole(llm, base, role)
 	cfg := afAgentLLMYAML{
 		Provider:       afProvider,
 		Model:          llm.Model,
 		Endpoint:       endpoint,
 		VertexProject:  llm.VertexProject,
 		VertexLocation: llm.VertexLocation,
-		TLSCaFile:      llm.TLSCaFile,
-		TLSCertFile:    llm.TLSCertFile,
-		TLSKeyFile:     llm.TLSKeyFile,
+		TLSCaFile:      caFile,
+		TLSCertFile:    certFile,
+		TLSKeyFile:     keyFile,
 	}
 
 	// #279: every provider, including vertex_ai, renders an explicit

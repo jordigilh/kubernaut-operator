@@ -29,8 +29,9 @@ const (
 
 // KubernautSpec defines the desired state of a Kubernaut deployment on
 // Kubernetes. The operator deploys all Kubernaut services into the CR's
-// namespace; OpenShift monitoring, service-CA, and Routes are optional
-// capability-gated adapters.
+// namespace; OpenShift monitoring and service-CA are optional capability-gated
+// adapters. External exposure resources, including Routes, remain
+// administrator-owned.
 //
 // v1alpha2 is the sole served/storage shape for this CRD. Older objects must
 // follow the documented export/transform/recreate migration procedure. See
@@ -40,8 +41,11 @@ type KubernautSpec struct {
 	// +optional
 	Image ImageSpec `json:"image,omitempty"`
 
-	// BYO PostgreSQL connection. The operator validates the secret and derives
-	// the DataStorage db-secrets.yaml Secret automatically.
+	// BYO PostgreSQL connection. The operator validates and mounts this
+	// administrator-owned Secret directly; it never creates a competing
+	// DataStorage credential Secret. Required keys are POSTGRES_USER,
+	// POSTGRES_PASSWORD, POSTGRES_DB, and db-secrets.yaml containing matching
+	// username/password values.
 	PostgreSQL PostgreSQLSpec `json:"postgresql"`
 
 	// BYO Valkey/Redis connection.
@@ -115,10 +119,9 @@ type KubernautSpec struct {
 	// +optional
 	DataStorage DataStorageSpec `json:"dataStorage,omitempty"`
 
-	// NetworkPolicies selects and tunes the supported native policy adapter.
-	// Provider policy resources are created only after active installation and
-	// runtime GVK/schema compatibility are positively identified; no raw
-	// Kubernetes NetworkPolicy or static API-server CIDR fallback is used.
+	// NetworkPolicies configures operator-managed, ingress-only standard
+	// Kubernetes NetworkPolicy objects. Egress and API-server reachability remain
+	// administrator-owned; applied objects do not attest CNI enforcement.
 	// +optional
 	NetworkPolicies NetworkPoliciesSpec `json:"networkPolicies,omitempty"`
 
@@ -205,7 +208,8 @@ type ImageSpec struct {
 // PostgreSQLSpec defines the BYO PostgreSQL connection.
 type PostgreSQLSpec struct {
 	// Name of the Secret containing PostgreSQL credentials.
-	// Required keys: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB.
+	// Required keys: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, and
+	// db-secrets.yaml containing matching username/password values.
 	// +kubebuilder:validation:MinLength=1
 	SecretName string `json:"secretName"`
 
@@ -340,6 +344,12 @@ type FleetMCPGatewaySpec struct {
 	// Namespace restricting MCP Gateway provider CRD watches and RBAC.
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
+
+	// TLS selects the CA trust source for MCP Gateway session connections.
+	// Omitted source defaults to the operator's resolved inter-service trust;
+	// this is a trust-source override, not a TLS disable switch.
+	// +optional
+	TLS *FleetTrustSpec `json:"tls,omitempty"`
 }
 
 // FleetScopeCheckSpec configures the backend used for federated scope checks.
@@ -569,16 +579,6 @@ type CACertSecretRef struct {
 	Key string `json:"key,omitempty"`
 }
 
-// CACertConfigMapRef references a ConfigMap containing a PEM-encoded CA bundle.
-type CACertConfigMapRef struct {
-	// Name of the ConfigMap.
-	Name string `json:"name"`
-	// Key within the ConfigMap containing the CA PEM. Default: "ca.crt".
-	// +kubebuilder:default="ca.crt"
-	// +optional
-	Key string `json:"key,omitempty"`
-}
-
 // SecretKeyRef references a key within a Secret.
 type SecretKeyRef struct {
 	// Name of the Secret.
@@ -591,9 +591,12 @@ type SecretKeyRef struct {
 
 // NotificationSpec configures the notification controller.
 type NotificationSpec struct {
-	// Slack quickstart shortcut.
+	// Provider-neutral credentials projected into the Notification credentials directory.
+	// Each name is the file name used by routing credentialRef values.
 	// +optional
-	Slack SlackSpec `json:"slack,omitempty"`
+	// +listType=map
+	// +listMapKey=name
+	Credentials []NotificationCredentialSpec `json:"credentials,omitempty"`
 
 	// Optional routing ConfigMap reference for advanced notification routing.
 	// Must contain key "routing.yaml" with Alertmanager-style routing rules.
@@ -608,17 +611,30 @@ type NotificationSpec struct {
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
-// SlackSpec configures Slack delivery for notifications.
-type SlackSpec struct {
-	// Name of the Secret containing the Slack webhook URL (key: "webhook-url").
-	// Empty = no Slack, console-only delivery.
-	// +optional
-	SecretName string `json:"secretName,omitempty"`
+// NotificationCredentialSpec maps one namespace-local Secret key to a named credential file.
+type NotificationCredentialSpec struct {
+	// Name is the projected credential file name and routing credentialRef value.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$`
+	Name string `json:"name"`
 
-	// Slack channel for notifications.
-	// +kubebuilder:default="#kubernaut-alerts"
-	// +optional
-	Channel string `json:"channel,omitempty"`
+	// SecretRef identifies the namespace-local Secret key containing the credential.
+	SecretRef NotificationSecretRef `json:"secretRef"`
+}
+
+// NotificationSecretRef references a key in a Secret in the Kubernaut resource namespace.
+type NotificationSecretRef struct {
+	// Name is the Secret name.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	Name string `json:"name"`
+
+	// Key is the Secret data key containing the credential.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9._-]+$`
+	Key string `json:"key"`
 }
 
 // ConfigMapRef references a ConfigMap by name.
@@ -650,6 +666,12 @@ type AIAnalysisSpec struct {
 	// +optional
 	ConfidenceThreshold string `json:"confidenceThreshold,omitempty"`
 
+	// Optional floor for auto-proceeding with a Kubernaut Agent-selected
+	// workflow during investigation. Expressed as a decimal string, e.g.
+	// "0.7", and rendered as a numeric value in the AI Analysis config.
+	// +optional
+	LowConfidenceFloor string `json:"lowConfidenceFloor,omitempty"`
+
 	// +optional
 	Logging LoggingSpec `json:"logging,omitempty"`
 
@@ -664,11 +686,6 @@ type SignalProcessingSpec struct {
 	// Policy ConfigMap reference. Required.
 	// The ConfigMap must contain key "policy.rego".
 	Policy PolicyConfigMapRef `json:"policy"`
-
-	// Optional proactive signal mappings ConfigMap reference.
-	// Must contain key "proactive-signal-mappings.yaml".
-	// +optional
-	ProactiveSignalMappings *ConfigMapRef `json:"proactiveSignalMappings,omitempty"`
 
 	// +optional
 	Logging LoggingSpec `json:"logging,omitempty"`
@@ -1181,6 +1198,13 @@ type SessionSpec struct {
 	// +kubebuilder:default="30m"
 	// +optional
 	TTL string `json:"ttl,omitempty"`
+
+	// Maximum number of investigations that may run concurrently on one
+	// Kubernaut Agent replica. The default matches the upstream Helm profile.
+	// +kubebuilder:default=50
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	MaxConcurrentInvestigations int `json:"maxConcurrentInvestigations,omitempty"`
 }
 
 // AuditSpec configures KA audit logging.
@@ -1357,8 +1381,9 @@ type AnomalySpec struct {
 
 // LLMProfileSpec defines a single, named LLM provider configuration.
 // Profiles live in spec.llmProfiles and are referenced by name (llmProfileRef)
-// from KA, API Frontend, and API Frontend's severity-triage configuration,
-// decoupling each component's LLM identity from a single shared config.
+// from KA's sibling investigation, workflow-discovery, and alignment agents,
+// API Frontend, and API Frontend's severity-triage configuration, decoupling
+// each component's LLM identity from a single shared config.
 type LLMProfileSpec struct {
 	// LLM provider name (e.g. "openai", "vertexai", "bedrock", "azure").
 	// +kubebuilder:validation:MinLength=1
@@ -1415,6 +1440,12 @@ type LLMProfileSpec struct {
 	// Path to a CA certificate file for TLS to the LLM endpoint.
 	// +optional
 	TLSCaFile string `json:"tlsCaFile,omitempty"`
+
+	// Optional Secret containing the PEM CA certificate used by the LLM
+	// endpoint. The default key is "ca.crt". When set, tlsCaFile must name
+	// the deterministic path where the operator mounts the selected key.
+	// +optional
+	TLSCaSecretRef *CACertSecretRef `json:"tlsCaSecretRef,omitempty"`
 
 	// Path to a client certificate file for mTLS to the LLM endpoint.
 	// Must be set together with TLSKeyFile.
@@ -1500,21 +1531,19 @@ type GatewaySpec struct {
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
-	// Route configuration for OCP external access.
-	// +optional
-	Route RouteSpec `json:"route,omitempty"`
-
-	// Ingress configures portable Kubernetes exposure. It is independent from
-	// the optional OpenShift Route above.
-	// +optional
-	Ingress IngressSpec `json:"ingress,omitempty"`
-
 	// Gateway server and middleware configuration.
 	// +optional
 	Config GatewayConfigSpec `json:"config,omitempty"`
 
 	// +optional
 	Logging LoggingSpec `json:"logging,omitempty"`
+
+	// Authentication configures Gateway TokenReview/SAR enforcement and the
+	// AlertManager bearer credential used by the operator-managed webhook
+	// adapter. Authentication is disabled by default so a minimal Gateway can
+	// deploy without requiring an additional administrator-owned token Secret.
+	// +optional
+	Auth GatewayAuthSpec `json:"auth,omitempty"`
 
 	// Resource requirements.
 	// +optional
@@ -1526,23 +1555,42 @@ type GatewaySpec struct {
 	// back to spec.fleet.oauth2.credentialsSecretRef when unset.
 	// +optional
 	Fleet *FleetOverrideSpec `json:"fleet,omitempty"`
+}
 
-	// Name of a Secret (in this Kubernaut CR's namespace) containing a
-	// bearer token AlertManager presents when calling Gateway's webhook
-	// endpoint. The Secret must contain a "token" key holding a valid
-	// Kubernetes ServiceAccount token for an identity authorized to call
-	// this Gateway (bound to the generated gateway-signal-source
-	// ClusterRole -- see docs/security/credentials-and-tls.md).
-	//
-	// This is a bring-your-own credential, consistent with
-	// spec.postgresql.secretName/spec.llmProfiles[*].credentialsSecretName:
-	// the operator never mints or stores this token itself. When unset,
-	// the generated AlertmanagerConfig omits webhook authentication
-	// entirely (Gateway will reject unauthenticated calls) and the CR's
-	// ConditionAlertManagerAuthConfigured status condition explains why.
-	// See docs/installation/03-deploy.md "Configure AlertManager".
+// GatewayAuthSpec configures the Gateway authentication boundary. The
+// operator renders AuthenticationEnabled into the Gateway server config and
+// applies the same policy to the AlertManager adapter credential reference.
+type GatewayAuthSpec struct {
+	// Whether Gateway TokenReview/SAR authentication is enforced. Unset
+	// defaults to false so the minimal Gateway deployment does not require an
+	// additional AlertManager token Secret. Set true together with
+	// alertManager.tokenSecretName to enable authenticated operator-managed
+	// Alertmanager delivery.
+	// +kubebuilder:default=false
 	// +optional
-	AlertManagerTokenSecretName string `json:"alertManagerTokenSecretName,omitempty"`
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// AlertManager configures the administrator-owned bearer credential used by
+	// the operator-managed AlertmanagerConfig webhook.
+	// +optional
+	AlertManager GatewayAlertManagerAuthSpec `json:"alertManager,omitempty"`
+}
+
+// GatewayAlertManagerAuthSpec identifies the Secret used by AlertManager when
+// it calls the Gateway webhook. The Secret is read-only BYO material in the
+// Kubernaut CR namespace and must contain a "token" key.
+type GatewayAlertManagerAuthSpec struct {
+	// Name of the administrator-owned Secret containing the Kubernetes
+	// ServiceAccount bearer token. The operator emits only a SecretKeySelector;
+	// token bytes never enter rendered configuration, status, or logs.
+	// +optional
+	TokenSecretName string `json:"tokenSecretName,omitempty"`
+}
+
+// AuthenticationEnabled returns the effective Gateway authentication policy.
+// A nil auth block or nil enabled pointer preserves the deployable default.
+func (s *GatewayAuthSpec) AuthenticationEnabled() bool {
+	return s != nil && s.Enabled != nil && *s.Enabled
 }
 
 // ConsoleSpec configures the standalone web console (A2A chat UI).
@@ -1558,19 +1606,23 @@ type ConsoleSpec struct {
 	// +optional
 	Auth ConsoleAuthSpec `json:"auth,omitempty"`
 
-	// OCP Route configuration for external access.
-	// +optional
-	Route ConsoleRouteSpec `json:"route,omitempty"`
-
-	// Ingress configures portable Kubernetes exposure. It is independent from
-	// the optional OpenShift Route above and is disabled unless explicitly
-	// enabled.
-	// +optional
-	Ingress IngressSpec `json:"ingress,omitempty"`
-
 	// Resource requirements for the console container.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Whether the console's raw LLM extended-thinking panel and its
+	// "Hide/Show raw thinking" header button are enabled. Defaults to false
+	// for new users; set to true only when an administrator explicitly wants
+	// the diagnostic view exposed.
+	// +kubebuilder:default=false
+	// +optional
+	EnableRawThinking *bool `json:"enableRawThinking,omitempty"`
+}
+
+// EnableRawThinkingValue returns whether the console's raw-thinking panel
+// should be enabled. It defaults to false when unset.
+func (s *ConsoleSpec) EnableRawThinkingValue() bool {
+	return s.EnableRawThinking != nil && *s.EnableRawThinking
 }
 
 // ConsoleAuthSpec configures authentication for the console oauth2-proxy.
@@ -1579,18 +1631,22 @@ type ConsoleAuthSpec struct {
 	// Required keys: client-id, client-secret, cookie-secret.
 	// +kubebuilder:validation:MinLength=1
 	SecretName string `json:"secretName,omitempty"`
-}
 
-// ConsoleRouteSpec configures the OCP Route for the console.
-type ConsoleRouteSpec struct {
-	// Whether to create an OCP Route. Defaults to true on OpenShift.
-	// +kubebuilder:default=true
+	// Explicit public Console URL used for the oauth2-proxy callback. The
+	// administrator owns the Route, Ingress, or Gateway API resource serving
+	// this URL; the operator does not infer it from a platform ingress domain.
+	// +kubebuilder:validation:Pattern=`^https://.+`
 	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
+	RedirectURL string `json:"redirectURL,omitempty"`
 
-	// Explicit hostname. Empty = auto-derived from namespace.
+	// ProviderLogoutURL is the provider-discovered OIDC end_session_endpoint
+	// used by oauth2-proxy for server-side logout. Keep the literal {id_token}
+	// placeholder where the provider requires an ID token hint; oauth2-proxy
+	// replaces it server-side. The endpoint must use HTTPS and match the
+	// effective Console OIDC provider authority.
+	// +kubebuilder:validation:Pattern=`^https://.+`
 	// +optional
-	Host string `json:"host,omitempty"`
+	ProviderLogoutURL string `json:"providerLogoutURL,omitempty"`
 }
 
 // GatewayConfigSpec configures Gateway server behaviour, middleware, and CORS.
@@ -1700,76 +1756,24 @@ type GatewayCORSSpec struct {
 	MaxAge *int `json:"maxAge,omitempty"`
 }
 
-// RouteSpec configures the OCP Route for the Gateway.
-type RouteSpec struct {
-	// Whether to create an OCP Route for the Gateway.
-	// +kubebuilder:default=true
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// Hostname override. When empty, the OCP router auto-generates a hostname.
-	// +optional
-	Hostname string `json:"hostname,omitempty"`
-}
-
-// IngressSpec configures portable Kubernetes Ingress exposure for a service.
-// An enabled Ingress requires an explicit class, host, and TLS Secret; the
-// operator never infers these values from OpenShift cluster settings.
-type IngressSpec struct {
-	// Whether to create the Ingress. Defaults to false.
-	// +kubebuilder:default=false
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// IngressClassName identifies the installed ingress controller.
-	// +optional
-	IngressClassName string `json:"ingressClassName,omitempty"`
-
-	// External DNS name covered by TLSSecretName.
-	// +optional
-	Host string `json:"host,omitempty"`
-
-	// Existing Secret containing tls.crt and tls.key.
-	// +optional
-	TLSSecretName string `json:"tlsSecretName,omitempty"`
-
-	// Optional controller-specific annotations. The operator does not add
-	// OpenShift Route annotations to this object.
-	// +optional
-	Annotations map[string]string `json:"annotations,omitempty"`
-}
-
-// IngressEnabled returns true only for an explicit opt-in.
-func (s *IngressSpec) IngressEnabled() bool {
-	return s != nil && s.Enabled != nil && *s.Enabled
-}
-
 // TLSMode identifies the source of runtime certificate and trust material.
-// The lower-case values are the one-to-one Helm chart contract. The title-case
-// values are retained as backward-compatible operator aliases introduced by
-// the platform-neutral API.
-// The empty value means that an optional OpenShift service-CA adapter may be
-// selected; it is not a generic-cluster plaintext fallback.
-// +kubebuilder:validation:Enum=hook;cert-manager;manual;AdministratorManaged;CertManager;DevelopmentSelfSigned
+// The empty value selects the OpenShift service-CA adapter only when that
+// capability is discovered; it is not a generic-cluster plaintext fallback.
+// +kubebuilder:validation:Enum=cert-manager;manual;service-ca
 type TLSMode string
 
 const (
-	// TLSModeHook mirrors Helm tls.mode=hook.
-	TLSModeHook TLSMode = "hook"
-	// TLSModeHelmCertManager mirrors Helm tls.mode=cert-manager. Unlike the
-	// legacy title-case alias, this mode enables operator provisioning by
-	// default.
-	TLSModeHelmCertManager TLSMode = "cert-manager"
-	// TLSModeManual mirrors Helm tls.mode=manual.
+	// TLSModeCertManager selects cert-manager-issued runtime material.
+	TLSModeCertManager TLSMode = "cert-manager"
+	// TLSModeManual selects administrator- or external-PKI-provided Secrets.
 	TLSModeManual TLSMode = "manual"
-
-	TLSModeAdministratorManaged  TLSMode = "AdministratorManaged"
-	TLSModeCertManager           TLSMode = "CertManager"
-	TLSModeDevelopmentSelfSigned TLSMode = "DevelopmentSelfSigned"
+	// TLSModeServiceCA selects a discovered platform service-CA provider.
+	TLSModeServiceCA TLSMode = "service-ca"
 )
 
 // TLSConfigSpec defines the explicit runtime certificate source contract.
-// Exactly one mode-specific block must be populated when Mode is set.
+// The manual and cert-manager blocks configure the selected source. The
+// service-ca mode uses platform capability discovery and has no block.
 type TLSConfigSpec struct {
 	// Source mode. Empty selects only a positively discovered OpenShift
 	// service-CA adapter; generic clusters must not treat it as plaintext.
@@ -1781,40 +1785,30 @@ type TLSConfigSpec struct {
 	// +optional
 	InterService *InterServiceTLSConfig `json:"interService,omitempty"`
 
-	// Hooks mirrors Helm hooks.tlsCerts. Helm hook Jobs are replaced by the
-	// operator's reconciliation loop, while the extra SAN input remains the
-	// same migration-compatible configuration surface.
+	// References administrator- or external-PKI-owned internal CA and serving
+	// Secrets. The operator validates these objects but does not mutate or
+	// delete them.
 	// +optional
-	Hooks *TLSHooksConfig `json:"hooks,omitempty"`
-
-	// References administrator-owned internal CA and service serving Secrets.
-	// The operator validates these objects but does not mutate or delete them.
-	// +optional
-	AdministratorManaged *AdministratorManagedTLSConfig `json:"administratorManaged,omitempty"`
+	Manual *ManualTLSConfig `json:"manual,omitempty"`
 
 	// References cert-manager issuer output Secrets. cert-manager must already
 	// be installed; the operator never installs its CRDs or controller.
 	// +optional
 	CertManager *CertManagerTLSConfig `json:"certManager,omitempty"`
-
-	// Configures the explicit development-only self-signed provisioner.
-	// +optional
-	DevelopmentSelfSigned *DevelopmentSelfSignedTLSConfig `json:"developmentSelfSigned,omitempty"`
 }
 
-// AdministratorManagedTLSConfig references administrator-owned TLS material.
-type AdministratorManagedTLSConfig struct {
+// ManualTLSConfig references administrator- or external-PKI-owned TLS material.
+type ManualTLSConfig struct {
 	// Secret containing the public internal CA under ca.crt.
-	// Required when mode=AdministratorManaged. In other modes this field is
-	// ignored unless it is used as an explicit output-name override.
+	// Required when mode=manual with explicit Secret material.
 	// +optional
 	InternalCASecretName string `json:"internalCASecretName"`
 
 	// Serving Secret names keyed by component: gateway, datastorage,
 	// kubernautagent, apifrontend, and authwebhook. Each Secret contains
 	// tls.crt and tls.key with SANs covering its Service DNS names.
-	// Required when mode=AdministratorManaged. Provisioned cert-manager mode
-	// fills omitted entries with the stable operator defaults.
+	// Required when mode=manual with explicit Secret material. Empty values use
+	// the stable service names used by the operator's manual source.
 	// +optional
 	ServiceTLSSecretNames map[string]string `json:"serviceTLSSecretNames"`
 }
@@ -1832,31 +1826,13 @@ type InterServiceTLSConfig struct {
 	CAFile string `json:"caFile,omitempty"`
 }
 
-// TLSHooksConfig mirrors the upstream Helm hooks values relevant to TLS.
-type TLSHooksConfig struct {
-	// TLSCerts configures the self-signed certificate SAN additions used by the
-	// Helm tls-cert-job. The operator reconciles the equivalent Secrets directly.
-	// +optional
-	TLSCerts TLSCertsConfig `json:"tlsCerts,omitempty"`
-}
-
-// TLSCertsConfig mirrors hooks.tlsCerts in the upstream chart.
-type TLSCertsConfig struct {
-	// Additional DNS SANs for inter-service certificates. When non-empty, the
-	// loopback IP 127.0.0.1 is also included, matching the chart behavior.
-	// +optional
-	ExtraSANs []string `json:"extraSANs,omitempty"`
-}
-
 // TLSIssuerRef identifies an existing cert-manager issuer.
 type TLSIssuerRef struct {
-	// Issuer name. When empty in Helm-compatible cert-manager mode, the
-	// controller selects the sole Issuer/ClusterIssuer in scope, matching the
-	// chart's live-cluster lookup behavior.
+	// Issuer name. When empty, the controller may select the sole
+	// Issuer/ClusterIssuer in scope.
 	// +optional
 	Name string `json:"name,omitempty"`
-	// Issuer kind, normally Issuer or ClusterIssuer. The lower-case Helm mode
-	// defaults to ClusterIssuer; legacy title-case mode defaults to Issuer.
+	// Issuer kind, normally Issuer or ClusterIssuer.
 	// +optional
 	Kind string `json:"kind,omitempty"`
 	// API group, normally cert-manager.io.
@@ -1865,17 +1841,16 @@ type TLSIssuerRef struct {
 	Group string `json:"group,omitempty"`
 }
 
-// CertManagerTLSConfig references cert-manager-managed runtime Secrets.
+// CertManagerTLSConfig references cert-manager-issued runtime Secrets.
 type CertManagerTLSConfig struct {
-	// Issuer is the legacy operator spelling for the cert-manager issuer
-	// reference. It remains accepted for existing CRs.
+	// Issuer is the concise cert-manager issuer reference.
 	// +optional
 	Issuer TLSIssuerRef `json:"issuer,omitempty"`
-	// IssuerRef mirrors Helm tls.certManager.issuerRef. When populated it takes
-	// precedence over the legacy Issuer field.
+	// IssuerRef is the structured cert-manager issuer reference. When populated
+	// it takes precedence over Issuer.
 	// +optional
 	IssuerRef TLSIssuerRef `json:"issuerRef,omitempty"`
-	// Public CA Secret containing ca.crt for administrator-managed material or
+	// Public CA Secret containing ca.crt for manual material or
 	// tls.crt for cert-manager Certificate output.
 	// Required for reference-only mode. Provisioning mode defaults this to the
 	// dedicated inter-service CA Secret unless an override is supplied here or
@@ -1883,13 +1858,14 @@ type CertManagerTLSConfig struct {
 	// +optional
 	InternalCASecretName string `json:"internalCASecretName"`
 	// Serving Secret names keyed by component, with the same keys as the
-	// administrator-managed mode. Required for reference-only mode;
+	// manual mode. Required for reference-only mode;
 	// provisioning mode fills omitted entries with stable defaults.
 	// +optional
 	ServiceTLSSecretNames map[string]string `json:"serviceTLSSecretNames"`
-	// Provisioning enables operator-owned cert-manager Issuer and Certificate
-	// resources. cert-manager remains the owner of generated output Secrets.
-	// When omitted, the existing reference-only contract is preserved.
+	// Provisioning controls optional operator reconciliation of cert-manager
+	// Issuer and Certificate resources. It defaults to reference-only; set
+	// enabled=true to reconcile these objects. cert-manager remains the owner of
+	// generated output Secrets.
 	// +optional
 	Provisioning *CertManagerTLSProvisioning `json:"provisioning,omitempty"`
 }
@@ -1966,36 +1942,6 @@ type CertManagerTLSProvisioning struct {
 	SigningCertificateSecretName string `json:"signingCertificateSecretName,omitempty"`
 }
 
-// DevelopmentSelfSignedTLSConfig configures namespace-scoped development TLS.
-type DevelopmentSelfSignedTLSConfig struct {
-	// Secret name for the generated CA. Defaults to kubernaut-internal-ca.
-	// +optional
-	CASecretName string `json:"caSecretName,omitempty"`
-	// How long before expiry the operator should rotate generated leaves.
-	// +kubebuilder:default="168h"
-	// +optional
-	RotationBefore string `json:"rotationBefore,omitempty"`
-}
-
-// APIFrontendRouteSpec configures the OCP Route for the API Frontend.
-// Unlike GatewayRouteSpec, defaults to disabled (opt-in external access).
-type APIFrontendRouteSpec struct {
-	// Whether to create an OCP Route for the API Frontend.
-	// +kubebuilder:default=false
-	// +optional
-	Enabled *bool `json:"enabled,omitempty"`
-
-	// Hostname override. When empty, the OCP router auto-generates a hostname.
-	// +optional
-	Hostname string `json:"hostname,omitempty"`
-}
-
-// AFRouteEnabled returns true when the AF Route should be created.
-// Defaults to false when Enabled is nil (opt-in).
-func (s *APIFrontendRouteSpec) AFRouteEnabled() bool {
-	return s.Enabled != nil && *s.Enabled
-}
-
 // AuthWebhookSpec configures the AuthWebhook admission controller.
 type AuthWebhookSpec struct {
 	// +optional
@@ -2010,22 +1956,11 @@ type AuthWebhookSpec struct {
 // The API Frontend provides external access to Kubernaut Agent via MCP and A2A
 // protocols with OIDC authentication, rate limiting, and RBAC-scoped tool access.
 type APIFrontendSpec struct {
-	// Whether the API Frontend component is deployed. Defaults to true.
+	// Whether the API Frontend component is deployed. Defaults to false.
 	// Set to false to skip all AF resources (Deployment, Service, RBAC, etc.).
-	// +kubebuilder:default=true
+	// +kubebuilder:default=false
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
-
-	// Route configuration for OCP external access (FedRAMP SC-8).
-	// Disabled by default; set route.enabled=true to expose AF via an
-	// OpenShift Route with reencrypt TLS termination.
-	// +optional
-	Route APIFrontendRouteSpec `json:"route,omitempty"`
-
-	// Ingress configures portable Kubernetes exposure. It is independent from
-	// the optional OpenShift Route above.
-	// +optional
-	Ingress IngressSpec `json:"ingress,omitempty"`
 
 	// OIDC authentication configuration.
 	// +optional
@@ -2359,9 +2294,9 @@ type DebugSpec struct {
 }
 
 // APIFrontendEnabled returns whether the API Frontend component should be deployed.
-// Defaults to true when Enabled is nil.
+// Defaults to false when Enabled is nil.
 func (s *KubernautSpec) APIFrontendEnabled() bool {
-	return s.APIFrontend.Enabled == nil || *s.APIFrontend.Enabled
+	return s.APIFrontend.Enabled != nil && *s.APIFrontend.Enabled
 }
 
 // GatewayEnabled returns whether the Gateway component should be deployed.
@@ -2410,6 +2345,23 @@ func (s *KubernautSpec) ConsoleIssuerURL() string {
 
 // DataStorageSpec configures the DataStorage service.
 type DataStorageSpec struct {
+	// Server configures DataStorage's HTTP server and admission safeguards.
+	// +optional
+	Server *DataStorageServerSpec `json:"server,omitempty"`
+
+	// Database configures DataStorage's PostgreSQL connection pool.
+	// +optional
+	Database *DataStorageDatabaseSpec `json:"database,omitempty"`
+
+	// Redis configures DataStorage-specific Redis/Valkey behavior.
+	// Connection address, credentials, and TLS remain in spec.valkey.
+	// +optional
+	Redis *DataStorageRedisSpec `json:"redis,omitempty"`
+
+	// Audit groups retention, export signing, and audit-chain key settings.
+	// +optional
+	Audit *DataStorageAuditSpec `json:"audit,omitempty"`
+
 	// EndpointPropagationDelay is the delay before newly created endpoints
 	// are considered ready. Prevents traffic routing to pods that haven't
 	// finished warming up. Must be a valid Go duration string.
@@ -2424,36 +2376,26 @@ type DataStorageSpec struct {
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
+	// OpenTelemetry distributed-trace export configuration. Off by default.
+	// +optional
+	Telemetry TelemetrySpec `json:"telemetry,omitempty"`
+}
+
+// DataStorageAuditSpec groups DataStorage audit lifecycle configuration.
+type DataStorageAuditSpec struct {
 	// Retention configures periodic purge of expired audit events (FedRAMP AU-11).
 	// +optional
 	Retention *RetentionSpec `json:"retention,omitempty"`
 
-	// SigningCert configures the audit export signing certificate (FedRAMP AU-9).
-	// When set, the named Secret is mounted into the DS pod at /etc/certs.
+	// SigningCertificate configures the audit export signing certificate
+	// (FedRAMP AU-9). When set, the named Secret is mounted read-only.
 	// +optional
-	SigningCert *SigningCertSpec `json:"signingCert,omitempty"`
+	SigningCertificate *SigningCertSpec `json:"signingCertificate,omitempty"`
 
-	// AuditHashKey configures the mandatory keyed HMAC-SHA256 audit hash chain
-	// (FedRAMP AU-9, SOC 2 CC8.1). When ExistingSecret is empty, the operator
-	// creates and preserves a stable Secret automatically. When set, the named
-	// administrator-managed Secret is validated and mounted read-only.
+	// HashKey configures the mandatory keyed HMAC-SHA256 audit chain
+	// (FedRAMP AU-9, SOC 2 CC8.1).
 	// +optional
-	AuditHashKey *DataStorageAuditHashKeySpec `json:"auditHashKey,omitempty"`
-
-	// OpenTelemetry distributed-trace export configuration. Off by default.
-	// +optional
-	Telemetry TelemetrySpec `json:"telemetry,omitempty"`
-
-	// Database connection-pool tuning for the DataStorage PostgreSQL
-	// connection. When unset, defaults match the operator's prior
-	// hardcoded behavior (#260).
-	// +optional
-	Database *DataStorageDatabaseSpec `json:"database,omitempty"`
-
-	// Server timeout tuning for the DataStorage HTTP server.
-	// When unset, defaults match the operator's prior hardcoded behavior (#260).
-	// +optional
-	Server *DataStorageServerSpec `json:"server,omitempty"`
+	HashKey *DataStorageAuditHashKeySpec `json:"hashKey,omitempty"`
 }
 
 // DataStorageAuditHashKeySpec configures the DataStorage audit HMAC key source.
@@ -2498,7 +2440,31 @@ type DataStorageDatabaseSpec struct {
 	ConnMaxIdleTime string `json:"connMaxIdleTime,omitempty"`
 }
 
-// DataStorageServerSpec configures DataStorage's HTTP server timeouts.
+// DataStorageRateLimitSpec configures per-IP DataStorage HTTP rate limiting.
+type DataStorageRateLimitSpec struct {
+	// Sustained integer requests per second. Non-positive values use the service default.
+	// +kubebuilder:default=50
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	RequestsPerSecond *int `json:"requestsPerSecond,omitempty"`
+
+	// Token-bucket burst size. Non-positive values use the service default.
+	// +kubebuilder:default=100
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	Burst *int `json:"burst,omitempty"`
+}
+
+// DataStorageRedisSpec configures DataStorage-specific Redis/Valkey behavior.
+type DataStorageRedisSpec struct {
+	// Maximum Redis DLQ stream length. Zero is a valid explicit bound.
+	// +kubebuilder:default=10000
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	DLQMaxLen *int `json:"dlqMaxLen,omitempty"`
+}
+
+// DataStorageServerSpec configures DataStorage's HTTP server and safeguards.
 type DataStorageServerSpec struct {
 	// HTTP server read timeout. Must be a valid Go duration string.
 	// +kubebuilder:default="30s"
@@ -2509,6 +2475,27 @@ type DataStorageServerSpec struct {
 	// +kubebuilder:default="30s"
 	// +optional
 	WriteTimeout string `json:"writeTimeout,omitempty"`
+
+	// Maximum request body size in bytes. The DataStorage service applies its
+	// existing 1 MiB–50 MiB safety clamp and 5 MiB default.
+	// +kubebuilder:default="5242880"
+	// +optional
+	MaxBodySize string `json:"maxBodySize,omitempty"`
+
+	// Maximum concurrent HTTP requests. Zero disables the concurrency limit.
+	// +kubebuilder:default=100
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	MaxConcurrentRequests *int `json:"maxConcurrentRequests,omitempty"`
+
+	// Cross-origin origins. Empty denies all cross-origin requests.
+	// +optional
+	CORSAllowedOrigins []string `json:"corsAllowedOrigins,omitempty"`
+
+	// Optional per-IP rate limiting. The rendered service contract keeps the
+	// safeguard enabled; this object controls its rate and burst values.
+	// +optional
+	RateLimit *DataStorageRateLimitSpec `json:"rateLimit,omitempty"`
 }
 
 // SigningCertSpec configures the audit export signing certificate.
@@ -2525,7 +2512,9 @@ type SigningCertSpec struct {
 // RetentionSpec configures audit event retention and purge for FedRAMP AU-11.
 type RetentionSpec struct {
 	// Whether the retention purge worker is active.
-	// Defaults to false (safe default — no data is deleted without opt-in).
+	// Defaults to true to preserve the DataStorage production retention floor.
+	// Set false explicitly for controlled development environments.
+	// +kubebuilder:default=true
 	// +optional
 	Enabled *bool `json:"enabled,omitempty"`
 
@@ -2582,32 +2571,14 @@ type MonitoringSpec struct {
 	AlertManager AlertManagerSpec `json:"alertManager,omitempty"`
 }
 
-// MonitoringTLSSource identifies the trust material used by monitoring clients.
-type MonitoringTLSSource string
-
-const (
-	MonitoringTLSSourceInterService MonitoringTLSSource = "interService"
-	MonitoringTLSSourceSystem       MonitoringTLSSource = "system"
-	MonitoringTLSSourceSecret       MonitoringTLSSource = "secret"
-	MonitoringTLSSourceConfigMap    MonitoringTLSSource = "configMap"
-)
-
-// MonitoringTLSSpec selects one shared CA source for every monitoring client.
-// An omitted source defaults to interService. Secret and ConfigMap references
-// are namespaced to the Kubernaut namespace and default to the ca.crt key.
+// MonitoringTLSSpec configures optional administrator-provided trust for every
+// monitoring client. When omitted, clients use the container/system trust
+// store. The Secret reference is namespaced to the Kubernaut namespace and
+// defaults to the ca.crt key.
 type MonitoringTLSSpec struct {
-	// Source of the monitoring CA bundle.
-	// +kubebuilder:validation:Enum=interService;system;secret;configMap
-	// +optional
-	Source MonitoringTLSSource `json:"source,omitempty"`
-
-	// Secret containing the PEM-encoded CA bundle when source=secret.
+	// Secret containing the PEM-encoded monitoring CA bundle.
 	// +optional
 	CACertSecretRef *CACertSecretRef `json:"caCertSecretRef,omitempty"`
-
-	// ConfigMap containing the PEM-encoded CA bundle when source=configMap.
-	// +optional
-	CACertConfigMapRef *CACertConfigMapRef `json:"caCertConfigMapRef,omitempty"`
 }
 
 // PrometheusSpec configures a Prometheus-compatible endpoint.
@@ -2661,88 +2632,19 @@ func (s *AlertManagerSpec) AlertManagerEnabled() bool {
 	return s.Enabled == nil || *s.Enabled
 }
 
-type NetworkPolicyProvider string
-
-const (
-	NetworkPolicyProviderAuto   NetworkPolicyProvider = "Auto"
-	NetworkPolicyProviderCilium NetworkPolicyProvider = "Cilium"
-	NetworkPolicyProviderCalico NetworkPolicyProvider = "Calico"
-	NetworkPolicyProviderOVN    NetworkPolicyProvider = "OVN"
-)
-
-const (
-	NetworkIsolationRequired  = "Required"
-	NetworkIsolationInherited = "Inherited"
-)
-
+// NetworkPoliciesSpec configures the portable Kubernetes NetworkPolicy contract.
+// The operator manages namespaced, selector-based ingress policies only. Egress
+// to the Kubernetes API server and external dependencies remains an
+// administrator/SRE responsibility so the operator cannot accidentally block
+// API clients or claim provider-specific dataplane enforcement.
 type NetworkPoliciesSpec struct {
-	// Mode requires a qualified native provider by default. Inherited is an
-	// explicit administrator acknowledgement that isolation is supplied outside
-	// this operator; it does not attest that such protection has been verified.
-	// Existing native policies are retained in Inherited mode, not silently
-	// pruned on a discovery failure or opt-out. See PR-515-AUDIT-REMEDIATION.md.
-	// +kubebuilder:validation:Enum=Required;Inherited
-	// +kubebuilder:default=Required
-	// +optional
-	Mode string `json:"mode,omitempty"`
-
-	// ScrapeSources authorizes explicitly identified scraper pods, only on
-	// generated component metrics ports. An empty list grants no external
-	// scraper access; a Prometheus query URL is not a scraper identity.
+	// ScrapeSources authorizes explicitly identified scraper pods on generated
+	// component metrics ports. An empty list grants no external scraper access.
 	// +kubebuilder:validation:MaxItems=16
 	// +optional
 	ScrapeSources []MetricsScrapeSource `json:"scrapeSources,omitempty"`
 
-	// NetworkPoliciesSpec configures the common traffic intent submitted to a
-	// positively identified native policy provider. Provider resources are
-	// created only when the selected provider is active, schema-compatible, and
-	// within the supported release range; generic Kubernetes without a supported
-	// provider fails closed without a raw NetworkPolicy fallback.
-	// Provider selects the native policy provider. Auto requires exactly one
-	// active, supported provider installation; an explicit provider is still
-	// validated against its discovered GVK, schema, and release range.
-	// +kubebuilder:validation:Enum=Auto;Cilium;Calico;OVN
-	// +kubebuilder:default=Auto
-	// +optional
-	Provider NetworkPolicyProvider `json:"provider,omitempty"`
-
-	// Primary K8s API server backend CIDR, for environments where default
-	// detection doesn't resolve correctly. Deprecated: native policy adapters
-	// use provider-native API-server identity and reject static CIDRs.
-	// +optional
-	APIServerCIDR string `json:"apiServerCIDR,omitempty"`
-
-	// Additional API server backend endpoint IPs as /32 CIDRs, for HA
-	// clusters with multiple control-plane nodes. Deprecated: native policy
-	// adapters do not accept static API-server CIDRs.
-	// +optional
-	APIServerCIDRs []string `json:"apiServerCIDRs,omitempty"`
-
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	// +optional
-	APIServerPort int32 `json:"apiServerPort,omitempty"`
-
-	// +optional
-	Monitoring NetworkPolicyMonitoringOverride `json:"monitoring,omitempty"`
-
-	// +optional
-	ExternalWebhooks NetworkPolicyEgressOverride `json:"externalWebhooks,omitempty"`
-
-	// +optional
-	IdP NetworkPolicyIdPEgressOverride `json:"idp,omitempty"`
-
-	// +optional
-	LLM NetworkPolicyEgressOverride `json:"llm,omitempty"`
-
-	// +optional
-	MCPGateway NetworkPolicyEgressOverride `json:"mcpGateway,omitempty"`
-
-	// +optional
-	Prometheus NetworkPolicyEgressOverride `json:"prometheus,omitempty"`
-
-	// Gateway also exposes a simple ingressNamespaces name-list, matching
-	// Helm's networkPolicies.gateway.*.
+	// Optional standard NetworkPolicy ingress peers for the named component.
 	// +optional
 	Gateway NetworkPolicyNamedIngressOverride `json:"gateway,omitempty"`
 
@@ -2752,7 +2654,6 @@ type NetworkPoliciesSpec struct {
 	// +optional
 	Console NetworkPolicyNamedIngressOverride `json:"console,omitempty"`
 
-	// Helm exposes only CIDR/selector overrides here (no ingressNamespaces).
 	// +optional
 	DataStorage NetworkPolicyIngressOverride `json:"datastorage,omitempty"`
 
@@ -2760,8 +2661,9 @@ type NetworkPoliciesSpec struct {
 	KubernautAgent NetworkPolicyIngressOverride `json:"kubernautAgent,omitempty"`
 }
 
-// MetricsScrapeSource is a bounded native-policy ingress identity. Only exact
-// pod label matches are accepted, never namespace-only or wildcard access.
+// MetricsScrapeSource is a bounded standard-NetworkPolicy ingress identity.
+// Only exact pod label matches are accepted, never namespace-only or wildcard
+// access.
 type MetricsScrapeSource struct {
 	// Namespace is the exact, administrator-selected scraper namespace.
 	// +kubebuilder:validation:MinLength=1
@@ -2775,70 +2677,26 @@ type MetricsScrapeSource struct {
 	PodLabels map[string]string `json:"podLabels"`
 }
 
-// NetworkPolicyIngressOverride adds allowed ingress sources beyond the
-// operator's default same-namespace/component allow rules. CIDRs cover
-// traffic not associated with any pod/namespace (e.g. NodePort-sourced
-// host traffic, a hostNetwork-mode ingress controller); selectors cover
-// cases the simple namespace-name list (NetworkPolicyNamedIngressOverride)
-// cannot express.
+// NetworkPolicyIngressOverride adds standard NetworkPolicy ingress peers
+// beyond the operator's default same-namespace component allow rule.
 type NetworkPolicyIngressOverride struct {
+	// +kubebuilder:validation:MaxItems=16
 	// +optional
 	IngressCIDRs []string `json:"ingressCIDRs,omitempty"`
 
+	// +kubebuilder:validation:MaxItems=16
 	// +optional
 	IngressNamespaceSelectors []metav1.LabelSelector `json:"ingressNamespaceSelectors,omitempty"`
 }
 
-// NetworkPolicyNamedIngressOverride extends NetworkPolicyIngressOverride
-// with a namespace-name allowlist, mirroring the subset of components
-// (Gateway, APIFrontend, Console) the upstream Helm chart exposes this
-// simpler option on.
+// NetworkPolicyNamedIngressOverride extends NetworkPolicyIngressOverride with
+// an exact namespace-name allowlist.
 type NetworkPolicyNamedIngressOverride struct {
 	NetworkPolicyIngressOverride `json:",inline"`
 
+	// +kubebuilder:validation:MaxItems=16
 	// +optional
 	IngressNamespaces []string `json:"ingressNamespaces,omitempty"`
-}
-
-// NetworkPolicyEgressOverride overrides a single egress allow rule's target.
-type NetworkPolicyEgressOverride struct {
-	// Legacy field: native provider adapters do not render arbitrary CIDR
-	// destinations. Non-empty values are rejected during reconciliation rather
-	// than becoming an unsafe allow-all policy or being silently ignored.
-	// +optional
-	CIDR string `json:"cidr,omitempty"`
-
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	// +optional
-	Port int32 `json:"port,omitempty"`
-}
-
-// NetworkPolicyIdPEgressOverride is NetworkPolicyEgressOverride plus a
-// second port, for deployments where a service must reach two IdPs on two
-// different ports.
-type NetworkPolicyIdPEgressOverride struct {
-	NetworkPolicyEgressOverride `json:",inline"`
-
-	// +optional
-	ExtraPorts []int32 `json:"extraPorts,omitempty"`
-}
-
-// NetworkPolicyMonitoringOverride overrides where/how the monitoring-stack
-// ingress/egress rules (Prometheus scrape, AlertManager webhook) are shaped.
-type NetworkPolicyMonitoringOverride struct {
-	// +optional
-	Namespace string `json:"namespace,omitempty"`
-
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	// +optional
-	PrometheusPort int32 `json:"prometheusPort,omitempty"`
-
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	// +optional
-	AlertManagerPort int32 `json:"alertManagerPort,omitempty"`
 }
 
 // ---------- Status ----------
@@ -2919,7 +2777,6 @@ const (
 	ConditionRBACProvisioned            ConditionType = "RBACProvisioned"
 	ConditionWebhooksConfigured         ConditionType = "WebhooksConfigured"
 	ConditionServicesDeployed           ConditionType = "ServicesDeployed"
-	ConditionRouteReady                 ConditionType = "RouteReady"
 	ConditionAnsibleReady               ConditionType = "AnsibleReady"
 	ConditionAlertManagerAuthConfigured ConditionType = "AlertManagerAuthConfigured"
 	ConditionAdditionalRBACBound        ConditionType = "AdditionalRBACBound"
@@ -2928,8 +2785,7 @@ const (
 	ConditionTLSReady                   ConditionType = "TLSReady"
 	ConditionExposureReady              ConditionType = "ExposureReady"
 	ConditionMonitoringReady            ConditionType = "MonitoringReady"
-	ConditionProviderDetected           ConditionType = "ProviderDetected"
-	ConditionProviderPolicyReady        ConditionType = "ProviderPolicyReady"
+	ConditionNetworkPolicyReady         ConditionType = "NetworkPolicyReady"
 )
 
 // Finalizer used for cluster-scoped resource cleanup.
@@ -2969,9 +2825,4 @@ type KubernautList struct {
 
 func init() {
 	SchemeBuilder.Register(&Kubernaut{}, &KubernautList{})
-}
-
-// RouteEnabled returns true when the Gateway Route should be created.
-func (s *RouteSpec) RouteEnabled() bool {
-	return s.Enabled == nil || *s.Enabled
 }

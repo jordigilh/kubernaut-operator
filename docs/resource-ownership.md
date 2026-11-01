@@ -93,8 +93,9 @@ ownership and the `kubernaut.ai/created-by` annotation do not authorize cascade
 deletion. Any namespace removal is a separate administrator/provisioning action
 after reviewing and backing up its contents; it is not an uninstall step.
 
-Administrator credentials, policy/runtime input ConfigMaps, external TLS/issuers
-and cert-manager output Secrets remain inputs, not adoption targets. Manual TLS
+Administrator credentials, including PostgreSQL and Valkey dependency Secrets,
+policy/runtime input ConfigMaps, external TLS/issuers and cert-manager output
+Secrets remain read-only inputs, not adoption targets. Manual TLS
 does not imply permission to take over webhook configurations; explicitly
 entrust the configuration while retaining administrator-owned TLS material.
 Native provider policies retain their separate managed-policy, managed-by,

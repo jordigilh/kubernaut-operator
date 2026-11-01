@@ -135,7 +135,10 @@ The operator's own ClusterRole (`config/rbac/role.yaml`, `manager-role`) grants 
 | `networking.k8s.io` | networkpolicies | create, delete, get, list, patch, update, watch | Manage NetworkPolicies when enabled |
 | `policy` | poddisruptionbudgets | create, delete, get, list, patch, update, watch | Manage PDBs for service availability |
 | `rbac.authorization.k8s.io` | clusterroles, clusterrolebindings, roles, rolebindings | bind, create, delete, escalate, get, list, patch, update, watch | Provision RBAC for managed workloads (requires escalate/bind) |
-| `route.openshift.io` | routes | create, delete, get, list, patch, update, watch | Manage OCP Routes for Gateway |
+
+External Routes, Ingresses, Gateway API resources, mesh configuration, hostnames,
+edge TLS, and edge authorization are administrator-owned and are not managed by
+the operator.
 
 ## ServiceAccount Token Model
 
@@ -167,7 +170,7 @@ The operator's own ClusterRole (`config/rbac/role.yaml`, `manager-role`) grants 
 cosign verify \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
   --certificate-identity-regexp="^https://github.com/jordigilh/kubernaut-operator/.github/workflows/release.yml@refs/tags/" \
-  quay.io/kubernaut-ai/kubernaut-operator:<version>
+  quay.io/kubernaut-ai/kubernaut-operator-image:<version>
 ```
 
 - Consumer verification (SLSA provenance):
@@ -177,14 +180,14 @@ cosign verify \
 slsa-verifier verify-image \
   --source-uri github.com/jordigilh/kubernaut-operator \
   --builder-id "https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/v2.1.0" \
-  quay.io/kubernaut-ai/kubernaut-operator:<version>
+  quay.io/kubernaut-ai/kubernaut-operator-image:<version>
 
 # or via cosign, against the in-toto/SLSA predicate attestation directly
 cosign verify-attestation \
   --type slsaprovenance \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
   --certificate-identity-regexp="^https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@refs/tags/" \
-  quay.io/kubernaut-ai/kubernaut-operator:<version>
+  quay.io/kubernaut-ai/kubernaut-operator-image:<version>
 ```
 
 ## Disclosure Policy

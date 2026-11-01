@@ -44,6 +44,11 @@ Create a new manifest from the exported object and make these changes:
    `spec.apiFrontend.auth.issuerURL`: v1alpha2 requires a complete explicit
    issuer URL for single-provider API Frontend auth; the operator does not
    select or synthesize an IdP URL. Do not replace it with a short realm name.
+10. For monitoring client trust, remove the retired `spec.monitoring.tls.source`
+    and `spec.monitoring.tls.caCertConfigMapRef` fields. Omit
+    `spec.monitoring.tls` for system trust or set
+    `spec.monitoring.tls.caCertSecretRef` for administrator-provided private
+    CA material.
 
 Review the complete v1alpha2 schema with:
 

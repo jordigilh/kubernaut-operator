@@ -1,7 +1,7 @@
 # Operator image. Prefer digest for production and disconnected installations.
 image:
-  repository: quay.io/kubernaut-ai/kubernaut-operator
-  tag: 1.6.0-rc20
+  repository: quay.io/kubernaut-ai/kubernaut-operator-image
+  tag: 1.6.0-rc30
   digest: ""
   pullPolicy: IfNotPresent
   pullSecrets: []
@@ -10,20 +10,20 @@ image:
 # operator when a user applies a Kubernaut CR. They are not application chart
 # configuration and do not cause any operand workload to be installed here.
 relatedImages:
-  GATEWAY: quay.io/kubernaut-ai/gateway@sha256:172f431253256e285d6c7dbe691c1d3684bf12e057e3014fac28b831838ffd6e
-  DATA_STORAGE: quay.io/kubernaut-ai/datastorage@sha256:479ffe81ba370c172d1980c39654a691f6973a217dfbe8e54d1582f79ea32bb9
-  AIANALYSIS: quay.io/kubernaut-ai/aianalysis@sha256:efeeb6d272c84f81d29e80dbfd253ebd87710f6dc1e07009ee038257cfac0272
-  SIGNALPROCESSING: quay.io/kubernaut-ai/signalprocessing@sha256:8d55f05b8473bf5fd59adbe99d7a900bbb05ecd88f7e3c8928957361054cf5d1
-  REMEDIATIONORCHESTRATOR: quay.io/kubernaut-ai/remediationorchestrator@sha256:2a1fe303267215cec4de3b13c4c4d9d63683e6970d5c93d5c5910d4f4a5a801b
-  WORKFLOWEXECUTION: quay.io/kubernaut-ai/workflowexecution@sha256:e77ab6bb30d6ad75f924dac83c9ccb3b0ef82bc3a95fb6d3da4933e6bb7eb822
-  EFFECTIVENESSMONITOR: quay.io/kubernaut-ai/effectivenessmonitor@sha256:ee33961a25779a76be0bcd9bcb318b9e9c6c34a938685b8f92965842451261af
-  NOTIFICATION: quay.io/kubernaut-ai/notification@sha256:b0003fc81a5334ca0b50110c4490f5700141687d6dffe52fbb48203d4083bb79
-  KUBERNAUT_AGENT: quay.io/kubernaut-ai/kubernautagent@sha256:8cf804f386be939eff3372497d98ca941f4f91714d27f3b91318e728bc35d615
-  AUTHWEBHOOK: quay.io/kubernaut-ai/authwebhook@sha256:9da1338831a86afa9a3dbf1f1026c898a2d03d84f1f40203b087c7243bce2780
-  API_FRONTEND: quay.io/kubernaut-ai/apifrontend@sha256:17eaa216809dc6bef4984baec309e39f5205c8b8129ee34839a42b7902c98513
-  FLEETMETADATACACHE: quay.io/kubernaut-ai/fleetmetadatacache@sha256:c315aeb4afb2f71e9c5ba439c387c4925823513ef1a5225e9db7c4bc6937cc54
-  DB_MIGRATE: quay.io/kubernaut-ai/db-migrate@sha256:6b7611cd2e93d250707ab530b0a7512d3bb1b9f0a5521d445089df0f66b5d2a6
-  CONSOLE: quay.io/kubernaut-ai/kubernaut-console@sha256:98f75c56b8f2a4e2ee0276e31f353175b91dec9e95478775843590c37f876062
+  GATEWAY: quay.io/kubernaut-ai/gateway@sha256:163b73718e2b5d95d5a5505baeb35b431e28408d2b634ed47fead9e24acfea58
+  DATA_STORAGE: quay.io/kubernaut-ai/datastorage@sha256:4b32f3201f2f876ee7636003592cd6bf216f480634576c5f873a44bffe727084
+  AIANALYSIS: quay.io/kubernaut-ai/aianalysis@sha256:36330cfc86e3aa5c5525066a921b655e5a5109b04efa2e852dd1e368f994a04d
+  SIGNALPROCESSING: quay.io/kubernaut-ai/signalprocessing@sha256:67043980d66bd782aadf76bd2c4344995197fda67f92ed62474cf3780633770c
+  REMEDIATIONORCHESTRATOR: quay.io/kubernaut-ai/remediationorchestrator@sha256:86cde42501683be6c61f7fc577a00fdbc6f26e849f795c03ffee69032d846cd7
+  WORKFLOWEXECUTION: quay.io/kubernaut-ai/workflowexecution@sha256:7865bd09537a497d0608077d9c6fb380c64ca41c67e90d7d7c02abdb38b06800
+  EFFECTIVENESSMONITOR: quay.io/kubernaut-ai/effectivenessmonitor@sha256:d4b57690d596f64b9e6a85ee0e37206e93186c2fccb410e93dcac5088511e332
+  NOTIFICATION: quay.io/kubernaut-ai/notification@sha256:34b04d8e441fef4ab8246b9227abd15f336774814ffc88564eef496d848a02f7
+  KUBERNAUT_AGENT: quay.io/kubernaut-ai/kubernautagent@sha256:dee64e07d21ec82eaf10a9569a13aea023d8511b19e6ae512306ec22bec40f72
+  AUTHWEBHOOK: quay.io/kubernaut-ai/authwebhook@sha256:4f81055a9b8ba9003e9c8ec1739ee5e3cf523e68b3b8d66b178e12eca75fae7f
+  API_FRONTEND: quay.io/kubernaut-ai/apifrontend@sha256:9993d71cfc7eff94f2e19ad40d845cbb3cfe7579b5d680d344303daed1e98d36
+  FLEETMETADATACACHE: quay.io/kubernaut-ai/fleetmetadatacache@sha256:a59fa06ea41692fbd76f01c84bbe77ab767620151f2daef8a55594a00177ecaa
+  DB_MIGRATE: quay.io/kubernaut-ai/db-migrate@sha256:dbecf98c652b0cd9f98214179cfeba3d8488f34d6b73b76a18340b6c4291fc3d
+  CONSOLE: quay.io/kubernaut-ai/kubernaut-console@sha256:85cdbb3596ba96873e5b30b1c861b6b96900427b61bd6001640c1789ad6c2edb
   OAUTH2_PROXY: quay.io/oauth2-proxy/oauth2-proxy@sha256:37c1570c0427e02fc7c947ef2c04e8995b8347b7abc9fcf1dbb4e376a4b221a7
   INIT_POSTGRES: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
   INIT_UBI_MINIMAL: registry.access.redhat.com/ubi10/ubi-minimal@sha256:7dc60d7777e010c50f5e041ff069112b379c3d5eef2823d20871c67cf663f10c

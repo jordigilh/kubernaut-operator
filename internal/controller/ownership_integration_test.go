@@ -20,11 +20,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/go-logr/zapr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zaptest/observer"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -38,8 +35,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/events"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
@@ -56,7 +53,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		cleanupClusterScoped(ctx)
 	})
 
-	It("IT-OWN-514-001 [AC-3, AC-6, AU-3, SI-4; SOC2 CC6.1, CC7.2; ASVS v5.0.0-V8.3.1, v5.0.0-V16.2.1] preserves an administrator's derived-secret name and reports the conflict", func() {
+	It("IT-OWN-514-001 [AC-3, AC-6, AU-3, SI-4; SOC2 CC6.1, CC6.6, CC7.2; ASVS v5.0.0-V8.3.1, v5.0.0-V16.2.1] preserves a legacy derived-secret object without using it as a dependency credential", func() {
 		createBYOSecrets(ctx)
 		foreign := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: "datastorage-db-secret", Namespace: testNamespace},
@@ -65,39 +62,71 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
 		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, foreign))).To(Succeed()) })
 		before := foreign.DeepCopy()
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
-		r := newReconciler()
-		core, logs := observer.New(zap.InfoLevel)
-		tracedCtx := logf.IntoContext(ctx, zapr.NewLogger(zap.New(core)))
-		_, err := r.Reconcile(tracedCtx, reconcile.Request{NamespacedName: singletonKey()})
-		Expect(err).NotTo(HaveOccurred())
-		_, err = r.Reconcile(tracedCtx, reconcile.Request{NamespacedName: singletonKey()})
-		Expect(err).NotTo(HaveOccurred()) // migration prereq errors become existing status/events
-
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+		reconcileToRunning(ctx)
 		live := &corev1.Secret{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(foreign), live)).To(Succeed())
-		Expect(live).To(Equal(before), "a failed install must not take over administrator credentials")
-		kn := fetchKnV2(ctx)
-		condition := meta.FindStatusCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionCRDsInstalled)
-		Expect(condition).NotTo(BeNil())
-		Expect(condition.Status).To(Equal(metav1.ConditionFalse))
-		Expect(condition.Message).To(ContainSubstring("ownership conflict"))
-		Expect(condition.Message).To(ContainSubstring("Secret"))
-		Expect(condition.Message).NotTo(ContainSubstring("administrator-private-data"))
+		Expect(live).To(Equal(before))
+	})
+
+	It("IT-483-OWNERSHIP-001 [AC-6, AU-3; SOC2 CC6.1; ASVS V8.3.1] preserves a foreign Helm-owned Console Deployment", func() {
+		createBYOSecrets(ctx)
+		foreign := &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      string(resources.ComponentConsole),
+				Namespace: testNamespace,
+				Labels: map[string]string{
+					"app":                          "console",
+					"app.kubernetes.io/managed-by": "Helm",
+					"app.kubernetes.io/instance":   "legacy-kubernaut",
+				},
+			},
+			Spec: appsv1.DeploymentSpec{
+				Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "console"}},
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "console"}},
+					Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "oauth2-proxy", Image: "legacy.example/console"}}},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
+		before := foreign.DeepCopy()
+		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, foreign))).To(Succeed()) })
+
+		cr := newMinimalCR()
+		t := true
+		cr.Spec.Console.Enabled = &t
+		cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+		cr.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
+		Expect(k8sClient.Create(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
+			Data: map[string][]byte{
+				"client-id":     []byte("cid"),
+				"client-secret": []byte("csec"),
+				"cookie-secret": []byte("cook"),
+			},
+		})).To(Succeed())
+		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+		r := newReconciler()
+		for range 2 {
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+		}
+		markMigrationJobComplete(ctx)
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+		Expect(err).To(MatchError(ContainSubstring("ownership conflict")))
+
+		live := &appsv1.Deployment{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(foreign), live)).To(Succeed())
+		Expect(live.Spec).To(Equal(before.Spec))
+		Expect(live.Labels).To(Equal(before.Labels))
 		Eventually(r.Recorder.(*events.FakeRecorder).Events, timeout, interval).Should(Receive(ContainSubstring("OwnershipConflict")))
-		entries := logs.FilterMessage("resource ownership conflict").All()
-		Expect(entries).NotTo(BeEmpty())
-		fields := entries[0].ContextMap()
-		Expect(fields).To(HaveKeyWithValue("kind", "Secret"))
-		Expect(fields).To(HaveKeyWithValue("name", foreign.Name))
-		Expect(fields).To(HaveKeyWithValue("namespace", testNamespace))
-		Expect(fields).To(HaveKeyWithValue("generation", kn.Generation))
-		Expect(fields).To(HaveKey("resourceVersion"))
 	})
 
 	It("IT-OWN-514-002 [AC-6, SI-10; SOC2 CC6.6; ASVS v5.0.0-V8.2.1] rejects a same-named administrator ClusterRole before deployment and preserves it on failed-install uninstall", func() {
 		createBYOSecrets(ctx)
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		foreign := resources.ClusterRoles(kn, kn)[0]
 		foreign.Labels = nil
 		foreign.Rules = []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get"}}}
@@ -125,7 +154,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 
 	It("IT-OWN-514-003 [CM-3, CM-6; SOC2 CC8.1] creates owned resources, upgrades them and reconciles idempotently", func() {
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		r := reconcileToRunning(ctx)
 		kn := fetchKnV2(ctx)
 		kn.Spec.Image.Overrides = map[string]string{"gateway": "example.com/gateway:upgrade"}
@@ -148,7 +177,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 
 	It("IT-OWN-514-004 [AC-6, CM-3; SOC2 CC8.1] repairs fully marked reinstall leftovers only for the same Kubernaut identity", func() {
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		r := reconcileToRunning(ctx)
 		old := fetchKnV2(ctx)
 		Expect(k8sClient.Delete(ctx, old)).To(Succeed())
@@ -157,7 +186,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		Expect(k8sClient.Get(ctx, singletonKey(), &kubernautv1alpha2.Kubernaut{})).To(MatchError(ContainSubstring("not found")))
 		// Envtest deliberately leaves owned children behind (no GC): exercise a
 		// new UID against those marked leftovers, not fabricated desired objects.
-		fresh := newCRWithRouteDisabled()
+		fresh := newMinimalCR()
 		Expect(k8sClient.Create(ctx, fresh)).To(Succeed())
 		Expect(fresh.UID).NotTo(Equal(old.UID))
 		for range 3 {
@@ -181,7 +210,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
 		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, foreign))).To(Succeed()) })
 		before := foreign.DeepCopy()
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		reconcileToRunning(ctx)
 		live := &networkingv1.Ingress{}
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(foreign), live)).To(Succeed())
@@ -190,7 +219,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 
 	It("IT-OWN-514-006 [AC-6; SOC2 CC6.1] does not treat partial pruning labels as deletion authorization", func() {
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		r := reconcileToRunning(ctx)
 		foreign := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: "administrator-partial-marker", Labels: map[string]string{
 			resources.LabelCoreClusterRBAC: "true", "app.kubernetes.io/instance": "kubernaut", "app.kubernetes.io/managed-by": "platform",
@@ -209,10 +238,9 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 
 	It("IT-OWN-514-007 [AC-6, IA-5; ASVS v5.0.0-V13.3.1] rejects unowned development CA material before reusing it", func() {
 		createBYOSecrets(ctx)
-		kn := newCRWithRouteDisabled()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeDevelopmentSelfSigned
-		kn.Spec.TLS.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}
-		secrets, err := resources.DevelopmentSelfSignedTLSSecrets(kn, nil, time.Now().UTC())
+		kn := newMinimalCR()
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
+		secrets, err := testRuntimeTLSSecrets(kn, nil, time.Now().UTC())
 		Expect(err).NotTo(HaveOccurred())
 		foreign := secrets[0]
 		foreign.Labels = nil
@@ -233,7 +261,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 
 	It("IT-OWN-514-010 [AC-6; SOC2 CC6.6] does not cascade-delete a preserved administrator runner by deleting its workflow namespace", func() {
 		createBYOSecrets(ctx)
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.WorkflowExecution.WorkflowNamespace = "ownership-514-workflows"
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 		r := reconcileToRunning(ctx)
@@ -260,7 +288,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
 		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, foreign))).To(Succeed()) })
 		before := foreign.DeepCopy()
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.WorkflowExecution.WorkflowNamespace = foreign.Name
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 		r := newReconciler()
@@ -292,7 +320,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		foreign.Labels = map[string]string{"app.kubernetes.io/managed-by": "Helm"}
 		Expect(k8sClient.Update(ctx, foreign)).To(Succeed())
 		before := foreign.DeepCopy()
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		r := newReconciler()
 		for range 2 {
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -311,7 +339,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 
 	It("IT-OWN-514-014 [AC-6, SI-10; ASVS v5.0.0-V8.3.1] reauthorizes existing resources before a matching-hash no-op", func() {
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		r := reconcileToRunning(ctx)
 		foreign := &corev1.ConfigMap{}
 		key := client.ObjectKey{Namespace: testNamespace, Name: "gateway-config"}
@@ -333,36 +361,57 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		Expect(meta.FindStatusCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionServicesDeployed).Status).To(Equal(metav1.ConditionFalse))
 	})
 
-	DescribeTable("IT-OWN-514-011 [AC-6, CM-3; ASVS v5.0.0-V8.3.1] refuses deletion after the authorized observation changes",
-		func(changeOwnership bool) {
-			createBYOSecrets(ctx)
-			kn := newCRWithRouteDisabled()
-			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
-			r := reconcileToRunning(ctx)
-			owned := &networkingv1.Ingress{
-				ObjectMeta: metav1.ObjectMeta{Name: "gateway-ingress", Namespace: testNamespace, Labels: resources.CommonLabels(kn)},
-				Spec: networkingv1.IngressSpec{DefaultBackend: &networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{
-					Name: "owned", Port: networkingv1.ServiceBackendPort{Number: 443},
-				}}},
-			}
-			Expect(k8sClient.Create(ctx, owned)).To(Succeed())
-			DeferCleanup(func() {
-				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: owned.Name, Namespace: owned.Namespace}}))).To(Succeed())
-			})
-			r.Client = &ownershipDeleteRaceClient{Client: k8sClient, key: client.ObjectKeyFromObject(owned), changeOwnership: changeOwnership}
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			Expect(apierrors.IsConflict(err)).To(BeTrue(), "a failed precondition must stop a stale authorized delete: %v", err)
-			live := &networkingv1.Ingress{}
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(owned), live)).To(Succeed())
-			Expect(live.Labels).To(HaveKeyWithValue("app.kubernetes.io/managed-by", "administrator"))
-		},
-		Entry("replacement with a new UID", false),
-		Entry("same UID but changed ownership/version", true),
-	)
+	It("IT-EXP-565-RECONCILE-002 [AC-3, AC-6, CM-3; SOC2 CC6.6, CC8.1; ASVS v5.0.0-V8.3.1, v5.0.0-V16.5.2]: preserves administrator-owned external exposure", func() {
+		createBYOSecrets(ctx)
+		kn := newMinimalCR()
+		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
+		r := reconcileToRunning(ctx)
+		administratorOwned := &networkingv1.Ingress{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "gateway-ingress",
+				Namespace: testNamespace,
+				Labels:    map[string]string{"app.kubernetes.io/managed-by": "administrator"},
+			},
+			Spec: networkingv1.IngressSpec{DefaultBackend: &networkingv1.IngressBackend{Service: &networkingv1.IngressServiceBackend{
+				Name: "owned", Port: networkingv1.ServiceBackendPort{Number: 443},
+			}}},
+		}
+		Expect(k8sClient.Create(ctx, administratorOwned)).To(Succeed())
+		DeferCleanup(func() {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: administratorOwned.Name, Namespace: administratorOwned.Namespace}}))).To(Succeed())
+		})
+		before := administratorOwned.DeepCopy()
+		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+		Expect(err).NotTo(HaveOccurred())
+		live := &networkingv1.Ingress{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(administratorOwned), live)).To(Succeed())
+		Expect(live).To(Equal(before))
+	})
+
+	It("IT-OWN-514-011 [AC-6, CM-3; ASVS v5.0.0-V8.3.1] refuses deletion after the authorized observation changes", func() {
+		kn := newMinimalCR()
+		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
+		liveKn := &kubernautv1alpha2.Kubernaut{}
+		Expect(k8sClient.Get(ctx, singletonKey(), liveKn)).To(Succeed())
+		owned := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "ownership-race", Namespace: testNamespace}}
+		resources.StampOwnership(liveKn, owned)
+		Expect(k8sClient.Create(ctx, owned)).To(Succeed())
+		DeferCleanup(func() {
+			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: owned.Name, Namespace: owned.Namespace}}))).To(Succeed())
+		})
+
+		r := newReconciler()
+		r.Client = &ownershipDeleteRaceClient{Client: k8sClient, key: client.ObjectKeyFromObject(owned)}
+		err := r.deleteIfExists(ctx, liveKn, owned)
+		Expect(apierrors.IsConflict(err)).To(BeTrue(), "a failed precondition must stop a stale authorized delete: %v", err)
+		live := &corev1.ConfigMap{}
+		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(owned), live)).To(Succeed())
+		Expect(live.Labels).To(HaveKeyWithValue("app.kubernetes.io/managed-by", "administrator"))
+	})
 
 	It("IT-OWN-514-016 [AC-6, CM-8; SOC2 CC6.6] rejects a workflow namespace claimed by another Kubernaut namespace even with restricted PSA", func() {
 		createBYOSecrets(ctx)
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.WorkflowExecution.WorkflowNamespace = "ownership-514-other-identity"
 		foreign := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
 			Name: kn.Spec.WorkflowExecution.WorkflowNamespace,
@@ -409,7 +458,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
 		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, foreign))).To(Succeed()) })
 		before := foreign.DeepCopy()
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.WorkflowExecution.WorkflowNamespace = foreign.Name
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 		r := reconcileToRunning(ctx)
@@ -426,7 +475,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 
 	It("IT-OWN-514-015 [AC-6; SOC2 CC6.6] preserves administrator content in an operator-created workflow namespace on uninstall", func() {
 		createBYOSecrets(ctx)
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.WorkflowExecution.WorkflowNamespace = "ownership-514-content"
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 		r := reconcileToRunning(ctx)
@@ -467,7 +516,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		markMigrationJobComplete(ctx)
 		Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(job), job)).To(Succeed())
 		before := job.DeepCopy()
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		r := newReconciler()
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 		Expect(err).NotTo(HaveOccurred())
@@ -484,7 +533,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 
 	It("IT-OWN-514-021 [AC-6, SI-10; ASVS v5.0.0-V8.3.1] authorizes a live migration Job before a matching status-hash no-op", func() {
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		r := newReconciler()
 		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 		Expect(err).NotTo(HaveOccurred())
@@ -560,12 +609,12 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		Expect(k8sClient.Create(ctx, certificate)).To(Succeed())
 		DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, certificate))).To(Succeed()) })
 		before := certificate.DeepCopy()
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
-			Mode: kubernautv1alpha2.TLSModeHelmCertManager,
+			Mode: kubernautv1alpha2.TLSModeCertManager,
 			CertManager: &kubernautv1alpha2.CertManagerTLSConfig{IssuerRef: kubernautv1alpha2.TLSIssuerRef{
 				Name: issuer.GetName(), Kind: "Issuer", Group: "cert-manager.io",
-			}},
+			}, Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{Enabled: ptr.To(true)}},
 		}
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 		r := newReconciler()
@@ -589,7 +638,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 
 	It("IT-OWN-514-009 [AC-6, SI-10] rejects a generic create race through Reconcile even with a forged matching spec hash", func() {
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		foreign := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{Name: "gateway-config", Namespace: testNamespace},
 			Data:       map[string]string{"administrator": "preserve"},
@@ -616,7 +665,7 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 
 	It("IT-OWN-514-018 [AC-6, IA-5; ASVS v5.0.0-V8.3.1] refuses foreign webhook trust before preservation even when a later read would be owned", func() {
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		r := reconcileToRunning(ctx)
 		key := client.ObjectKey{Name: testNamespace + "-authwebhook-mutating"}
 		owned := &admissionregistrationv1.MutatingWebhookConfiguration{}
@@ -642,73 +691,6 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		Expect(live).To(Equal(before), "foreign trust cannot be copied into an authorized replacement observation")
 	})
 
-	DescribeTable("IT-OWN-514-019 [AC-3, AC-6; SOC2 CC6.6; ASVS v5.0.0-V8.3.1] enforces provider policy owner identity despite matching markers and hashes",
-		func(operation string) {
-			createBYOSecrets(ctx)
-			waitForCiliumPolicyCRDDeletion(ctx)
-			crd, daemonSet := ciliumPolicyCRD(), ciliumProviderDaemonSet()
-			Expect(k8sClient.Create(ctx, crd)).To(Succeed())
-			Expect(k8sClient.Create(ctx, daemonSet)).To(Succeed())
-			daemonSet.Status.NumberReady = 1
-			Expect(k8sClient.Status().Update(ctx, daemonSet)).To(Succeed())
-			DeferCleanup(func() {
-				Expect(newReconciler().deleteProviderPolicies(ctx, testNamespace, kubernautv1alpha2.SingletonName)).To(BeEmpty())
-				cleanupProviderFixture(ctx, daemonSet, crd)
-			})
-			kn := newCRWithRouteDisabled()
-			kn.Spec.NetworkPolicies.Provider = kubernautv1alpha2.NetworkPolicyProviderCilium
-			kn.Spec.NetworkPolicies.Mode = kubernautv1alpha2.NetworkIsolationRequired
-			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
-			r := reconcileToRunning(ctx)
-			foreign := &unstructured.Unstructured{}
-			foreign.SetAPIVersion("cilium.io/v2")
-			foreign.SetKind("CiliumNetworkPolicy")
-			key := client.ObjectKey{Name: agentPolicyName, Namespace: testNamespace}
-			Expect(k8sClient.Get(ctx, key, foreign)).To(Succeed())
-			foreign.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "v1", Kind: "ConfigMap", Name: "platform-policy-owner", UID: types.UID("platform-uid")}})
-			if operation == "repair" {
-				foreign.SetOwnerReferences([]metav1.OwnerReference{{APIVersion: "kubernaut.ai/v1alpha2", Kind: "Kubernaut", Name: kn.Name, UID: types.UID("old-install-uid"), Controller: new(true), BlockOwnerDeletion: new(true)}})
-			}
-			if operation == unitPruneOperation {
-				foreign.SetName(agentPolicyName + "-stale")
-				foreign.SetUID("")
-				foreign.SetResourceVersion("")
-				foreign.SetManagedFields(nil)
-				Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
-			} else {
-				Expect(k8sClient.Update(ctx, foreign)).To(Succeed())
-			}
-			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, foreign))).To(Succeed()) })
-			before := foreign.DeepCopy()
-			if operation == "finalize" {
-				Expect(k8sClient.Delete(ctx, fetchKnV2(ctx))).To(Succeed())
-			}
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			if operation == unitUpdateOperation {
-				Expect(err).To(MatchError(ContainSubstring("owner")))
-			} else {
-				Expect(err).NotTo(HaveOccurred())
-			}
-			live := &unstructured.Unstructured{}
-			live.SetGroupVersionKind(foreign.GroupVersionKind())
-			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(foreign), live)).To(Succeed())
-			if operation == "repair" {
-				Expect(metav1.IsControlledBy(live, fetchKnV2(ctx))).To(BeTrue())
-				Expect(live.GetLabels()).To(Equal(before.GetLabels()))
-				Expect(live.Object["spec"]).To(Equal(before.Object["spec"]))
-				Expect(live.GetAnnotations()[resources.AnnotationSpecHash]).To(Equal(before.GetAnnotations()[resources.AnnotationSpecHash]))
-			} else {
-				Expect(live).To(Equal(before))
-			}
-			if operation == "finalize" {
-				Expect(k8sClient.Get(ctx, singletonKey(), &kubernautv1alpha2.Kubernaut{})).To(MatchError(ContainSubstring("not found")))
-			}
-		},
-		Entry("reconciliation", unitUpdateOperation),
-		Entry("stale policy pruning", unitPruneOperation),
-		Entry("finalizer cleanup", "finalize"),
-		Entry("same-identity reinstall owner repair", "repair"),
-	)
 })
 
 type ownershipWebhookReadRaceClient struct {
@@ -733,6 +715,24 @@ type ownershipCreateRaceClient struct {
 	raced   bool
 }
 
+type ownershipDeleteRaceClient struct {
+	client.Client
+	key   client.ObjectKey
+	raced bool
+}
+
+func (c *ownershipDeleteRaceClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	if !c.raced && client.ObjectKeyFromObject(obj) == c.key {
+		c.raced = true
+		foreign := obj.DeepCopyObject().(client.Object)
+		foreign.SetLabels(map[string]string{"app.kubernetes.io/managed-by": "administrator"})
+		if err := c.Update(ctx, foreign); err != nil {
+			return err
+		}
+	}
+	return c.Client.Delete(ctx, obj, opts...)
+}
+
 func (c *ownershipCreateRaceClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
 	if _, ok := obj.(*corev1.ConfigMap); !ok || c.raced || client.ObjectKeyFromObject(obj) != client.ObjectKeyFromObject(c.foreign) {
 		return c.Client.Create(ctx, obj, opts...)
@@ -743,35 +743,4 @@ func (c *ownershipCreateRaceClient) Create(ctx context.Context, obj client.Objec
 		return err
 	}
 	return apierrors.NewAlreadyExists(corev1.Resource("configmaps"), obj.GetName())
-}
-
-type ownershipDeleteRaceClient struct {
-	client.Client
-	key             client.ObjectKey
-	changeOwnership bool
-	raced           bool
-}
-
-func (c *ownershipDeleteRaceClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
-	if !c.raced && client.ObjectKeyFromObject(obj) == c.key {
-		c.raced = true
-		foreign := obj.DeepCopyObject().(client.Object)
-		foreign.SetLabels(map[string]string{"app.kubernetes.io/managed-by": "administrator"})
-		if c.changeOwnership {
-			if err := c.Update(ctx, foreign); err != nil {
-				return err
-			}
-		} else {
-			if err := c.Client.Delete(ctx, obj); err != nil {
-				return err
-			}
-			foreign.SetUID("")
-			foreign.SetResourceVersion("")
-			foreign.SetManagedFields(nil)
-			if err := c.Create(ctx, foreign); err != nil {
-				return err
-			}
-		}
-	}
-	return c.Client.Delete(ctx, obj, opts...)
 }

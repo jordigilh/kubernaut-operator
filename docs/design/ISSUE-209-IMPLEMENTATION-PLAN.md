@@ -76,11 +76,12 @@ mandatory operator default:
 ```yaml
 spec:
   dataStorage:
-    auditHashKey:
-      # Optional. Empty means operator-generated Secret.
-      existingSecret: ""
-      # Optional. Defaults to hmacKey; this is the key inside the mounted YAML.
-      secretKey: "hmacKey"
+    audit:
+      hashKey:
+        # Optional. Empty means operator-generated Secret.
+        existingSecret: ""
+        # Optional. Defaults to hmacKey; this is the key inside the mounted YAML.
+        secretKey: "hmacKey"
 ```
 
 Proposed Go shape:
@@ -92,9 +93,10 @@ type DataStorageAuditHashKeySpec struct {
 }
 ```
 
-`DataStorageSpec` will carry a pointer to this block so old CR manifests remain
-valid. A nil block means the same effective configuration as an empty block;
-there is no legacy unkeyed mode in the operator.
+`DataStorageAuditSpec` carries a pointer to this block. A nil block means the
+same effective configuration as an empty block; there is no legacy unkeyed mode
+in the operator. The v1alpha2 clean break and enclosing audit shape are defined
+by `docs/design/DD-550-DATASTORAGE-CRD-SEMANTIC.md`.
 
 The Kubernetes Secret data key remains the upstream-compatible
 `audit-hmac-key.yaml`. Its content contains the configured inner key, normally:

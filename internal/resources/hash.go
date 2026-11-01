@@ -47,6 +47,23 @@ const (
 	// revision for the shared monitoring CA source. It contains only a
 	// controller-derived digest of the referenced Secret/ConfigMap metadata.
 	AnnotationMonitoringMaterialRevision = "kubernaut.ai/monitoring-material-revision"
+
+	// AnnotationDataStorageSigningMaterialRevision is a non-sensitive
+	// DataStorage pod-template revision for the effective audit-signing Secret.
+	AnnotationDataStorageSigningMaterialRevision = "kubernaut.ai/datastorage-signing-material-revision"
+
+	// AnnotationFleetMCPGatewayMaterialRevision is a non-sensitive pod-template
+	// revision for the Secret-backed Fleet MCP Gateway CA. It contains only
+	// Secret identity/resourceVersion metadata, never CA bytes.
+	AnnotationFleetMCPGatewayMaterialRevision = "kubernaut.ai/fleet-mcp-gateway-material-revision"
+
+	// AnnotationPostgreSQLCredentialRevision is a non-sensitive migration Job
+	// revision derived from the referenced PostgreSQL Secret metadata.
+	AnnotationPostgreSQLCredentialRevision = "kubernaut.ai/postgresql-credential-revision" //nolint:gosec // metadata key, not credential data
+
+	// AnnotationDataStorageDependencyRevision is a non-sensitive DataStorage
+	// pod-template revision derived from PostgreSQL and Valkey Secret metadata.
+	AnnotationDataStorageDependencyRevision = "kubernaut.ai/datastorage-dependency-revision"
 )
 
 // ConfigMapDataHash computes a stable SHA-256 hex digest of a ConfigMap's

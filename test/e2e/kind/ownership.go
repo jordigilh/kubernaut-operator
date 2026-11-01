@@ -35,6 +35,8 @@ type ownershipWitness struct {
 
 const workflowNamespaceName = "kubernaut-workflows"
 
+const applicationFixtureManager = "kubernaut-e2e"
+
 func ownershipObject(ctx context.Context, resource, name, namespace string) (*unstructured.Unstructured, error) {
 	args := []string{"get", resource, name, "-o", "json"}
 	if namespace != "" {
@@ -55,10 +57,10 @@ func ownershipObject(ctx context.Context, resource, name, namespace string) (*un
 // fabricated by resource builders. The installed operator is the only actor
 // allowed to reconcile the Kubernaut CR; the test observes public APIs.
 func createOwnershipConflicts(ctx context.Context) ([]ownershipWitness, error) {
-	secret := &corev1.Secret{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
-		ObjectMeta: metav1.ObjectMeta{Name: "datastorage-db-secret", Namespace: kubernautNamespace},
-		StringData: map[string]string{"administrator": "disposable-ownership-sentinel"},
+	migrations := &corev1.ConfigMap{
+		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+		ObjectMeta: metav1.ObjectMeta{Name: "kubernaut-migrations", Namespace: kubernautNamespace},
+		Data:       map[string]string{"administrator": "disposable-ownership-sentinel"},
 	}
 	ingress := &networkingv1.Ingress{
 		TypeMeta:   metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "Ingress"},
@@ -78,11 +80,11 @@ func createOwnershipConflicts(ctx context.Context) ([]ownershipWitness, error) {
 		}},
 		Rules: []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get"}}},
 	}
-	if err := applyYAML(ctx, secret, ingress, role); err != nil {
+	if err := applyYAML(ctx, migrations, ingress, role); err != nil {
 		return nil, err
 	}
 	witnesses := []ownershipWitness{
-		{resource: "secret", name: secret.Name, namespace: secret.Namespace},
+		{resource: "configmap", name: migrations.Name, namespace: migrations.Namespace},
 		{resource: "ingress", name: ingress.Name, namespace: ingress.Namespace},
 		{resource: "clusterrole", name: role.Name},
 	}
@@ -109,10 +111,31 @@ func captureProvisioningWitnesses(ctx context.Context) ([]ownershipWitness, erro
 		{resource: "service", name: "valkey", namespace: kubernautNamespace},
 		{resource: "secret", name: "postgresql-secret", namespace: kubernautNamespace},
 		{resource: "secret", name: "valkey-secret", namespace: kubernautNamespace},
+	})
+}
+
+func captureApplicationFixtureWitnesses(ctx context.Context) ([]ownershipWitness, error) {
+	return captureOwnershipWitnesses(ctx, []ownershipWitness{
 		{resource: "secret", name: "llm-credentials", namespace: kubernautNamespace},
 		{resource: "configmap", name: "aianalysis-policy", namespace: kubernautNamespace},
 		{resource: "configmap", name: "signalprocessing-policy", namespace: kubernautNamespace},
 	})
+}
+
+func assertApplicationFixtureOwnership(ctx context.Context, witnesses []ownershipWitness) error {
+	for _, witness := range witnesses {
+		live, err := ownershipObject(ctx, witness.resource, witness.name, witness.namespace)
+		if err != nil {
+			return err
+		}
+		if live.GetLabels()["app.kubernetes.io/managed-by"] != applicationFixtureManager {
+			return fmt.Errorf("application fixture %s %s has unexpected manager", witness.resource, witness.name)
+		}
+		if len(live.GetOwnerReferences()) != 0 {
+			return fmt.Errorf("application fixture %s %s has an owner reference", witness.resource, witness.name)
+		}
+	}
+	return nil
 }
 
 func createWorkflowOwnershipContent(ctx context.Context) ([]ownershipWitness, error) {
@@ -218,8 +241,11 @@ func ownershipGenerationReady(ctx context.Context) error {
 	return fmt.Errorf("services have not reconciled generation %d", kn.GetGeneration())
 }
 
+// deleteOwnershipConflicts removes only the disposable administrator-owned
+// fixtures after the ownership assertions complete.
 func deleteOwnershipConflicts(ctx context.Context) error {
 	for _, args := range [][]string{
+		{"delete", "configmap", "kubernaut-migrations", "-n", kubernautNamespace, "--ignore-not-found"},
 		{"delete", "ingress", "gateway-ingress", "-n", kubernautNamespace, "--ignore-not-found"},
 		{"delete", "clusterrole", "ownership-514-administrator", "--ignore-not-found"},
 	} {

@@ -68,7 +68,7 @@ Per the plan, ~15 flagged fields were manually re-verified by reading the actual
 
 1. **`spec.networkPolicies.*` -- 24 fields, 100% dead on arrival.** Every tuning field under `NetworkPoliciesSpec` (`apiServerCIDR(s)`, `apiServerPort`, per-destination `cidr`/`port` overrides for monitoring/externalWebhooks/externalRegistry/llm/mcpGateway/prometheus, and per-component `ingressCIDRs`/`ingressNamespaces`/`ingressNamespaceSelectors` overrides for gateway/apifrontend/console/datastorage/kubernautAgent) is new in v1alpha2 and accepted by the CRD schema, but `internal/resources/networkpolicies.go`'s builder functions read `kn.Spec.NetworkPolicies` -- the **v1alpha1** struct, which has none of these fields -- and never read the corresponding `knV2` fields either (confirmed: `knV2` is used in that file only for Fleet/Monitoring-URL egress, never for any `NetworkPolicies.*` field). A cluster-admin setting any of these 24 fields in a v1alpha2 CR gets silent no-op behavior: no validation error, no effect on the rendered NetworkPolicy. This is a strictly worse variant of the #417 bug class (not "wrong inference," but "never wired at all") and is security-relevant (these are meant to tighten network isolation). **Recommend filing immediately as its own issue, independent of this audit's broader test-coverage gaps.**
 2. **`kubernautAgent.alignmentCheck.llmProfileRef` -- already tracked as #419.** Confirmed again here as `CONVERSION-ONLY` with zero downstream consumers.
-3. **Cross-consumer consistency gaps (7 fields, high-confidence, business-package-scoped):** `image.pullSecrets`, `postgresql.sslMode`, `notification.routing.configMapName`, `signalProcessing.proactiveSignalMappings.configMapName`, `gateway.resources`, `apiFrontend.rbacRolesConfigMapRef.configMapName`, `additionalClusterRoles` -- each has a production consumer in one package (mostly `internal/controller/kubernaut_controller.go`) with zero test coverage in that same package, even though the field is tested elsewhere (`internal/resources`). Same shape as #417's gap, lower severity since the field IS correctly wired, just untested at that specific call site.
+3. **Cross-consumer consistency gaps (6 fields, high-confidence, business-package-scoped):** `image.pullSecrets`, `postgresql.sslMode`, `notification.routing.configMapName`, `gateway.resources`, `apiFrontend.rbacRolesConfigMapRef.configMapName`, `additionalClusterRoles` -- each has a production consumer in one package (mostly `internal/controller/kubernaut_controller.go`) with zero test coverage in that same package, even though the field is tested elsewhere (`internal/resources`). Same shape as #417's gap, lower severity since the field IS correctly wired, just untested at that specific call site.
 4. **Resolved by #424:** the former `monitoring.prometheus.tlsCaFile` / `monitoring.alertManager.tlsCaFile` fields were removed before v1alpha2 publication and replaced with the shared monitoring client TLS trust contract.
 5. **32 security/compliance-relevant fields are entirely UNTESTED** (see the per-component detail below for the full list) -- these are the highest-value targets for new regression tests given FedRAMP control traceability requirements.
 
@@ -444,25 +444,23 @@ Summary: COVERED=6 | PARTIAL=0 | UNTESTED=0
 
 _All fields in this component are COVERED._
 
-## Component: `notification` (5 fields)
+## Component: `notification` (4 fields)
 
-Summary: COVERED=2 | PARTIAL=2 | UNTESTED=1
+Summary: COVERED=3 | PARTIAL=1 | UNTESTED=0
 
-- `spec.notification.resources` (corev1.ResourceRequirements) -- **UNTESTED**
-  - zero test references found
+- `spec.notification.resources` (corev1.ResourceRequirements) -- **COVERED**
+  - `internal/resources/deployments_test.go`
 - `spec.notification.routing.configMapName` (string) -- **PARTIAL**
   - CONSISTENCY: production file(s) with no sibling test reference: ['internal/controller']
-- `spec.notification.slack.secretName` (string) -- **PARTIAL** **[security-relevant]**
-  - CONTROL-TAG: security/compliance-relevant field with no test carrying an [AC-x]/[SC-x]/[IA-x]/[AU-x]/[CM-x]/[SI-x] tag
+- `spec.notification.credentials` (array) -- **COVERED** **[security-relevant]**
+  - `UT-NOT-API-001`, `UT-NOT-DEP-002`, `UT-NOT-SECRET-005`, `IT-NOT-CRD-RECON-001`
 
-## Component: `signalProcessing` (5 fields)
+## Component: `signalProcessing` (4 fields)
 
-Summary: COVERED=3 | PARTIAL=1 | UNTESTED=1
+Summary: COVERED=3 | PARTIAL=0 | UNTESTED=1
 
 - `spec.signalProcessing.resources` (corev1.ResourceRequirements) -- **UNTESTED**
   - zero test references found
-- `spec.signalProcessing.proactiveSignalMappings.configMapName` (string) -- **PARTIAL**
-  - CONSISTENCY: production file(s) with no sibling test reference: ['internal/controller']
 
 ## Component: `effectivenessMonitor` (5 fields)
 
@@ -540,7 +538,7 @@ _All fields in this component are COVERED._
 These fields have a `+kubebuilder:default` and were not part of the automated pass/fail dimensions above (see methodology) -- listed here as a checklist, grouped by component, independent of their overall status:
 
 - **aiAnalysis**: `aiAnalysis.logging.level`="INFO"
-- **apiFrontend**: `apiFrontend.enabled`=true, `apiFrontend.route.enabled`=false, `apiFrontend.auth.audience`="kubernaut-apifrontend", `apiFrontend.rateLimit.ipRequestsPerSec`=10000, `apiFrontend.rateLimit.userRequestsPerSec`=100, `apiFrontend.rateLimit.maxConcurrentSessions`=50, `apiFrontend.rateLimit.toolCallsPerMinute`=600, `apiFrontend.severityTriage.llmEnabled`=true, `apiFrontend.severityTriage.cacheTTLSeconds`=30, `apiFrontend.severityTriage.llmConfidence`="0.7", `apiFrontend.rbac.sarCacheTTL`="30s", `apiFrontend.rbac.consoleAccessAuthorizationCheckEnabled`=false, `apiFrontend.logging.level`="INFO", `apiFrontend.session.disconnectTTL`="10m", `apiFrontend.session.retentionTTL`="720h", `apiFrontend.mcp.sessionIdleTimeout`="30m", `apiFrontend.mcp.toolTimeout`="30s", `apiFrontend.mcp.toolTimeouts`={"kubernaut_investigate":"15m","kubernaut_await_session":"3m","kubernaut_watch":"15m","kubernaut_discover_workflows":"60s"}
+- **apiFrontend**: `apiFrontend.enabled`=false, `apiFrontend.route.enabled`=false, `apiFrontend.auth.audience`="kubernaut-apifrontend", `apiFrontend.rateLimit.ipRequestsPerSec`=10000, `apiFrontend.rateLimit.userRequestsPerSec`=100, `apiFrontend.rateLimit.maxConcurrentSessions`=50, `apiFrontend.rateLimit.toolCallsPerMinute`=600, `apiFrontend.severityTriage.llmEnabled`=true, `apiFrontend.severityTriage.cacheTTLSeconds`=30, `apiFrontend.severityTriage.llmConfidence`="0.7", `apiFrontend.rbac.sarCacheTTL`="30s", `apiFrontend.rbac.consoleAccessAuthorizationCheckEnabled`=false, `apiFrontend.logging.level`="INFO", `apiFrontend.session.disconnectTTL`="10m", `apiFrontend.session.retentionTTL`="720h", `apiFrontend.mcp.sessionIdleTimeout`="30m", `apiFrontend.mcp.toolTimeout`="30s", `apiFrontend.mcp.toolTimeouts`={"kubernaut_investigate":"15m","kubernaut_await_session":"3m","kubernaut_watch":"15m","kubernaut_discover_workflows":"60s"}
 - **authWebhook**: `authWebhook.logging.level`="INFO"
 - **console**: `console.enabled`=false, `console.route.enabled`=true
 - **dataStorage**: `dataStorage.endpointPropagationDelay`="10s", `dataStorage.logging.level`="INFO", `dataStorage.retention.interval`="24h", `dataStorage.retention.batchSize`=1000, `dataStorage.retention.defaultDays`=2555, `dataStorage.signingCert.mountPath`="/etc/certs", `dataStorage.telemetry.logSink`=false, `dataStorage.telemetry.tls.enabled`=false, `dataStorage.database.maxOpenConns`=100, `dataStorage.database.maxIdleConns`=20, `dataStorage.database.connMaxLifetime`="1h", `dataStorage.database.connMaxIdleTime`="10m", `dataStorage.server.readTimeout`="30s", `dataStorage.server.writeTimeout`="30s"

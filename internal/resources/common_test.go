@@ -27,12 +27,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/yaml"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 const (
+	invalidRotationBefore   = "not-a-duration"
 	testSystemNamespace     = "kubernaut-system"
 	testIngressDomain       = "apps.test.example.com"
 	testWorkflowLiteProfile = "workflow-lite"
@@ -97,6 +99,7 @@ func testKubernaut() *kubernautv1alpha2.Kubernaut {
 				Port:       6379,
 			},
 			APIFrontend: kubernautv1alpha2.APIFrontendSpec{
+				Enabled: ptr.To(true),
 				Auth: kubernautv1alpha2.APIFrontendAuthSpec{
 					IssuerURL: "https://idp.example.com/realms/kubernaut",
 					Audience:  "kubernaut-apifrontend",
@@ -124,11 +127,15 @@ func testKubernaut() *kubernautv1alpha2.Kubernaut {
 	}
 }
 
-func testKubernautWithDevelopmentTLS() *kubernautv1alpha2.Kubernaut {
+func testKubernautWithCertManagerTLS() *kubernautv1alpha2.Kubernaut {
 	kn := testKubernaut()
 	kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
-		Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
-		DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{},
+		Mode: kubernautv1alpha2.TLSModeCertManager,
+		CertManager: &kubernautv1alpha2.CertManagerTLSConfig{
+			IssuerRef:             kubernautv1alpha2.TLSIssuerRef{Name: "customer-issuer"},
+			InternalCASecretName:  "customer-ca",
+			ServiceTLSSecretNames: validServiceTLSSecretNames(),
+		},
 	}
 	return kn
 }
@@ -136,6 +143,7 @@ func testKubernautWithDevelopmentTLS() *kubernautv1alpha2.Kubernaut {
 func testKubernautWithAF() *kubernautv1alpha2.Kubernaut {
 	kn := testKubernaut()
 	kn.Spec.APIFrontend = kubernautv1alpha2.APIFrontendSpec{
+		Enabled:       ptr.To(true),
 		LLMProfileRef: "primary",
 		Auth: kubernautv1alpha2.APIFrontendAuthSpec{
 			IssuerURL: "https://idp.example.com/realms/kubernaut",
@@ -222,6 +230,33 @@ func mutateLLMProfile(kn *kubernautv1alpha2.Kubernaut, fn func(*kubernautv1alpha
 // mutable nested maps and pointers accidentally.
 func testKnV2(kn *kubernautv1alpha2.Kubernaut) *kubernautv1alpha2.Kubernaut {
 	return kn.DeepCopy()
+}
+
+func setDataStorageAuditHashKey(kn *kubernautv1alpha2.Kubernaut, spec *kubernautv1alpha2.DataStorageAuditHashKeySpec) {
+	if spec == nil {
+		if kn.Spec.DataStorage.Audit != nil {
+			kn.Spec.DataStorage.Audit.HashKey = nil
+		}
+		return
+	}
+	if kn.Spec.DataStorage.Audit == nil {
+		kn.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{}
+	}
+	kn.Spec.DataStorage.Audit.HashKey = spec
+}
+
+func setDataStorageSigningCertificate(kn *kubernautv1alpha2.Kubernaut, spec *kubernautv1alpha2.SigningCertSpec) {
+	if kn.Spec.DataStorage.Audit == nil {
+		kn.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{}
+	}
+	kn.Spec.DataStorage.Audit.SigningCertificate = spec
+}
+
+func setDataStorageRetention(kn *kubernautv1alpha2.Kubernaut, spec *kubernautv1alpha2.RetentionSpec) {
+	if kn.Spec.DataStorage.Audit == nil {
+		kn.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{}
+	}
+	kn.Spec.DataStorage.Audit.Retention = spec
 }
 
 // fleetNamespaceFromYAML extracts fleet.namespace from a rendered
@@ -414,7 +449,7 @@ var _ = Describe("ActiveComponents", func() {
 		Expect(ActiveComponents(kn, testKnV2(kn))).NotTo(ContainElement(ComponentGateway))
 	})
 
-	It("includes apifrontend when enabled by default", func() {
+	It("includes apifrontend when explicitly enabled", func() {
 		kn := testKubernautWithAF()
 		Expect(ActiveComponents(kn, testKnV2(kn))).To(ContainElement(ComponentAPIFrontend))
 	})
@@ -434,7 +469,7 @@ var _ = Describe("InterServiceTLSCAFile", func() {
 
 	It("UT-TLS-491-007 [SC-8, SC-12; SOC2 CC6, CC8; ASVS v5.0.0-V12.1.1, v5.0.0-V13.2.1] resolves the Helm TLS path contract from the Kubernaut CR", func() {
 		kn := testKubernaut()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		Expect(InterServiceTLSCertDirFor(kn)).To(Equal("/etc/tls"))
 		Expect(InterServiceTLSCAFileFor(kn)).To(Equal("/etc/tls-ca/ca.crt"))
 
@@ -460,7 +495,7 @@ var _ = Describe("InterServiceTLSCAFile", func() {
 	It("mounts an administrator-managed Secret directly in manual mode", func() {
 		kn := testKubernaut()
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
-		kn.Spec.TLS.AdministratorManaged = &kubernautv1alpha2.AdministratorManagedTLSConfig{
+		kn.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{
 			InternalCASecretName: "customer-ca",
 		}
 
@@ -538,10 +573,9 @@ var _ = Describe("InterServiceTLSCAFile", func() {
 		Expect(found).To(BeFalse())
 	})
 
-	It("TLS-SOURCE-001 [AC-6, SC-8, SC-12; ASVS V13.3.1, V13.3.2] renders one deterministic monitoring CA volume for Secret and ConfigMap sources", func() {
+	It("UT-MON-563-RES-001 [AC-6, SC-8, SC-12, SC-13; SOC2 CC6.1; ASVS V12.3.1, V12.3.2, V13.3.1, V13.3.2] renders one deterministic read-only monitoring CA volume for an explicit Secret", func() {
 		kn := testKubernaut()
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
 			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca", Key: "bundle.pem"},
 		}
 		volume := MonitoringTLSVolume(kn)
@@ -551,60 +585,15 @@ var _ = Describe("InterServiceTLSCAFile", func() {
 		Expect(mount.MountPath + "/ca.crt").To(Equal(MonitoringTLSCAFile))
 		Expect(mount.ReadOnly).To(BeTrue(), "[AC-6, SC-8, SC-12; ASVS V13.3.1] administrator CA material must be mounted read-only")
 
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:             kubernautv1alpha2.MonitoringTLSSourceConfigMap,
-			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca", Key: "bundle.pem"},
-		}
-		volume = MonitoringTLSVolume(kn)
-		Expect(volume.ConfigMap.Name).To(Equal("monitoring-ca"))
-		Expect(volume.ConfigMap.Items).To(ConsistOf(corev1.KeyToPath{Key: "bundle.pem", Path: "ca.crt"}))
 	})
 
-	It("TLS-SOURCE-002 [SC-8, SC-12; ASVS V12.3.1, V13.3.1] defaults to the inter-service trust bundle and omits the volume for system trust", func() {
+	It("UT-MON-563-RES-002 [SC-8, SC-13, SC-17; SOC2 CC6.1, CC7.2; ASVS V12.3.1, V12.3.2, V13.3.4] uses system trust when no monitoring Secret is configured", func() {
+		Expect(MonitoringTLSVolume(nil)).To(BeNil())
 		kn := testKubernaut()
 		volume := MonitoringTLSVolume(kn)
-		Expect(volume.Name).To(Equal(MonitoringTLSCAVolumeName))
-		Expect(volume.ConfigMap).NotTo(BeNil())
-		Expect(volume.ConfigMap.Name).To(Equal(TrustBundleConfigMapName))
-		Expect(volume.ConfigMap.Items).To(ConsistOf(corev1.KeyToPath{Key: "service-ca.crt", Path: "ca.crt"}))
-		Expect(EffectiveMonitoringTLSCAFile(kn)).To(Equal(MonitoringTLSCAFile))
-
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSystem}
 		Expect(MonitoringTLSVolume(kn)).To(BeNil())
 		Expect(EffectiveMonitoringTLSCAFile(kn)).To(BeEmpty())
-	})
-
-	It("follows the administrator-owned inter-service source in manual TLS mode", func() {
-		kn := testKubernaut()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceInterService}
-
-		volume := MonitoringTLSVolume(kn)
-		Expect(volume.ConfigMap).NotTo(BeNil())
-		Expect(volume.ConfigMap.Name).To(Equal(InterServiceCAConfigMapName))
-		Expect(volume.ConfigMap.Items).To(ConsistOf(corev1.KeyToPath{Key: "ca.crt", Path: "ca.crt"}))
-
-		kn.Spec.TLS.AdministratorManaged = &kubernautv1alpha2.AdministratorManagedTLSConfig{InternalCASecretName: "customer-ca"}
-		volume = MonitoringTLSVolume(kn)
-		Expect(volume.Secret).NotTo(BeNil())
-		Expect(volume.Secret.SecretName).To(Equal("customer-ca"))
-		Expect(volume.Secret.Items).To(ConsistOf(corev1.KeyToPath{Key: "ca.crt", Path: "ca.crt"}))
-	})
-
-	It("omits the monitoring volume for invalid source shapes", func() {
-		kn := testKubernaut()
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source: kubernautv1alpha2.MonitoringTLSSourceSecret,
-		}
-		Expect(MonitoringTLSVolume(kn)).To(BeNil())
-
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source: kubernautv1alpha2.MonitoringTLSSourceConfigMap,
-		}
-		Expect(MonitoringTLSVolume(kn)).To(BeNil())
-
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: "invalid"}
-		Expect(MonitoringTLSVolume(kn)).To(BeNil())
+		Expect(volume).To(BeNil())
 	})
 })
 
@@ -657,6 +646,10 @@ var _ = Describe("MergeResources", func() {
 	It("uses defaults when user spec is empty", func() {
 		res := MergeResources(corev1.ResourceRequirements{})
 		Expect(res.Requests.Cpu().IsZero()).To(BeFalse())
+		Expect(res.Requests[corev1.ResourceCPU]).To(Equal(resource.MustParse("100m")))
+		Expect(res.Requests[corev1.ResourceMemory]).To(Equal(resource.MustParse("128Mi")))
+		Expect(res.Limits[corev1.ResourceCPU]).To(Equal(resource.MustParse("500m")))
+		Expect(res.Limits[corev1.ResourceMemory]).To(Equal(resource.MustParse("256Mi")))
 	})
 
 	It("uses user spec when provided", func() {

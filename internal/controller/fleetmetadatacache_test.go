@@ -42,7 +42,7 @@ import (
 // it via k8sClient and then apply enableFleetMetadataCache to configure
 // Fleet on the v1alpha2 storage view.
 func newCRWithFMCEnabled() *kubernautv1alpha2.Kubernaut {
-	return newCRWithRouteDisabled()
+	return newMinimalCR()
 }
 
 // defaultFMCFleetSpec is the spec.fleet configuration newCRWithFMCEnabled()
@@ -104,7 +104,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 	It("rejects an active Fleet when a Secret-backed scope-check CA is missing", func() {
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 
 		kn := &kubernautv1alpha2.Kubernaut{}
 		Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
@@ -200,9 +200,66 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}, rb)).To(Succeed())
 		})
 
+		It("IT-FLEET-557-RECONCILE-MCP-CA: wires MCP Gateway CA rendering and read-only mounts through Reconcile", func() {
+			const mcpGatewayCAVolumeName = "fleet-mcp-gateway-ca"
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "mcp-gateway-ca", Namespace: testNamespace},
+				Data:       map[string][]byte{"ca.crt": telemetryCAPEM()},
+			})).To(Succeed())
+			fleet := defaultFMCFleetSpec()
+			fleet.MCPGateway.TLS = &kubernautv1alpha2.FleetTrustSpec{
+				Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+				CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "mcp-gateway-ca"},
+			}
+			cr := newMinimalCR()
+			cr.Spec.Fleet = fleet
+			cr.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			reconcileToRunning(ctx)
+
+			gatewayConfig := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "gateway-config", Namespace: testNamespace}, gatewayConfig)).To(Succeed())
+			Expect(gatewayConfig.Data["config.yaml"]).To(ContainSubstring("mcpGatewayTLSCAFile: /etc/fleet-tls/mcp-gateway/ca.crt"))
+			fmcConfig := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "fleetmetadatacache-config", Namespace: testNamespace}, fmcConfig)).To(Succeed())
+			Expect(fmcConfig.Data["config.yaml"]).To(ContainSubstring("tlsCAFile: /etc/fleet-tls/mcp-gateway/ca.crt"))
+
+			gateway := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.DeploymentName(resources.ComponentGateway), Namespace: testNamespace}, gateway)).To(Succeed())
+			foundVolume := false
+			for _, volume := range gateway.Spec.Template.Spec.Volumes {
+				if volume.Name == mcpGatewayCAVolumeName {
+					foundVolume = true
+					Expect(volume.Secret).NotTo(BeNil())
+					Expect(volume.Secret.SecretName).To(Equal("mcp-gateway-ca"))
+				}
+			}
+			Expect(foundVolume).To(BeTrue())
+			foundMount := false
+			for _, mount := range gateway.Spec.Template.Spec.Containers[0].VolumeMounts {
+				if mount.Name == mcpGatewayCAVolumeName && mount.MountPath == "/etc/fleet-tls/mcp-gateway" {
+					foundMount = true
+					Expect(mount.ReadOnly).To(BeTrue())
+				}
+			}
+			Expect(foundMount).To(BeTrue())
+
+			fmc := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.DeploymentName(resources.ComponentFleetMetadataCache), Namespace: testNamespace}, fmc)).To(Succeed())
+			fmcVolume := false
+			for _, volume := range fmc.Spec.Template.Spec.Volumes {
+				if volume.Name == mcpGatewayCAVolumeName {
+					fmcVolume = true
+					Expect(volume.Secret.SecretName).To(Equal("mcp-gateway-ca"))
+				}
+			}
+			Expect(fmcVolume).To(BeTrue())
+		})
+
 		It("IT-FLEET-521-RECONCILE-ACM: reconciles ACM endpoint, trust default, and token mount", func() {
 			createBYOSecrets(ctx)
-			cr := newCRWithRouteDisabled()
+			cr := newMinimalCR()
 			fleet := defaultFMCFleetSpec()
 			fleet.ScopeCheck.Backend = fleetBackendACM
 			fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{
@@ -240,7 +297,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("skips all FMC resources when fleetMetadataCache is disabled (default)", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToRunning(ctx)
 
 			dep := &appsv1.Deployment{}
@@ -270,7 +327,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 		It("still creates FMC's ServiceAccount even when disabled (matches AuthWebhook/APIFrontend precedent)", func() {
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToRunning(ctx)
 
 			sa := &corev1.ServiceAccount{}

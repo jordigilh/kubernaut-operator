@@ -2,6 +2,54 @@
 
 Before deploying Kubernaut, provision the required backing services and namespace on your OCP cluster.
 
+## Disposable development dependencies
+
+For operator development, Kind, and disposable OCP qualification, use the
+repository-owned development dependencies chart instead of reproducing the dependency
+manifests by hand:
+
+This is an internal CI/CD and upstream-demo infrastructure chart only. It has
+its own chart version and release pipeline, independent of the operator
+release; it is not a production dependency artifact.
+
+```bash
+helm upgrade --install kubernaut-development-dependencies \
+  ./charts/kubernaut-development-dependencies \
+  --namespace kubernaut-system \
+  --create-namespace \
+  --wait --timeout 10m
+```
+
+The chart creates selector-backed PostgreSQL and Valkey Services,
+runtime-generated credentials, readiness probes, generated PostgreSQL and Valkey
+TLS material, and a connection contract ConfigMap. Its default CR contract is
+`spec.postgresql.sslMode: require` plus Valkey mTLS; `disable` is not supported.
+See the
+[development dependencies chart README](../../charts/kubernaut-development-dependencies/README.md) for
+image pinning, restricted-SCC settings, Kind overrides, persistence, and
+cleanup. It is intentionally separate from the production operator chart and
+must not be installed over administrator-owned BYO Services or Secrets.
+Application credentials, policy ConfigMaps, notification routing, and identity
+provider configuration are separate application-owned inputs and are not
+created by this chart.
+
+`kubernaut-development-dependencies` replaces the former
+`kubernaut-dev-bootstrap` release identity. Do not install both releases in
+the same namespace; uninstall the old disposable release first and back up any
+Helm-owned persistent data before doing so. The chart README contains the
+migration command.
+
+For demo clusters, use the immutable OCI reference printed by the dedicated
+development-dependencies publication workflow:
+
+```bash
+helm upgrade --install kubernaut-development-dependencies \
+  oci://quay.io/kubernaut-ai/kubernaut-development-dependencies@sha256:<chart-digest> \
+  --namespace kubernaut-system \
+  --create-namespace \
+  --wait --timeout 10m
+```
+
 ## Namespace
 
 ```bash
@@ -74,7 +122,8 @@ For testing with the service-ca certificate (not externally verifiable), set `ss
 
 ### Create the operator secret
 
-Keys must be `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`:
+Keys must be `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, and
+`db-secrets.yaml` containing matching `username`/`password` values:
 
 ```bash
 oc apply -f - <<EOF
@@ -87,6 +136,9 @@ stringData:
   POSTGRES_USER: kubernaut
   POSTGRES_PASSWORD: changeme
   POSTGRES_DB: kubernaut
+  db-secrets.yaml: |
+    username: kubernaut
+    password: changeme
 EOF
 ```
 

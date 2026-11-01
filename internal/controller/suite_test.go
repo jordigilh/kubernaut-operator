@@ -33,7 +33,10 @@ import (
 	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -45,6 +48,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	kubernautaiv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
+	"github.com/jordigilh/kubernaut-operator/internal/resources"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -157,6 +161,82 @@ var _ = BeforeSuite(func() {
 	finalizeTerminatingNamespaces(ctx, clientset)
 
 })
+
+var _ = BeforeEach(func() {
+	cleanupTLSFixtureResources(ctx)
+	ensureIntegrationPolicyFixture(ctx)
+	ensureIntegrationBYOServices(ctx)
+})
+
+func ensureIntegrationPolicyFixture(ctx context.Context) {
+	if os.Getenv("KUBERNAUT_CONTROLLER_TEST_TIER") == controllerUnitTier || k8sClient == nil {
+		return
+	}
+
+	monitoringNamespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: resources.OCPMonitoringNamespace}}
+	err := k8sClient.Get(ctx, client.ObjectKeyFromObject(monitoringNamespace), &corev1.Namespace{})
+	if apierrors.IsNotFound(err) {
+		ExpectWithOffset(1, k8sClient.Create(ctx, monitoringNamespace)).To(Succeed())
+	} else {
+		ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	}
+	for _, service := range []*corev1.Service{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "thanos-querier", Namespace: resources.OCPMonitoringNamespace},
+			Spec: corev1.ServiceSpec{
+				Selector: map[string]string{"app": "thanos-querier"},
+				Ports:    []corev1.ServicePort{{Name: "web", Protocol: corev1.ProtocolTCP, Port: 9091, TargetPort: intstr.FromInt(9091)}},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "alertmanager-main", Namespace: resources.OCPMonitoringNamespace},
+			Spec: corev1.ServiceSpec{
+				Selector: map[string]string{"app": "alertmanager"},
+				Ports:    []corev1.ServicePort{{Name: "web", Protocol: corev1.ProtocolTCP, Port: 9094, TargetPort: intstr.FromInt(9094)}},
+			},
+		},
+	} {
+		liveService := &corev1.Service{}
+		err = k8sClient.Get(ctx, client.ObjectKeyFromObject(service), liveService)
+		if apierrors.IsNotFound(err) {
+			ExpectWithOffset(1, k8sClient.Create(ctx, service)).To(Succeed())
+		} else {
+			ExpectWithOffset(1, err).NotTo(HaveOccurred())
+		}
+	}
+	apimeta.MaybeResetRESTMapper(k8sClient.RESTMapper())
+}
+
+func ensureIntegrationBYOServices(ctx context.Context) {
+	if os.Getenv("KUBERNAUT_CONTROLLER_TEST_TIER") == controllerUnitTier || k8sClient == nil {
+		return
+	}
+
+	for _, service := range []*corev1.Service{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "postgresql", Namespace: testNamespace},
+			Spec: corev1.ServiceSpec{
+				Selector: map[string]string{"app": "postgresql"},
+				Ports:    []corev1.ServicePort{{Name: "postgresql", Protocol: corev1.ProtocolTCP, Port: 5432, TargetPort: intstr.FromInt(5432)}},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "valkey", Namespace: testNamespace},
+			Spec: corev1.ServiceSpec{
+				Selector: map[string]string{"app": "valkey"},
+				Ports:    []corev1.ServicePort{{Name: "valkey", Protocol: corev1.ProtocolTCP, Port: 6379, TargetPort: intstr.FromInt(6379)}},
+			},
+		},
+	} {
+		live := &corev1.Service{}
+		err := k8sClient.Get(ctx, client.ObjectKeyFromObject(service), live)
+		if apierrors.IsNotFound(err) {
+			ExpectWithOffset(1, k8sClient.Create(ctx, service)).To(Succeed())
+		} else {
+			ExpectWithOffset(1, err).NotTo(HaveOccurred())
+		}
+	}
+}
 
 // finalizeTerminatingNamespaces runs for the life of the suite, clearing a
 // Namespace's spec.finalizers as soon as it enters Terminating (#358, #359).

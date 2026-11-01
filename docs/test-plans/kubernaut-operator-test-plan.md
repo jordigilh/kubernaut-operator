@@ -120,7 +120,7 @@ Each feature maps to a business outcome the operator must deliver.
 | Feature | Rationale |
 |---------|-----------|
 | `SetupWithManager` wiring | Requires a running manager; verified via e2e tests |
-| OpenShift Route TLS termination behavior | Platform-level; Route object creation is tested |
+| Administrator-owned external exposure TLS/authorization | Platform-level; the operator verifies internal Services and does not create Route/Ingress objects |
 | Leader election | Requires multi-replica deployment; deferred to e2e |
 | Actual database migration execution | Depends on external PostgreSQL; Job creation is tested |
 | LLM provider connectivity | External dependency; ConfigMap/Secret wiring is tested |
@@ -463,7 +463,7 @@ Tests are executed on every pull request via GitHub Actions. The pipeline:
 | envtest namespace deletion hangs | Tests that trigger CR deletion may leave namespaces in Terminating | Medium | `stripWorkflowNamespaceLabel()` helper prevents finalizer from deleting namespace in envtest |
 | Job status validation strictness | K8s 1.30+ requires `SuccessCriteriaMet`/`FailureTarget` conditions | Medium | Test helpers set all required conditions |
 | Cluster-scoped resource leaks between tests | Stale ClusterRoles from prior tests affect assertions | High | `cleanupClusterScoped()` in AfterEach deletes by managed-by label |
-| Route tests require routev1 scheme | envtest doesn't include OpenShift types | Low | Route disabled in lifecycle tests; route creation tested separately |
+| External exposure is platform-owned | The operator cannot qualify administrator-created Route/Ingress behavior | Low | Document the ownership boundary and qualify platform exposure in the deployment-specific E2E lane |
 
 ---
 
@@ -560,7 +560,7 @@ Tests are executed on every pull request via GitHub Actions. The pipeline:
 | `services_test.go` | 8 | Service count, ports, authwebhook HTTPS, selector-to-component validation, PDB count/selectors |
 | `serviceaccounts_test.go` | 3 | ServiceAccount per-component, WorkflowRunnerServiceAccount default/custom namespace |
 | `webhooks_test.go` | 7 | MWC/VWC names, rules, paths, sideEffects, failurePolicy, labels |
-| `ocp_test.go` | 9 | Route enabled/disabled, hostname, GatewayRouteStub, DataStorageDBSecret, WorkflowNamespace |
+| `ocp_test.go` | 6 | Route enabled/disabled, hostname, GatewayRouteStub, WorkflowNamespace |
 | `migration_test.go` | 6 | MigrationConfigMap, MigrationJob, backoffLimit, TTL, image |
 | `tls_test.go` | 5 | TLS generation, CA bundle, DNS names, cert validity |
 | `crds_test.go` | 4 | EnsureCRDs create, update, idempotency |

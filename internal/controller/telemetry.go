@@ -57,10 +57,13 @@ type telemetryLane struct {
 // map-shaped, but this internal value has a fixed schema and should not accept
 // arbitrary component names.
 type telemetryMaterialRevisionSet struct {
-	Gateway        string
-	DataStorage    string
-	KubernautAgent string
-	Monitoring     string
+	Gateway               string
+	DataStorage           string
+	DataStorageSigning    string
+	DataStorageDependency string
+	KubernautAgent        string
+	Monitoring            string
+	FleetMCPGateway       string
 }
 
 func (s *telemetryMaterialRevisionSet) set(component, revision string) {
@@ -124,7 +127,7 @@ func (r *KubernautReconciler) ensureTelemetryAmbientTrustSource(ctx context.Cont
 	if err != nil {
 		return fmt.Errorf("ensuring runtime trust source: %w", err)
 	}
-	if material.Source == resources.TLSMaterialSourceOpenShiftServiceCA {
+	if material.Source == resources.TLSMaterialSourceServiceCA {
 		if err := r.ensureNamespaced(ctx, kn, resources.InterServiceCAConfigMap(kn)); err != nil {
 			return fmt.Errorf("ensuring inter-service CA ConfigMap: %w", err)
 		}
@@ -410,6 +413,28 @@ func stampTelemetryMaterialRevision(dep *appsv1.Deployment, revisions telemetryM
 	dep.Spec.Template.Annotations = annotations
 }
 
+// stampFleetMCPGatewayMaterialRevision adds the non-sensitive MCP Gateway CA
+// revision to workloads that open Fleet MCP sessions.
+func stampFleetMCPGatewayMaterialRevision(dep *appsv1.Deployment, revisions telemetryMaterialRevisionSet) {
+	if revisions.FleetMCPGateway == "" {
+		return
+	}
+	switch dep.Spec.Template.Labels["app"] {
+	case resources.ComponentGateway, resources.ComponentRemediationOrchestrator,
+		resources.ComponentSignalProcessing, resources.ComponentAPIFrontend,
+		resources.ComponentEffectivenessMonitor, resources.ComponentWorkflowExecution,
+		resources.ComponentKubernautAgent, resources.ComponentFleetMetadataCache:
+	default:
+		return
+	}
+	annotations := dep.Spec.Template.Annotations
+	if annotations == nil {
+		annotations = make(map[string]string, 1)
+	}
+	annotations[resources.AnnotationFleetMCPGatewayMaterialRevision] = revisions.FleetMCPGateway
+	dep.Spec.Template.Annotations = annotations
+}
+
 func stampMonitoringMaterialRevision(dep *appsv1.Deployment, revisions telemetryMaterialRevisionSet) {
 	if revisions.Monitoring == "" {
 		return
@@ -461,17 +486,21 @@ func telemetrySecretReferenced(kn *kubernautv1alpha2.Kubernaut, secretName strin
 	return false
 }
 
+// ambientTrustSecretReferenced reports whether a Secret backs the selected
+// ambient inter-service trust material.
 func ambientTrustSecretReferenced(kn *kubernautv1alpha2.Kubernaut, secretName string) bool {
 	if !hasNetworkTelemetry(kn) {
 		return false
 	}
 	material, err := resources.ResolveTLSMaterial(kn)
-	if err != nil || material.Source == resources.TLSMaterialSourceOpenShiftServiceCA {
+	if err != nil || material.Source == resources.TLSMaterialSourceServiceCA {
 		return false
 	}
 	return material.InternalCASecretName != "" && material.InternalCASecretName == secretName
 }
 
+// monitoringTLSSecretReferenced reports whether a Secret backs the shared
+// monitoring CA selected by the Kubernaut resource.
 func monitoringTLSSecretReferenced(kn *kubernautv1alpha2.Kubernaut, secretName string) bool {
 	if !monitoringTLSConfigured(kn) {
 		return false
@@ -480,6 +509,8 @@ func monitoringTLSSecretReferenced(kn *kubernautv1alpha2.Kubernaut, secretName s
 	return ok && kind == monitoringTLSSecretKind && name == secretName
 }
 
+// hasNetworkTelemetry reports whether any deployed telemetry lane needs trust
+// material and therefore participates in ambient CA reconciliation.
 func hasNetworkTelemetry(kn *kubernautv1alpha2.Kubernaut) bool {
 	for _, lane := range telemetryLanes(kn) {
 		if resources.TelemetryNetworkEnabled(lane.spec) {
@@ -490,9 +521,8 @@ func hasNetworkTelemetry(kn *kubernautv1alpha2.Kubernaut) bool {
 }
 
 // telemetryAmbientConfigMapToKubernaut maps updates to ConfigMaps that feed
-// the effective inter-service or monitoring trust source. The explicit watch
-// covers manual administrator-owned ConfigMaps; operator-owned variants are
-// also observed through Owns(ConfigMap).
+// the effective inter-service trust source. Operator-owned variants are also
+// observed through Owns(ConfigMap).
 func (r *KubernautReconciler) telemetryAmbientConfigMapToKubernaut(ctx context.Context, object client.Object) []reconcile.Request {
 	configMap, ok := object.(*corev1.ConfigMap)
 	if !ok {
@@ -506,10 +536,6 @@ func (r *KubernautReconciler) telemetryAmbientConfigMapToKubernaut(ctx context.C
 	requests := make([]reconcile.Request, 0, len(list.Items))
 	for index := range list.Items {
 		kn := &list.Items[index]
-		if configMap.Namespace == kn.Namespace && monitoringTLSConfigMapReferenced(kn, configMap.Name) {
-			requests = append(requests, reconcile.Request{NamespacedName: types.NamespacedName{Name: kn.Name, Namespace: kn.Namespace}})
-			continue
-		}
 		if !telemetryAmbientConfigMap(configMap) {
 			continue
 		}
@@ -524,14 +550,8 @@ func (r *KubernautReconciler) telemetryAmbientConfigMapToKubernaut(ctx context.C
 	return requests
 }
 
-func monitoringTLSConfigMapReferenced(kn *kubernautv1alpha2.Kubernaut, configMapName string) bool {
-	if !monitoringTLSConfigured(kn) {
-		return false
-	}
-	kind, name, _, ok := monitoringTLSReference(kn)
-	return ok && kind == monitoringTLSConfigMapKind && name == configMapName
-}
-
+// setTelemetryAmbientTrustPending records a retryable trust-source condition
+// while OpenShift service-CA injection is still completing.
 func (r *KubernautReconciler) setTelemetryAmbientTrustPending(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, err error) (reconcile.Result, error) {
 	message := err.Error()
 	if statusErr := r.patchStatus(ctx, kn, func() {
@@ -557,8 +577,9 @@ func (r *KubernautReconciler) setTelemetryAmbientTrustPending(ctx context.Contex
 }
 
 func ambientTrustConfigMapRelevant(kn *kubernautv1alpha2.Kubernaut, configMap *corev1.ConfigMap) bool {
+	serviceCA := kn.Spec.TLS.Mode == "" || kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeServiceCA
 	if configMap.Namespace == openshiftConfigManagedNamespace && configMap.Name == "default-ingress-cert" {
-		return kn.Spec.TLS.Mode == ""
+		return serviceCA
 	}
 	if configMap.Name == resources.TrustBundleConfigMapName {
 		return kn.Spec.TLS.Mode != kubernautv1alpha2.TLSModeManual
@@ -570,7 +591,7 @@ func ambientTrustConfigMapRelevant(kn *kubernautv1alpha2.Kubernaut, configMap *c
 		material, err := resources.ResolveTLSMaterial(kn)
 		return err == nil && material.InternalCASecretName == ""
 	}
-	return kn.Spec.TLS.Mode == ""
+	return serviceCA
 }
 
 func telemetryAmbientConfigMap(configMap *corev1.ConfigMap) bool {

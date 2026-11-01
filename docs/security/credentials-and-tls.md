@@ -12,27 +12,33 @@ This document summarizes how Kubernaut manages secrets referenced by the operato
 
 ## Managed secrets
 
+The authoritative current Notification credential contract is documented in
+[`docs/design/ISSUE-549-NOTIFICATION-CREDENTIALS.md`](../design/ISSUE-549-NOTIFICATION-CREDENTIALS.md).
+
 The operator and managed workloads expect Kubernetes Secret objects (bring-your-own or provisioned by the customer) with the keys below. Secret names are typically set on the Kubernaut CR.
 
 | Secret | Required keys | Purpose |
 |--------|---------------|---------|
-| PostgreSQL (`spec.postgresql.secretName`) | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | Database access for DataStorage and migrations |
+| PostgreSQL (`spec.postgresql.secretName`) | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, and `db-secrets.yaml` with matching `username`/`password` | Database access for DataStorage and migrations; the operator mounts this Secret directly and never creates a derived database credential Secret |
 | Valkey or Redis (`spec.valkey.secretName`) | `password` | Cache and stream access for DataStorage. **Not sufficient authentication on its own** -- see [TLS configuration](#tls-configuration) below |
 | Valkey mTLS (optional but recommended, `spec.valkey.tls.caSecretName` / `clientCertSecretName`) | `ca.crt` / `tls.crt`, `tls.key` | Client authentication to Valkey via mutual TLS |
 | LLM credentials (`spec.llmProfiles.<name>.credentialsSecretName`) | Provider-dependent: `credentials.json` (Vertex AI), `api_key` (OpenAI or Anthropic), and similar | Authenticate to the LLM provider API |
+| LLM profile CA (`spec.llmProfiles.<name>.tlsCaSecretRef`) | `ca.crt` by default, or the referenced key | Verify a private LLM endpoint certificate; mounted read-only at the profile's deterministic TLS path |
+| LLM profile mTLS client (`spec.llmProfiles.<name>.tlsClientSecretRef`) | `tls.crt`, `tls.key` | Authenticate a sibling LLM agent to the endpoint; projected read-only with only the selected keys |
 | OAuth2 (optional, `spec.llmProfiles.<name>.oauth2.credentialsSecretRef`) | `client-id`, `client-secret` | OAuth2 client-credentials flow for LLM access |
-| Notification Slack (optional, `spec.notification.slack.secretName`) | `webhook-url` | Deliver notifications to Slack |
+| Notification provider credentials (optional, `spec.notification.credentials[].secretRef`) | Provider-specific key/value, such as `webhook-url` or `routing-key` | Project a namespace-local named credential file for Slack, Microsoft Teams, PagerDuty, or another configured Notification receiver; routing uses `credentials[].name` as `credentialRef` |
 | Ansible or AAP (optional, `spec.ansible.tokenSecretRef`) | `token` | Authenticate to AWX or Ansible Automation Platform API |
 | OTLP private CA (Issue #478, `spec.<component>.telemetry.tls.caCertSecretRef`) | `ca.crt` by default, or the referenced key | Verify a private OTLP collector certificate |
 | OTLP mTLS client (Issue #478, `spec.<component>.telemetry.tls.tlsClientSecretRef`) | `tls.crt`, `tls.key` | Authenticate the telemetry exporter to an OTLP collector |
-| DataStorage audit HMAC (`spec.dataStorage.auditHashKey.existingSecret`, or the operator default) | `audit-hmac-key.yaml` containing `hmacKey` (or configured `secretKey`) | Keyed audit hash-chain tamper evidence (FedRAMP AU-9 / SOC 2 CC8.1) |
+| DataStorage audit HMAC (`spec.dataStorage.audit.hashKey.existingSecret`, or the operator default) | `audit-hmac-key.yaml` containing `hmacKey` (or configured `secretKey`) | Keyed audit hash-chain tamper evidence (FedRAMP AU-9 / SOC 2 CC8.1) |
+| DataStorage audit signing certificate (`spec.dataStorage.audit.signingCertificate.secretName`) | `tls.crt`, `tls.key` | Sign exported audit records (FedRAMP AU-9 / SC-12) |
 
-Additional keys may be required for specific provider integrations; consult provider documentation and the Kubernaut CRD for optional fields.
+Notification Secret references are namespace-local: `secretRef.name` and `secretRef.key` resolve in the Kubernaut resource namespace. Additional keys may be required for specific provider integrations; consult provider documentation and the Kubernaut CRD for optional fields.
 
 ## Credential rotation
 
-The operator watches its owned Secret resources and periodically revalidates
-administrator-managed or cert-manager Secret references. When referenced
+The operator periodically revalidates manual or cert-manager Secret
+references. When referenced
 Secret data changes, reconciliation regenerates derived configuration (for
 example, ConfigMaps that reference trust material) and workload Deployments
 roll forward using a Deployment annotation hash strategy.
@@ -43,6 +49,12 @@ OTLP CA and client Secrets remain administrator-owned inputs. The operator
 validates and mounts them read-only, but never adopts, edits, rotates, or
 deletes them. See [OTLP telemetry TLS and operational rotation](#otlp-telemetry-tls-and-operational-rotation)
 for the runtime rollout contract.
+
+The DataStorage audit-signing Secret is also administrator- or cert-manager-owned
+and is mounted read-only. The operator derives the signing directory from
+`spec.dataStorage.audit.signingCertificate.mountPath` and uses only a
+resource-version-derived, non-sensitive pod-template revision to roll
+DataStorage after Secret changes; certificate bytes never enter annotations.
 
 LLM API keys and OAuth client secrets should be rotated on a regular schedule; rotating LLM API credentials at least every ninety days is recommended.
 
@@ -71,7 +83,11 @@ The following table summarizes primary east-west trust patterns for the managed 
 
 ## TLS configuration
 
-**Inter-service TLS:** the selected runtime source supplies internal service certificates and the public trust bundle. Administrator-managed and cert-manager sources are read without adoption; explicit development self-signed mode is limited to development/Kind; OpenShift service-CA injection is an optional capability adapter rather than a generic fallback.
+**Inter-service TLS:** the selected runtime source supplies internal service
+certificates and the public trust bundle. Manual and cert-manager sources are
+read without Secret adoption; cert-manager output remains cert-manager-owned.
+OpenShift service-CA injection is available only through the explicit platform
+adapter and is never a generic fallback.
 
 **External TLS (LLM and corporate egress):** Custom CA bundles for corporate TLS inspection or private PKI may be supplied via `spec.llmProfiles.<name>.tlsCaFile` so any component resolving to that profile trusts required roots when calling external LLM endpoints.
 
@@ -88,7 +104,10 @@ The following table summarizes primary east-west trust patterns for the managed 
 
 **Valkey (IA-5, SC-8):** A `requirepass` password (`spec.valkey.secretName`) does **not** provide real client authentication -- the Go Redis client used by Kubernaut's services silently tolerates an `AUTH` failure against a server with no password configured, so a misconfigured deployment fails open rather than closed (the same gap upstream `kubernaut` closed in [kubernaut#2269](https://github.com/jordigilh/kubernaut/issues/2269)/[#2272](https://github.com/jordigilh/kubernaut/pull/2272)). Set `spec.valkey.tls.enabled: true` with `caSecretName` and `clientCertSecretName` to require mutual TLS instead: Valkey rejects any client that doesn't present a certificate signed by the trusted CA, which fails closed. DataStorage and FleetMetadataCache both already support this; a single shared client certificate is sufficient since Valkey 8 only validates the certificate chain, not the caller's identity. See [01-infrastructure.md: Enable mTLS](../installation/01-infrastructure.md#enable-mtls) for setup steps.
 
-**Admission webhooks:** TLS for the AuthWebhook admission endpoints uses the selected runtime TLS source. OpenShift service-CA injection is used only when the optional OpenShift capability is discovered; generic clusters use the explicit administrator-managed, cert-manager, or development self-signed source.
+**Admission webhooks:** TLS for the AuthWebhook admission endpoints uses the
+selected runtime TLS source. OpenShift service-CA injection is used only when
+the optional OpenShift capability is discovered; generic clusters use manual
+or cert-manager material.
 
 ## OTLP telemetry TLS and operational rotation
 
@@ -177,10 +196,33 @@ support bundles.
 
 ## NetworkPolicy (SC-7)
 
-Network policy intent is always enabled, but the operator submits it only through a positively identified native provider adapter. Select `spec.networkPolicies.provider` as `Auto`, `Cilium`, `Calico`, or `OVN`. `Auto` requires exactly one active, schema-compatible provider in the supported release range. A plain Kubernetes/Kind cluster without one continues without provider policy objects and reports `ProviderPolicyReady=False`; it never receives a raw Kubernetes `NetworkPolicy` fallback.
+The operator reconciles namespaced `networking.k8s.io/v1` `NetworkPolicy`
+objects using stable namespace/pod selectors. `NetworkPolicyReady=True` means
+the desired objects were applied and ownership checks passed; it is not a claim
+that the installed CNI enforces them.
 
-The adapters use provider-native API-server identities/entities and do not accept static API-server CIDRs. Unsupported, ambiguous, unavailable, or incompatible providers fail closed and are surfaced in status. Provider CRDs and operators are prerequisites owned by the platform administrator; Kubernaut does not install them.
+Runtime policies are ingress-only. The operator does not discover or require
+Cilium, Calico, or OVN APIs, does not render API-server CIDR/IPBlock rules, and
+does not generate restrictive egress that could block Kubernetes API clients,
+DNS, databases, Valkey, monitoring, IdP, or LLM dependencies. Administrators,
+SREs, and the cloud network own those egress paths.
 
-The operator owns only its labeled native policy objects. It does not prescribe browser-origin policy for the Console or overwrite platform/admin policies; administrators may add supplemental provider-native policy for deployment-specific ingress requirements.
+The generated operand policy excludes `AuthWebhook`, because the Kubernetes API
+server reaches that admission endpoint from the host network and has no
+portable namespace/pod selector. Administrators and the CNI own that ingress
+boundary.
 
-For questions about this document or security practices, contact **jgil@redhat.com** on behalf of **Kubernaut AI**.
+Console browser/Route ingress is also intentionally excluded from the generated
+operand policy. Browser source identity is deployment- and organization-specific;
+administrators must add any Console ingress policy required by their Route.
+
+The OLM manager policy permits all sources to TCP 9443 for the same host-network
+webhook reason. Standard NetworkPolicy allows are additive, so another standard
+allow policy cannot narrow that source set; administrators must use a
+CNI-specific deny or equivalent enforcement when a narrower boundary is needed.
+
+Only objects carrying the operator ownership markers are updated or cleaned up.
+Administrator-owned policies remain untouched. See
+`docs/design/ADR-PLATFORM-003-portable-kubernetes-networkpolicy.md` for the
+security evidence mapping to AC-3/AC-6, SC-7, SOC 2 CC6/CC7, and OWASP ASVS
+V4.1–V4.3.

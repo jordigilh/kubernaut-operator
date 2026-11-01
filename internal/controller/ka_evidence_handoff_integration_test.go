@@ -39,7 +39,7 @@ var _ = Describe("Issue #527: KA evidence handoff reconciliation", func() {
 
 	It("IT-KA-527-RECONCILE-001 [CM-2, CM-3, CM-6, SA-11; SOC2 CC8.1; ASVS v5.0.0-V13.3.1/V16.5.2] renders the default, preserves an override, and wires the Agent ConfigMap mount", func() {
 		createBYOSecrets(ctx)
-		kn := newCRWithRouteDisabled()
+		kn := newMinimalCR()
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 
 		r := reconcileToDeployPhase(ctx)

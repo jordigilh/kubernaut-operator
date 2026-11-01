@@ -32,8 +32,8 @@ var _ = Describe("Services", func() {
 	It("does not emit OpenShift service-CA annotations for generic administrator-managed TLS", func() {
 		kn := testKubernaut()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
-			Mode: kubernautv1alpha2.TLSModeAdministratorManaged,
-			AdministratorManaged: &kubernautv1alpha2.AdministratorManagedTLSConfig{
+			Mode: kubernautv1alpha2.TLSModeManual,
+			Manual: &kubernautv1alpha2.ManualTLSConfig{
 				InternalCASecretName:  "customer-ca",
 				ServiceTLSSecretNames: validServiceTLSSecretNames(),
 			},

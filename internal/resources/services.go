@@ -200,7 +200,7 @@ func applyTLSServiceMetadata(kn *kubernautv1alpha2.Kubernaut, svc *corev1.Servic
 	if secretName == "" {
 		return
 	}
-	if material.Source == TLSMaterialSourceOpenShiftServiceCA {
+	if material.Source == TLSMaterialSourceServiceCA {
 		if svc.Annotations == nil {
 			svc.Annotations = make(map[string]string, 1)
 		}

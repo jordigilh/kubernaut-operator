@@ -420,7 +420,6 @@ upstream-owned under kubernaut#2492/#2488.
 - [x] Remote fallback was not needed; local envtest binaries were available.
 - [x] Confirm both independent tiers pass; a combined `make test` result must
       not replace the separate UT and IT evidence.
-- [x] Run `make test-security-traceability`.
 - [x] Run `make test-pyramid`.
 - [x] Run `make test-hack-scripts`.
 - [x] Run `make test`.

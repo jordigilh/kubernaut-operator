@@ -63,7 +63,7 @@ var _ = Describe("MigrationConfigMap", func() {
 })
 
 var _ = Describe("MigrationJob", func() {
-	It("has expected Job metadata and lifecycle fields", func() {
+	It("has expected Job metadata and retains terminal failures", func() {
 		kn := testKubernaut()
 		job := mustMigrationJob(kn)
 
@@ -72,8 +72,7 @@ var _ = Describe("MigrationJob", func() {
 
 		Expect(job.Spec.BackoffLimit).NotTo(BeNil())
 		Expect(*job.Spec.BackoffLimit).To(Equal(int32(3)), "Job should have backoffLimit=3")
-		Expect(job.Spec.TTLSecondsAfterFinished).NotTo(BeNil())
-		Expect(*job.Spec.TTLSecondsAfterFinished).To(Equal(int32(300)), "Job should have TTLSecondsAfterFinished=300")
+		Expect(job.Spec.TTLSecondsAfterFinished).To(BeNil(), "terminal migration failures must not be TTL-cleaned")
 	})
 
 	It("configures the db-migrate container", func() {
@@ -93,6 +92,10 @@ var _ = Describe("MigrationJob", func() {
 		Expect(container.Command[len(container.Command)-1]).To(Equal("up"), "goose command should run the up subcommand, got %v", container.Command)
 
 		Expect(container.Resources.Requests).NotTo(BeNil(), "migration container should have resource requests")
+		Expect(container.Resources.Requests.Cpu().String()).To(Equal("500m"))
+		Expect(container.Resources.Requests.Memory().String()).To(Equal("256Mi"))
+		Expect(container.Resources.Limits.Cpu().String()).To(Equal("500m"))
+		Expect(container.Resources.Limits.Memory().String()).To(Equal("256Mi"))
 	})
 
 	// #423 coverage backfill: this only checked the fixture's default

@@ -18,6 +18,7 @@ package resources
 
 import (
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -30,9 +31,10 @@ import (
 )
 
 const (
-	maxJWKSURLLength = 2048
-	httpURLScheme    = "http"
-	httpsURLScheme   = "https"
+	maxJWKSURLLength   = 2048
+	httpURLScheme      = "http"
+	httpsURLScheme     = "https"
+	idTokenPlaceholder = "{id_token}"
 )
 
 // ValidateKubernaut runs all CR-level validations and returns accumulated errors.
@@ -41,13 +43,133 @@ func ValidateKubernaut(kn *kubernautv1alpha2.Kubernaut) []error {
 	errs = append(errs, validatePostgreSQLSSLMode(kn)...)
 	errs = append(errs, validatePolicyPrerequisites(kn)...)
 	errs = append(errs, validateLLMProfiles(kn)...)
+	errs = append(errs, validateNotificationCredentials(kn)...)
 	errs = append(errs, validateTelemetry(kn)...)
 	errs = append(errs, validateMonitoringEndpoints(kn)...)
 	errs = append(errs, validateMonitoringTLS(kn)...)
 	errs = append(errs, validateAPIFrontend(kn)...)
+	if err := validateConsoleRedirectURL(kn); err != nil {
+		errs = append(errs, err)
+	}
+	if err := validateConsoleProviderLogoutURL(kn); err != nil {
+		errs = append(errs, err)
+	}
 	errs = append(errs, validateAlignmentCheck(kn)...)
 	errs = append(errs, validateDryRun(kn)...)
 	errs = append(errs, validateInteractive(kn)...)
+	errs = append(errs, validateDataStorage(kn)...)
+	return errs
+}
+
+func validateDataStorage(kn *kubernautv1alpha2.Kubernaut) []error {
+	ds := kn.Spec.DataStorage
+	errs := validatePositiveDuration("spec.dataStorage.endpointPropagationDelay", ds.EndpointPropagationDelay)
+	errs = append(errs, validateDataStorageServer(ds.Server)...)
+	errs = append(errs, validateDataStorageDatabase(ds.Database)...)
+	errs = append(errs, validateDataStorageRedis(ds.Redis)...)
+	errs = append(errs, validateDataStorageAudit(ds.Audit)...)
+	return errs
+}
+
+func validateDataStorageServer(server *kubernautv1alpha2.DataStorageServerSpec) []error {
+	if server == nil {
+		return nil
+	}
+	errs := validatePositiveDuration("spec.dataStorage.server.readTimeout", server.ReadTimeout)
+	errs = append(errs, validatePositiveDuration("spec.dataStorage.server.writeTimeout", server.WriteTimeout)...)
+	errs = append(errs, validateNonNegativeInt("spec.dataStorage.server.maxConcurrentRequests", server.MaxConcurrentRequests)...)
+	if server.RateLimit == nil {
+		return errs
+	}
+	errs = append(errs, validateNonNegativeInt("spec.dataStorage.server.rateLimit.requestsPerSecond", server.RateLimit.RequestsPerSecond)...)
+	return append(errs, validateNonNegativeInt("spec.dataStorage.server.rateLimit.burst", server.RateLimit.Burst)...)
+}
+
+func validateDataStorageDatabase(database *kubernautv1alpha2.DataStorageDatabaseSpec) []error {
+	if database == nil {
+		return nil
+	}
+	errs := validatePositiveDuration("spec.dataStorage.database.connMaxLifetime", database.ConnMaxLifetime)
+	errs = append(errs, validatePositiveDuration("spec.dataStorage.database.connMaxIdleTime", database.ConnMaxIdleTime)...)
+	errs = append(errs, validateNonNegativeInt("spec.dataStorage.database.maxOpenConns", database.MaxOpenConns)...)
+	return append(errs, validateNonNegativeInt("spec.dataStorage.database.maxIdleConns", database.MaxIdleConns)...)
+}
+
+func validateDataStorageRedis(redis *kubernautv1alpha2.DataStorageRedisSpec) []error {
+	if redis == nil {
+		return nil
+	}
+	return validateNonNegativeInt("spec.dataStorage.redis.dlqMaxLen", redis.DLQMaxLen)
+}
+
+func validateDataStorageAudit(audit *kubernautv1alpha2.DataStorageAuditSpec) []error {
+	if audit == nil || audit.Retention == nil {
+		return nil
+	}
+	retention := audit.Retention
+	errs := validatePositiveDuration("spec.dataStorage.audit.retention.interval", retention.Interval)
+	errs = append(errs, validatePositiveInt("spec.dataStorage.audit.retention.batchSize", retention.BatchSize)...)
+	errs = append(errs, validatePositiveInt("spec.dataStorage.audit.retention.defaultDays", retention.DefaultDays)...)
+	return append(errs, validateMaximumInt("spec.dataStorage.audit.retention.defaultDays", retention.DefaultDays, 2555)...)
+}
+
+func validatePositiveDuration(path, value string) []error {
+	if value == "" {
+		return nil
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return []error{fmt.Errorf("%s: invalid duration %q: %w", path, value, err)}
+	}
+	if duration <= 0 {
+		return []error{fmt.Errorf("%s: duration must be positive, got %q", path, value)}
+	}
+	return nil
+}
+
+func validateNonNegativeInt(path string, value *int) []error {
+	if value == nil || *value >= 0 {
+		return nil
+	}
+	return []error{fmt.Errorf("%s must be non-negative, got %d", path, *value)}
+}
+
+func validatePositiveInt(path string, value *int) []error {
+	if value == nil || *value >= 1 {
+		return nil
+	}
+	return []error{fmt.Errorf("%s must be positive, got %d", path, *value)}
+}
+
+func validateMaximumInt(path string, value *int, maximum int) []error {
+	if value == nil || *value <= maximum {
+		return nil
+	}
+	return []error{fmt.Errorf("%s must be at most %d, got %d", path, maximum, *value)}
+}
+
+// validateNotificationCredentials validates credential identities and namespace-local Secret references.
+func validateNotificationCredentials(kn *kubernautv1alpha2.Kubernaut) []error {
+	var errs []error
+	seen := make(map[string]struct{}, len(kn.Spec.Notification.Credentials))
+	for index, credential := range kn.Spec.Notification.Credentials {
+		base := fmt.Sprintf("spec.notification.credentials[%d]", index)
+		if len(k8svalidation.IsValidLabelValue(credential.Name)) > 0 {
+			errs = append(errs, fmt.Errorf("%s.name must be a valid credential file name", base))
+		}
+		if _, exists := seen[credential.Name]; exists {
+			errs = append(errs, fmt.Errorf("%s.name must be unique", base))
+		}
+		seen[credential.Name] = struct{}{}
+
+		secretPath := base + ".secretRef"
+		if len(k8svalidation.IsDNS1123Subdomain(credential.SecretRef.Name)) > 0 {
+			errs = append(errs, fmt.Errorf("%s.name must be a valid Kubernetes object name", secretPath))
+		}
+		if len(k8svalidation.IsConfigMapKey(credential.SecretRef.Key)) > 0 {
+			errs = append(errs, fmt.Errorf("%s.key must be a valid Secret key", secretPath))
+		}
+	}
 	return errs
 }
 
@@ -81,56 +203,20 @@ func validateMonitoringEndpoints(kn *kubernautv1alpha2.Kubernaut) []error {
 	return errs
 }
 
-// validateMonitoringTLS validates the source-specific shape of the shared
-// monitoring trust contract. Existence and PEM contents are checked later by
-// the controller because those checks require a Kubernetes client.
+// validateMonitoringTLS validates the optional administrator-provided
+// monitoring Secret reference. Existence and PEM contents are checked later
+// by the controller because those checks require a Kubernetes client.
 func validateMonitoringTLS(kn *kubernautv1alpha2.Kubernaut) []error {
 	tls := kn.Spec.Monitoring.TLS
-	if tls == nil {
+	if tls == nil || tls.CACertSecretRef == nil {
 		return nil
 	}
 
-	const base = "spec.monitoring.tls"
-	var errs []error
-	switch tls.Source {
-	case "", kubernautv1alpha2.MonitoringTLSSourceInterService, kubernautv1alpha2.MonitoringTLSSourceSystem:
-		if tls.CACertSecretRef != nil {
-			errs = append(errs, fmt.Errorf("%s.caCertSecretRef must be omitted when source is %q", base, defaultMonitoringTLSSource(tls.Source)))
-		}
-		if tls.CACertConfigMapRef != nil {
-			errs = append(errs, fmt.Errorf("%s.caCertConfigMapRef must be omitted when source is %q", base, defaultMonitoringTLSSource(tls.Source)))
-		}
-	case kubernautv1alpha2.MonitoringTLSSourceSecret:
-		if tls.CACertConfigMapRef != nil {
-			errs = append(errs, fmt.Errorf("%s.caCertConfigMapRef must be omitted when source is %q", base, tls.Source))
-		}
-		if tls.CACertSecretRef == nil {
-			errs = append(errs, fmt.Errorf("%s.caCertSecretRef is required when source is %q", base, tls.Source))
-		} else {
-			errs = append(errs, validateMonitoringCARef(base+".caCertSecretRef", tls.CACertSecretRef.Name, tls.CACertSecretRef.Key)...)
-		}
-	case kubernautv1alpha2.MonitoringTLSSourceConfigMap:
-		if tls.CACertSecretRef != nil {
-			errs = append(errs, fmt.Errorf("%s.caCertSecretRef must be omitted when source is %q", base, tls.Source))
-		}
-		if tls.CACertConfigMapRef == nil {
-			errs = append(errs, fmt.Errorf("%s.caCertConfigMapRef is required when source is %q", base, tls.Source))
-		} else {
-			errs = append(errs, validateMonitoringCARef(base+".caCertConfigMapRef", tls.CACertConfigMapRef.Name, tls.CACertConfigMapRef.Key)...)
-		}
-	default:
-		errs = append(errs, fmt.Errorf("%s.source %q is invalid", base, tls.Source))
-	}
-	return errs
+	return validateMonitoringCARef("spec.monitoring.tls.caCertSecretRef", tls.CACertSecretRef.Name, tls.CACertSecretRef.Key)
 }
 
-func defaultMonitoringTLSSource(source kubernautv1alpha2.MonitoringTLSSource) kubernautv1alpha2.MonitoringTLSSource {
-	if source == "" {
-		return kubernautv1alpha2.MonitoringTLSSourceInterService
-	}
-	return source
-}
-
+// validateMonitoringCARef validates the name and optional key of a monitoring
+// CA Secret reference from the CR spec.
 func validateMonitoringCARef(base, name, key string) []error {
 	var errs []error
 	if name == "" {
@@ -142,7 +228,7 @@ func validateMonitoringCARef(base, name, key string) []error {
 		key = tlsCACertificateKey
 	}
 	if len(k8svalidation.IsConfigMapKey(key)) > 0 {
-		errs = append(errs, fmt.Errorf("%s.key must be a valid ConfigMap or Secret key", base))
+		errs = append(errs, fmt.Errorf("%s.key must be a valid Secret key", base))
 	}
 	return errs
 }
@@ -364,21 +450,144 @@ func validateLLMProfileContent(name string, llm *kubernautv1alpha2.LLMProfileSpe
 	if llm.CredentialsSecretName == "" {
 		errs = append(errs, fmt.Errorf("%s.credentialsSecretName: required — provide a Secret with LLM API credentials", base))
 	}
+	errs = append(errs, validateLLMProfileTuning(base, llm)...)
 	if llm.Provider == LLMProviderOpenAI && llm.Endpoint == "" {
 		errs = append(errs, fmt.Errorf("%s.endpoint: required when provider is %q — both KA and AF need an explicit endpoint for OpenAI", base, LLMProviderOpenAI))
 	}
+	errs = append(errs, validateLLMProfileTLS(base, llm)...)
+	errs = append(errs, validateLLMProfileOAuth2(base, llm)...)
+	if err := validateLLMReasoning(base, llm.Reasoning, llm.Provider); err != nil {
+		errs = append(errs, err)
+	}
+	return errs
+}
+
+func validateLLMProfileTuning(base string, llm *kubernautv1alpha2.LLMProfileSpec) []error {
+	var errs []error
+	if llm.MaxRetries != nil && *llm.MaxRetries < 0 {
+		errs = append(errs, fmt.Errorf("%s.maxRetries: must be non-negative", base))
+	}
+	if llm.TimeoutSeconds != nil && *llm.TimeoutSeconds <= 0 {
+		errs = append(errs, fmt.Errorf("%s.timeoutSeconds: must be positive", base))
+	}
+	if llm.Temperature != "" {
+		value, err := strconv.ParseFloat(llm.Temperature, 64)
+		if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+			errs = append(errs, fmt.Errorf("%s.temperature: must be a finite number", base))
+		}
+	}
+	return errs
+}
+
+func validateLLMProfileTLS(base string, llm *kubernautv1alpha2.LLMProfileSpec) []error {
+	errs := validateLLMProfileCA(base, llm)
+
 	certSet := llm.TLSCertFile != "" || llm.TLSKeyFile != ""
 	if certSet && (llm.TLSCertFile == "" || llm.TLSKeyFile == "") {
 		errs = append(errs, fmt.Errorf("%s.tlsCertFile and %s.tlsKeyFile must both be set or both empty for mTLS", base, base))
 	}
-	if certSet && llm.TLSClientSecretRef == "" {
-		errs = append(errs, fmt.Errorf("%s.tlsClientSecretRef: required when mTLS cert/key paths are configured", base))
-	}
 	if !certSet && llm.TLSClientSecretRef != "" {
 		errs = append(errs, fmt.Errorf("%s.tlsClientSecretRef: set but tlsCertFile/tlsKeyFile are empty — both pairs are required for mTLS", base))
 	}
-	if err := validateLLMReasoning(base, llm.Reasoning, llm.Provider); err != nil {
+	errs = append(errs, validateLLMProfileTLSMaterialNames(base, llm)...)
+	if !certSet {
+		return errs
+	}
+	if llm.TLSClientSecretRef == "" {
+		errs = append(errs, fmt.Errorf("%s.tlsClientSecretRef: required when mTLS cert/key paths are configured", base))
+	}
+	if !filepath.IsAbs(llm.TLSCertFile) || !filepath.IsAbs(llm.TLSKeyFile) {
+		errs = append(errs, fmt.Errorf("%s.tlsCertFile and %s.tlsKeyFile must be absolute paths for mTLS", base, base))
+	}
+	if filepath.Dir(llm.TLSCertFile) != filepath.Dir(llm.TLSKeyFile) {
+		errs = append(errs, fmt.Errorf("%s.tlsCertFile and %s.tlsKeyFile must share one parent directory for mTLS", base, base))
+	}
+	errs = append(errs, validateLLMProfileTLSPathCollisions(base, llm)...)
+	return errs
+}
+
+func validateLLMProfileCA(base string, llm *kubernautv1alpha2.LLMProfileSpec) []error {
+	var errs []error
+	if llm.TLSCaFile != "" && !filepath.IsAbs(llm.TLSCaFile) {
+		errs = append(errs, fmt.Errorf("%s.tlsCaFile must be an absolute path", base))
+	}
+	if llm.TLSCaSecretRef == nil {
+		return errs
+	}
+	if llm.TLSCaFile == "" {
+		errs = append(errs, fmt.Errorf("%s.tlsCaFile is required when tlsCaSecretRef is configured", base))
+	}
+	if llm.TLSCaSecretRef.Name == "" {
+		errs = append(errs, fmt.Errorf("%s.tlsCaSecretRef.name must not be empty", base))
+	} else if len(k8svalidation.IsDNS1123Subdomain(llm.TLSCaSecretRef.Name)) > 0 {
+		errs = append(errs, fmt.Errorf("%s.tlsCaSecretRef.name must be a valid Kubernetes object name", base))
+	}
+	if key := llmTLSCAKey(*llm); filepath.Base(key) != key || strings.ContainsAny(key, `\/`) {
+		errs = append(errs, fmt.Errorf("%s.tlsCaSecretRef.key must be a Secret key name without path separators", base))
+	}
+	return errs
+}
+
+func validateLLMProfileTLSPathCollisions(base string, llm *kubernautv1alpha2.LLMProfileSpec) []error {
+	if llm.TLSCaSecretRef == nil {
+		return nil
+	}
+	var errs []error
+	if filepath.Clean(llm.TLSCaFile) == filepath.Clean(llm.TLSCertFile) {
+		errs = append(errs, fmt.Errorf("%s.tlsCaFile and %s.tlsCertFile must be different paths", base, base))
+	}
+	if filepath.Clean(llm.TLSCaFile) == filepath.Clean(llm.TLSKeyFile) {
+		errs = append(errs, fmt.Errorf("%s.tlsCaFile and %s.tlsKeyFile must be different paths", base, base))
+	}
+	return errs
+}
+
+func validateLLMProfileTLSMaterialNames(base string, llm *kubernautv1alpha2.LLMProfileSpec) []error {
+	paths := make(map[string]string, 3)
+	addPath := func(field, value string) error {
+		if value == "" {
+			return nil
+		}
+		name := filepath.Base(value)
+		if name == "." || name == ".." || name == string(filepath.Separator) {
+			return fmt.Errorf("%s.%s must name a file below the deterministic TLS mount", base, field)
+		}
+		if previous, exists := paths[name]; exists {
+			return fmt.Errorf("%s.%s and %s.%s must use different filenames for projected TLS material", base, previous, base, field)
+		}
+		paths[name] = field
+		return nil
+	}
+
+	var errs []error
+	if llm.TLSCaSecretRef != nil {
+		if err := addPath("tlsCaFile", llm.TLSCaFile); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if llm.TLSClientSecretRef != "" {
+		if err := addPath("tlsCertFile", llm.TLSCertFile); err != nil {
+			errs = append(errs, err)
+		}
+		if err := addPath("tlsKeyFile", llm.TLSKeyFile); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
+}
+
+func validateLLMProfileOAuth2(base string, llm *kubernautv1alpha2.LLMProfileSpec) []error {
+	if !llm.OAuth2.Enabled {
+		return nil
+	}
+	var errs []error
+	if llm.OAuth2.TokenURL == "" {
+		errs = append(errs, fmt.Errorf("%s.oauth2.tokenURL: required when OAuth2 is enabled", base))
+	} else if err := validateFleetHTTPSURL(base+".oauth2.tokenURL", llm.OAuth2.TokenURL); err != nil {
 		errs = append(errs, err)
+	}
+	if llm.OAuth2.CredentialsSecretRef == "" {
+		errs = append(errs, fmt.Errorf("%s.oauth2.credentialsSecretRef: required when OAuth2 is enabled", base))
 	}
 	return errs
 }
@@ -442,9 +651,9 @@ func validateRequiredEffectiveProfile(profiles map[string]kubernautv1alpha2.LLMP
 		fieldPath, len(profiles))}
 }
 
-// validateLLMProfileRefs validates that every logical LLM consumer (KA
-// investigation, KA workflow discovery, and API Frontend) resolves to a
-// profile defined in spec.llmProfiles. Sole-profile inference is accepted;
+// validateLLMProfileRefs validates that every enabled logical LLM consumer
+// (KA investigation, workflow discovery, alignment, and API Frontend) resolves
+// to a profile defined in spec.llmProfiles. Sole-profile inference is accepted;
 // multiple profiles require an explicit reference for each enabled consumer.
 func validateLLMProfileRefs(kn *kubernautv1alpha2.Kubernaut) []error {
 	var errs []error
@@ -460,6 +669,14 @@ func validateLLMProfileRefs(kn *kubernautv1alpha2.Kubernaut) []error {
 		EffectiveWorkflowDiscoveryLLMProfileRef(kn),
 		"spec.kubernautAgent.workflowDiscovery.llmProfileRef",
 	)...)
+
+	if kn.Spec.KubernautAgent.AlignmentCheck.Enabled {
+		errs = append(errs, validateRequiredEffectiveProfile(
+			profiles,
+			EffectiveAlignmentCheckLLMProfileRef(kn),
+			"spec.kubernautAgent.alignmentCheck.llmProfileRef",
+		)...)
+	}
 
 	if kn.Spec.APIFrontendEnabled() {
 		errs = append(errs, validateAFLLMProfileRefs(kn, profiles)...)
@@ -600,6 +817,145 @@ func validateAPIFrontend(kn *kubernautv1alpha2.Kubernaut) []error {
 	}
 
 	return errs
+}
+
+func validateConsoleRedirectURL(kn *kubernautv1alpha2.Kubernaut) error {
+	if !kn.Spec.ConsoleEnabled() {
+		return nil
+	}
+	const path = "spec.console.auth.redirectURL"
+	raw := kn.Spec.Console.Auth.RedirectURL
+	if raw == "" {
+		return fmt.Errorf("%s is required when Console is enabled", path)
+	}
+	if strings.TrimSpace(raw) != raw {
+		return fmt.Errorf("%s must not contain leading or trailing whitespace", path)
+	}
+	redirectURL, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(redirectURL.Scheme, httpsURLScheme) || redirectURL.Host == "" || redirectURL.Hostname() == "" || redirectURL.User != nil || redirectURL.RawQuery != "" || redirectURL.Fragment != "" || redirectURL.EscapedPath() != "/oauth2/callback" {
+		return fmt.Errorf("%s must be an absolute https URL ending in /oauth2/callback", path)
+	}
+	return nil
+}
+
+func validateConsoleProviderLogoutURL(kn *kubernautv1alpha2.Kubernaut) error {
+	const path = "spec.console.auth.providerLogoutURL"
+	raw := kn.Spec.Console.Auth.ProviderLogoutURL
+	if raw == "" {
+		return nil
+	}
+	logoutURL, err := parseConsoleProviderLogoutURL(raw, path)
+	if err != nil {
+		return err
+	}
+	if !kn.Spec.ConsoleEnabled() {
+		return nil
+	}
+	return validateConsoleLogoutAuthority(kn, logoutURL, path)
+}
+
+func parseConsoleProviderLogoutURL(raw, path string) (*url.URL, error) {
+	if strings.TrimSpace(raw) != raw {
+		return nil, fmt.Errorf("%s must not contain leading or trailing whitespace", path)
+	}
+
+	logoutURL, err := url.Parse(raw)
+	if err != nil || logoutURL.Scheme == "" || logoutURL.Host == "" || logoutURL.Opaque != "" {
+		return nil, fmt.Errorf("%s must be an absolute HTTPS URL", path)
+	}
+	if err := validateConsoleLogoutURLShape(logoutURL, path); err != nil {
+		return nil, err
+	}
+	if err := validateConsoleLogoutPlaceholders(raw, path); err != nil {
+		return nil, err
+	}
+
+	query, err := url.ParseQuery(logoutURL.RawQuery)
+	if err != nil {
+		return nil, fmt.Errorf("%s contains an invalid query", path)
+	}
+	if !strings.Contains(raw, idTokenPlaceholder) && queryContainsPlaceholder(query) {
+		return nil, fmt.Errorf("%s must use the literal %s placeholder", path, idTokenPlaceholder)
+	}
+	if key := unsupportedConsoleLogoutQueryParameter(query); key != "" {
+		return nil, fmt.Errorf("%s contains unsupported query parameter %q", path, key)
+	}
+	return logoutURL, nil
+}
+
+func validateConsoleLogoutURLShape(logoutURL *url.URL, path string) error {
+	if !strings.EqualFold(logoutURL.Scheme, httpsURLScheme) {
+		return fmt.Errorf("%s must use https", path)
+	}
+	if logoutURL.Hostname() == "" {
+		return fmt.Errorf("%s must include a host", path)
+	}
+	if logoutURL.User != nil {
+		return fmt.Errorf("%s must not include user information", path)
+	}
+	if logoutURL.Fragment != "" {
+		return fmt.Errorf("%s must not include a fragment", path)
+	}
+	return nil
+}
+
+func validateConsoleLogoutPlaceholders(raw, path string) error {
+	if strings.Count(raw, idTokenPlaceholder) > 1 {
+		return fmt.Errorf("%s may contain at most one literal %s placeholder", path, idTokenPlaceholder)
+	}
+	if strings.ContainsAny(strings.ReplaceAll(raw, idTokenPlaceholder, ""), "{}") {
+		return fmt.Errorf("%s contains an unsupported placeholder", path)
+	}
+	return nil
+}
+
+func queryContainsPlaceholder(query url.Values) bool {
+	for _, values := range query {
+		for _, value := range values {
+			if strings.Contains(value, idTokenPlaceholder) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func unsupportedConsoleLogoutQueryParameter(query url.Values) string {
+	allowed := map[string]struct{}{
+		"id_token_hint": {},
+		"logout_hint":   {},
+		"client_id":     {},
+		"ui_locales":    {},
+	}
+	for key := range query {
+		if _, ok := allowed[strings.ToLower(key)]; !ok {
+			return key
+		}
+	}
+	return ""
+}
+
+func validateConsoleLogoutAuthority(kn *kubernautv1alpha2.Kubernaut, logoutURL *url.URL, path string) error {
+	issuer := kn.Spec.ConsoleIssuerURL()
+	issuerURL, err := url.Parse(issuer)
+	if err != nil || issuerURL.Scheme == "" || issuerURL.Host == "" || issuerURL.User != nil {
+		return fmt.Errorf("%s cannot be validated without a valid effective OIDC issuer", path)
+	}
+	if !strings.EqualFold(issuerURL.Scheme, httpsURLScheme) {
+		return fmt.Errorf("%s requires an HTTPS effective OIDC issuer", path)
+	}
+	if canonicalHTTPSAuthority(logoutURL) != canonicalHTTPSAuthority(issuerURL) {
+		return fmt.Errorf("%s authority must match the effective OIDC issuer", path)
+	}
+	return nil
+}
+
+func canonicalHTTPSAuthority(value *url.URL) string {
+	port := value.Port()
+	if port == "" {
+		port = "443"
+	}
+	return net.JoinHostPort(strings.ToLower(value.Hostname()), port)
 }
 
 // validateOIDCURL validates the operator-facing OIDC URL contract. OIDC
@@ -806,6 +1162,7 @@ func validateFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	// explicit namespace scopes every fleet-aware component's CRD watch to
 	// exactly one of them instead of watching cluster-wide.
 	errs = append(errs, validateFleetMCPGateway(&fleet.MCPGateway, base)...)
+	errs = append(errs, validateFleetTrust("spec.fleet.mcpGateway.tls", fleet.MCPGateway.TLS)...)
 
 	errs = append(errs, validateFleetOAuth2(knV2, fleet)...)
 	errs = append(errs, validateFleetTrust("spec.fleet.oauth2.tls", fleet.OAuth2.TLS)...)

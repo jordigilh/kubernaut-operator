@@ -28,16 +28,14 @@ cluster DNS, or `cluster.local`.
 
 `spec.tls.mode` selects exactly one runtime source:
 
-* `AdministratorManaged`: the administrator supplies the internal CA,
-  per-service serving Secrets, the AuthWebhook serving Secret, and optional
-  external Ingress Secrets through explicit references.
-* `CertManager`: cert-manager must already be installed and the configured
-  issuer references are validated. The operator may submit Certificate
-  objects in a later adapter, but never installs cert-manager or assumes its
-  CRDs exist.
-* `DevelopmentSelfSigned`: the operator creates a namespace-scoped CA and
-  leaves for development/Kind only. This mode is explicit and its status is
-  non-production; it is never a fallback from another source.
+* `manual`: the administrator or an external PKI system supplies the internal
+  CA, per-service serving Secrets, and AuthWebhook serving Secret through
+  explicit references. The operator validates and consumes them read-only.
+* `cert-manager`: cert-manager issues and rotates the output Secrets. The
+  operator may reconcile Issuer/Certificate objects when provisioning is
+  enabled, but never owns their output Secrets.
+* `service-ca`: a discovered platform service-CA capability supplies serving
+  certificates and trust. The current adapter is OpenShift service-CA.
 
 When OpenShift service-CA capability is positively discovered, the existing
 service-CA/router-CA behavior remains an OpenShift adapter. Generic code never

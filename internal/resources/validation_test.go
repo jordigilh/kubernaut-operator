@@ -106,6 +106,95 @@ var _ = Describe("SC-23: per-provider audience binding", func() {
 	})
 })
 
+var _ = Describe("Console administrator-owned callback validation", func() {
+	It("UT-EXP-565-CONSOLE-001 [AC-6, SC-8, SI-10; SOC2 CC6.1, CC8.1; ASVS v5.0.0-V2.2.1, v5.0.0-V12.2.1]: requires an explicit HTTPS callback URL", func() {
+		for _, value := range []string{"", " http://console.example.com/oauth2/callback", "not-a-url", "http://console.example.com/oauth2/callback", "https://console.example.com/", "https://:443/oauth2/callback", "https://console.example.com/oauth2/%63allback"} {
+			kn := testKubernautWithConsole()
+			kn.Spec.Console.Auth.RedirectURL = value
+
+			errs := ValidateKubernaut(kn)
+			Expect(strings.Join(errorStrings(errs), "; ")).To(ContainSubstring("redirectURL"), value)
+		}
+	})
+
+	It("UT-EXP-565-CONSOLE-002 [AC-6, SC-8; SOC2 CC6.1; ASVS v5.0.0-V12.2.1]: accepts the administrator-owned HTTPS callback URL", func() {
+		kn := testKubernautWithConsole()
+		Expect(ValidateKubernaut(kn)).To(BeEmpty())
+	})
+})
+
+var _ = Describe("Console provider logout URL validation", func() {
+	It("UT-483-VALIDATE-001 [AC-6; CC6.1; ASVS V5/V8]: accepts the HTTPS provider endpoint with the literal ID token placeholder", func() {
+		kn := testKubernautWithConsole()
+		kn.Spec.Console.Auth.ProviderLogoutURL = "https://idp.example.com/realms/kubernaut/protocol/openid-connect/logout?id_token_hint={id_token}"
+
+		Expect(ValidateKubernaut(kn)).To(BeEmpty())
+	})
+
+	It("UT-483-VALIDATE-002 [AC-6; CC6.1; ASVS V5/V8]: rejects malformed or unsafe logout endpoints", func() {
+		for _, value := range []string{
+			" https://idp.example.com/logout?id_token_hint={id_token}",
+			"not-a-url",
+			"http://idp.example.com/logout?id_token_hint={id_token}",
+			"https://:443/logout?id_token_hint={id_token}",
+			"https://other.example.com/logout?id_token_hint={id_token}",
+			"https://user:pass@idp.example.com/logout?id_token_hint={id_token}",
+			"https://idp.example.com/logout#fragment",
+			"https://idp.example.com/logout?a={id_token}&b={id_token}",
+			"https://idp.example.com/logout?placeholder={other}",
+			"https://idp.example.com/logout?bad=%zz",
+			"https://idp.example.com/logout?rd=https://console.example.com",
+			"https://idp.example.com/logout?id_token_hint=%7Bid_token%7D",
+		} {
+			kn := testKubernautWithConsole()
+			kn.Spec.Console.Auth.ProviderLogoutURL = value
+
+			errs := ValidateKubernaut(kn)
+			Expect(errs).NotTo(BeEmpty(), value)
+			Expect(strings.Join(errorStrings(errs), "; ")).To(ContainSubstring("providerLogoutURL"), value)
+		}
+	})
+
+	It("UT-483-VALIDATE-003 [AC-6; CC6.1; ASVS V5/V8]: applies the effective first-provider authority", func() {
+		kn := testKubernautWithConsole()
+		kn.Spec.APIFrontend.Auth.IssuerURL = ""
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha2.JWTProviderSpec{
+			{Name: "first", IssuerURL: "https://first.example.com", Audiences: []string{"console"}},
+			{Name: "second", IssuerURL: "https://second.example.com", Audiences: []string{"console"}},
+		}
+		kn.Spec.Console.Auth.ProviderLogoutURL = "https://first.example.com/logout?id_token_hint={id_token}"
+
+		Expect(ValidateKubernaut(kn)).To(BeEmpty())
+	})
+
+	It("UT-483-VALIDATE-004 [AC-6; ASVS V5/V8]: validates syntax even when Console is disabled without requiring issuer authority matching", func() {
+		kn := testKubernautWithConsole()
+		kn.Spec.Console.Enabled = nil
+		kn.Spec.Console.Auth.ProviderLogoutURL = "https://other.example.com/logout?id_token_hint={id_token}"
+
+		Expect(ValidateKubernaut(kn)).To(BeEmpty())
+	})
+
+	It("UT-483-VALIDATE-005 [AC-6; ASVS V5/V8]: fails closed when an enabled Console has no valid effective issuer", func() {
+		kn := testKubernautWithConsole()
+		kn.Spec.APIFrontend.Auth.IssuerURL = "relative"
+		kn.Spec.Console.Auth.ProviderLogoutURL = "https://idp.example.com/logout?id_token_hint={id_token}"
+
+		errs := ValidateKubernaut(kn)
+		Expect(strings.Join(errorStrings(errs), "; ")).To(ContainSubstring("cannot be validated without a valid effective OIDC issuer"))
+	})
+
+	It("UT-483-VALIDATE-006 [SC-8; ASVS V5/V8]: rejects an HTTP effective issuer for logout configuration", func() {
+		kn := testKubernautWithConsole()
+		kn.Spec.APIFrontend.Auth.IssuerURL = "http://idp.example.com/realms/kubernaut"
+		kn.Spec.APIFrontend.Auth.AllowInsecureIssuers = true
+		kn.Spec.Console.Auth.ProviderLogoutURL = "https://idp.example.com/logout?id_token_hint={id_token}"
+
+		errs := ValidateKubernaut(kn)
+		Expect(strings.Join(errorStrings(errs), "; ")).To(ContainSubstring("requires an HTTPS effective OIDC issuer"))
+	})
+})
+
 var _ = Describe("SC-8: JWKS endpoint transmission confidentiality", func() {
 	It("SC-8: rejects non-TLS JWKS endpoint for AF provider", func() {
 		kn := testKubernautWithAF()
@@ -524,6 +613,17 @@ var _ = Describe("AlignmentCheck Validation", func() {
 		Expect(errs).To(BeEmpty())
 	})
 
+	It("UT-419-VAL-001 [CM-6, SI-10; SOC2 CC6.6, CC8.1; ASVS v5.0.0-V2.2.1, v5.0.0-V2.2.2] rejects an undefined alignment LLM profile reference", func() {
+		kn := withAlignmentCheck(kubernautv1alpha2.AlignmentCheckSpec{
+			Enabled:       true,
+			LLMProfileRef: testMissingProfile,
+		})
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0]).To(MatchError(ContainSubstring("spec.kubernautAgent.alignmentCheck.llmProfileRef")))
+		Expect(errs[0]).To(MatchError(ContainSubstring("undefined profile")))
+	})
+
 	It("accumulates multiple errors", func() {
 		kn := withAlignmentCheck(kubernautv1alpha2.AlignmentCheckSpec{
 			Enabled:       true,
@@ -780,6 +880,86 @@ var _ = Describe("LLM Profile Content Validation", func() {
 		kn.Spec.LLMProfiles["primary"] = profile
 		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
+	})
+
+	It("UT-419-VAL-002 [SC-8, IA-5, SI-10] rejects incomplete or plaintext OAuth2 profile configuration", func() {
+		kn := testKubernaut()
+		profile := kn.Spec.LLMProfiles["primary"]
+		profile.OAuth2.Enabled = true
+		profile.OAuth2.TokenURL = "http://idp.example/token"
+		profile.OAuth2.CredentialsSecretRef = ""
+		kn.Spec.LLMProfiles["primary"] = profile
+		errs := ValidateKubernaut(kn)
+		joined := make([]string, 0, len(errs))
+		for _, err := range errs {
+			joined = append(joined, err.Error())
+		}
+		Expect(strings.Join(joined, "\n")).To(And(
+			ContainSubstring("oauth2.tokenURL"),
+			ContainSubstring("https URL"),
+			ContainSubstring("oauth2.credentialsSecretRef"),
+		))
+
+		profile.OAuth2.TokenURL = ""
+		kn.Spec.LLMProfiles["primary"] = profile
+		errs = ValidateKubernaut(kn)
+		foundRequiredURL := false
+		for _, err := range errs {
+			if strings.Contains(err.Error(), "oauth2.tokenURL: required") {
+				foundRequiredURL = true
+			}
+		}
+		Expect(foundRequiredURL).To(BeTrue())
+	})
+
+	It("UT-419-VAL-003 [CM-6, SI-10] rejects invalid profile tuning values instead of silently omitting them", func() {
+		kn := testKubernaut()
+		negativeRetries := -1
+		zeroTimeout := 0
+		profile := kn.Spec.LLMProfiles["primary"]
+		profile.MaxRetries = &negativeRetries
+		profile.TimeoutSeconds = &zeroTimeout
+		profile.Temperature = "not-a-number"
+		kn.Spec.LLMProfiles["primary"] = profile
+		errs := ValidateKubernaut(kn)
+		joined := make([]string, 0, len(errs))
+		for _, err := range errs {
+			joined = append(joined, err.Error())
+		}
+		Expect(strings.Join(joined, "\n")).To(And(
+			ContainSubstring("maxRetries"),
+			ContainSubstring("timeoutSeconds"),
+			ContainSubstring("temperature"),
+		))
+	})
+
+	It("UT-419-VAL-004 [SC-8, SI-10] rejects mTLS paths that cannot be projected from one Secret directory", func() {
+		kn := testKubernaut()
+		profile := kn.Spec.LLMProfiles["primary"]
+		profile.TLSCertFile = "/etc/tls/client.crt"
+		profile.TLSKeyFile = "/etc/other/client.key"
+		profile.TLSClientSecretRef = testVolumeLLMTLSClient
+		kn.Spec.LLMProfiles["primary"] = profile
+		errs := ValidateKubernaut(kn)
+		found := false
+		for _, err := range errs {
+			if strings.Contains(err.Error(), "share one parent directory") {
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue())
+
+		profile.TLSCertFile = "client.crt"
+		profile.TLSKeyFile = "client.key"
+		kn.Spec.LLMProfiles["primary"] = profile
+		errs = ValidateKubernaut(kn)
+		found = false
+		for _, err := range errs {
+			if strings.Contains(err.Error(), "must be absolute paths") {
+				found = true
+			}
+		}
+		Expect(found).To(BeTrue())
 	})
 
 	It("LR-040 [SI-10]: an administrator may explicitly disable reasoning while still declaring an effort tier for later re-enablement", func() {
@@ -1121,14 +1301,11 @@ var _ = Describe("OTLP telemetry TLS contract", func() {
 })
 
 var _ = Describe("shared monitoring TLS contract", func() {
-	It("accepts the omitted source and each source-specific reference", func() {
+	It("UT-MON-563-VAL-001 [SI-10; SOC2 CC8.1; ASVS V2.2.1, V2.2.2] accepts omitted or Secret-backed monitoring trust", func() {
 		cases := []*kubernautv1alpha2.MonitoringTLSSpec{
 			nil,
 			{},
-			{Source: kubernautv1alpha2.MonitoringTLSSourceInterService},
-			{Source: kubernautv1alpha2.MonitoringTLSSourceSystem},
-			{Source: kubernautv1alpha2.MonitoringTLSSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"}},
-			{Source: kubernautv1alpha2.MonitoringTLSSourceConfigMap, CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca"}},
+			{CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"}},
 		}
 		for _, tls := range cases {
 			kn := testKubernaut()
@@ -1137,49 +1314,18 @@ var _ = Describe("shared monitoring TLS contract", func() {
 		}
 	})
 
-	It("rejects unknown sources, mismatched references, and invalid reference keys", func() {
+	It("UT-MON-563-VAL-002 [SI-10; SOC2 CC8.1; ASVS V2.2.1, V2.2.2] validates the Secret reference name and key", func() {
 		kn := testKubernaut()
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:             "unknown",
-			CACertSecretRef:    &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"},
-			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca"},
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "", Key: "../ca.crt"},
 		}
 		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
-		Expect(joined).To(ContainSubstring("spec.monitoring.tls.source"))
+		Expect(joined).To(ContainSubstring("spec.monitoring.tls.caCertSecretRef.name must not be empty"))
+		Expect(joined).To(ContainSubstring("key must be a valid Secret key"))
 
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
-			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca", Key: "../ca.crt"},
-			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{
-				Name: "monitoring-ca",
-			},
-		}
+		kn.Spec.Monitoring.TLS.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "invalid/name"}
 		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
-		Expect(joined).To(ContainSubstring("caCertConfigMapRef must be omitted"))
-		Expect(joined).To(ContainSubstring("key must be a valid ConfigMap or Secret key"))
-
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source: kubernautv1alpha2.MonitoringTLSSourceSystem,
-			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{
-				Name: "monitoring-ca",
-			},
-		}
-		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
-		Expect(joined).To(ContainSubstring("caCertSecretRef must be omitted"))
-
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:             kubernautv1alpha2.MonitoringTLSSourceConfigMap,
-			CACertSecretRef:    &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"},
-			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca"},
-		}
-		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
-		Expect(joined).To(ContainSubstring("caCertSecretRef must be omitted"))
-
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca"},
-		}
-		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
-		Expect(joined).To(ContainSubstring("caCertConfigMapRef must be omitted when source is \"interService\""))
+		Expect(joined).To(ContainSubstring("must be a valid Kubernetes object name"))
 	})
 
 	It("rejects plaintext monitoring endpoints before rendering client configuration", func() {
@@ -1202,31 +1348,85 @@ var _ = Describe("shared monitoring TLS contract", func() {
 		Expect(joined).To(ContainSubstring("spec.monitoring.alertManager.url must not contain leading or trailing whitespace"))
 	})
 
-	It("requires the source-specific reference name", func() {
+	It("requires the explicit monitoring Secret reference name", func() {
 		kn := testKubernaut()
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
 			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{},
 		}
 		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
 		Expect(joined).To(ContainSubstring("spec.monitoring.tls.caCertSecretRef.name must not be empty"))
 
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceConfigMap}
-		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
-		Expect(joined).To(ContainSubstring("spec.monitoring.tls.caCertConfigMapRef is required"))
-
 		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source: kubernautv1alpha2.MonitoringTLSSourceSecret,
-		}
-		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
-		Expect(joined).To(ContainSubstring("spec.monitoring.tls.caCertSecretRef is required"))
-
-		kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-			Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
 			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "invalid/name"},
 		}
 		joined = strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
 		Expect(joined).To(ContainSubstring("must be a valid Kubernetes object name"))
+	})
+})
+
+var _ = Describe("DataStorage validation", func() {
+	It("UT-DS-550-VAL-001 [SI-10, ASVS V2.2.1, V2.2.2] rejects invalid durations and negative limits", func() {
+		kn := testKubernaut()
+		maxOpen := -1
+		maxConcurrent := -1
+		kn.Spec.DataStorage.EndpointPropagationDelay = invalidRotationBefore
+		kn.Spec.DataStorage.Server = &kubernautv1alpha2.DataStorageServerSpec{
+			ReadTimeout:           invalidRotationBefore,
+			WriteTimeout:          "0s",
+			MaxConcurrentRequests: &maxConcurrent,
+		}
+		kn.Spec.DataStorage.Database = &kubernautv1alpha2.DataStorageDatabaseSpec{MaxOpenConns: &maxOpen}
+		negativeRate := -1
+		kn.Spec.DataStorage.Server.RateLimit = &kubernautv1alpha2.DataStorageRateLimitSpec{
+			RequestsPerSecond: &negativeRate,
+		}
+		kn.Spec.DataStorage.Redis = &kubernautv1alpha2.DataStorageRedisSpec{DLQMaxLen: &negativeRate}
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("spec.dataStorage.endpointPropagationDelay"))
+		Expect(joined).To(ContainSubstring("spec.dataStorage.server.readTimeout"))
+		Expect(joined).To(ContainSubstring("spec.dataStorage.server.writeTimeout: duration must be positive"))
+		Expect(joined).To(ContainSubstring("maxConcurrentRequests must be non-negative"))
+		Expect(joined).To(ContainSubstring("rateLimit.requestsPerSecond must be non-negative"))
+		Expect(joined).To(ContainSubstring("maxOpenConns must be non-negative"))
+		Expect(joined).To(ContainSubstring("redis.dlqMaxLen must be non-negative"))
+	})
+
+	It("UT-DS-550-VAL-002 [AU-11, CM-6] rejects invalid retention bounds", func() {
+		kn := testKubernaut()
+		batchSize := 0
+		defaultDays := 2556
+		kn.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{
+			Retention: &kubernautv1alpha2.RetentionSpec{
+				Interval:    invalidRotationBefore,
+				BatchSize:   &batchSize,
+				DefaultDays: &defaultDays,
+			},
+		}
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("spec.dataStorage.audit.retention.interval"))
+		Expect(joined).To(ContainSubstring("batchSize must be positive"))
+		Expect(joined).To(ContainSubstring("defaultDays must be at most 2555"))
+	})
+
+	It("UT-DS-550-VAL-003 [SI-10, CM-6] accepts valid durations and boundary values", func() {
+		kn := testKubernaut()
+		zero := 0
+		batchSize := 1
+		defaultDays := 2555
+		kn.Spec.DataStorage.EndpointPropagationDelay = "5s"
+		kn.Spec.DataStorage.Server = &kubernautv1alpha2.DataStorageServerSpec{
+			ReadTimeout:           "1s",
+			WriteTimeout:          "2s",
+			MaxConcurrentRequests: &zero,
+		}
+		kn.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{
+			Retention: &kubernautv1alpha2.RetentionSpec{
+				Interval:    "1h",
+				BatchSize:   &batchSize,
+				DefaultDays: &defaultDays,
+			},
+		}
+		Expect(ValidateKubernaut(kn)).To(BeEmpty())
 	})
 })
 
@@ -1511,6 +1711,28 @@ var _ = Describe("Fleet Config Validation", func() {
 
 		kn.Spec.Fleet.ScopeCheck.ACM.TLS.CAFile = "/etc/fleet/ca.pem"
 		Expect(ValidateFleet(kn)).To(BeEmpty())
+	})
+
+	It("UT-FLEET-557-API-001: validates the MCP Gateway trust lane independently", func() {
+		kn := validFleet()
+		kn.Spec.Fleet.MCPGateway.TLS = &kubernautv1alpha2.FleetTrustSpec{
+			Source: kubernautv1alpha2.FleetTrustSourceFile,
+			CAFile: "relative-ca.pem",
+		}
+		errs := ValidateFleet(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGateway.tls.caFile"))
+
+		kn.Spec.Fleet.MCPGateway.TLS.CAFile = "/etc/fleet/mcp-gateway-ca.pem"
+		Expect(ValidateFleet(kn)).To(BeEmpty())
+
+		kn.Spec.Fleet.MCPGateway.TLS = &kubernautv1alpha2.FleetTrustSpec{
+			Source: kubernautv1alpha2.FleetTrustSourceSystem,
+			CAFile: "/etc/fleet/ca.pem",
+		}
+		errs = ValidateFleet(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGateway.tls"))
 	})
 
 	It("UT-FLEET-521-VALIDATE-002: rejects non-positive MCP-client durations", func() {

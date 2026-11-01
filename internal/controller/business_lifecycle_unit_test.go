@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/events"
 	"k8s.io/utils/ptr"
@@ -45,8 +46,21 @@ func (crdUnitTransport) RoundTrip(request *http.Request) (*http.Response, error)
 
 func businessUnitReconciler(kn *kubernautv1alpha2.Kubernaut, faults interceptor.Funcs) *KubernautReconciler {
 	objects := []client.Object{kn,
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "postgresql", Namespace: kn.Namespace}, Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": "postgresql"}, Ports: []corev1.ServicePort{{Name: "postgresql", Protocol: corev1.ProtocolTCP, Port: 5432, TargetPort: intstr.FromInt(5432)}},
+		}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "valkey", Namespace: kn.Namespace}, Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": "valkey"}, Ports: []corev1.ServicePort{{Name: "valkey", Protocol: corev1.ProtocolTCP, Port: 6379, TargetPort: intstr.FromInt(6379)}},
+		}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "thanos-querier", Namespace: resources.OCPMonitoringNamespace}, Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": "thanos-querier"}, Ports: []corev1.ServicePort{{Name: "web", Protocol: corev1.ProtocolTCP, Port: 9091, TargetPort: intstr.FromInt(9091)}},
+		}},
+		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "alertmanager-main", Namespace: resources.OCPMonitoringNamespace}, Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": "alertmanager"}, Ports: []corev1.ServicePort{{Name: "web", Protocol: corev1.ProtocolTCP, Port: 9094, TargetPort: intstr.FromInt(9094)}},
+		}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: pgSecretName, Namespace: kn.Namespace}, Data: map[string][]byte{
 			"POSTGRES_USER": []byte("kubernaut"), "POSTGRES_PASSWORD": []byte("unit-secret"), "POSTGRES_DB": []byte("kubernaut"),
+			"db-secrets.yaml": []byte("username: kubernaut\npassword: unit-secret\n"),
 		}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: vkSecretName, Namespace: kn.Namespace},
 			Data: map[string][]byte{"valkey-secrets.yaml": []byte("password: unit-secret")}},
@@ -78,7 +92,9 @@ func businessUnitReconciler(kn *kubernautv1alpha2.Kubernaut, faults interceptor.
 	api := fake.NewClientBuilder().WithScheme(k8sClient.Scheme()).WithObjects(objects...).
 		WithStatusSubresource(&kubernautv1alpha2.Kubernaut{}, &batchv1.Job{}, &appsv1.Deployment{}, certificate).
 		WithInterceptorFuncs(faults).Build()
-	return &KubernautReconciler{Client: api, APIReader: api, Scheme: api.Scheme(),
+	mapper := meta.NewDefaultRESTMapper(nil)
+	mapped := businessMappedClient{Client: api, mapper: mapper}
+	return &KubernautReconciler{Client: mapped, APIReader: mapped, Scheme: api.Scheme(),
 		Recorder: events.NewFakeRecorder(10000), now: time.Now,
 		RestCfg: &rest.Config{Host: "https://unit.invalid", Transport: crdUnitTransport{}},
 	}
@@ -86,6 +102,20 @@ func businessUnitReconciler(kn *kubernautv1alpha2.Kubernaut, faults interceptor.
 
 func refreshBusinessUnitCR(r *KubernautReconciler, kn *kubernautv1alpha2.Kubernaut) {
 	ExpectWithOffset(1, r.Get(ctx, client.ObjectKeyFromObject(kn), kn)).To(Succeed())
+}
+
+func seedCompletedMigrationJob(r *KubernautReconciler, kn *kubernautv1alpha2.Kubernaut) {
+	job, err := resources.MigrationJob(kn)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	revision, err := r.postgresqlCredentialRevision(ctx, kn)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	job.Annotations = map[string]string{resources.AnnotationPostgreSQLCredentialRevision: revision}
+	hash := resources.SpecHash(job)
+	job.Annotations[resources.AnnotationSpecHash] = hash
+	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+	ExpectWithOffset(1, r.Create(ctx, job)).To(Succeed())
+	ExpectWithOffset(1, r.Status().Update(ctx, job)).To(Succeed())
+	kn.Status.LastMigrationHash = hash
 }
 
 // Seed only external API state. Ownership checks and cleanup execute unchanged.
@@ -97,15 +127,11 @@ func seedBusinessOwnedResources(r *KubernautReconciler, kn *kubernautv1alpha2.Ku
 }
 
 var _ = Describe("independent business lifecycle decisions", Label("unit"), func() {
-	for _, mode := range []kubernautv1alpha2.TLSMode{"", kubernautv1alpha2.TLSModeDevelopmentSelfSigned} {
+	for _, mode := range []kubernautv1alpha2.TLSMode{""} {
 		It(fmt.Sprintf("UT-AUDIT-515-LIFECYCLE-001: converges migration, deployment, readiness and cleanup with TLS mode %q", mode), func() {
 			kn := newMinimalCR()
 			kn.UID = "unit-lifecycle"
 			kn.Spec.TLS.Mode = mode
-			if mode == kubernautv1alpha2.TLSModeDevelopmentSelfSigned {
-				kn.Spec.TLS.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}
-			}
-			kn.Spec.APIFrontend.Route.Enabled = ptr.To(false)
 			r := businessUnitReconciler(kn, interceptor.Funcs{})
 			request := reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)}
 			_, err := r.Reconcile(ctx, request)

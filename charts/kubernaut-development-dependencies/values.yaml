@@ -1,0 +1,89 @@
+# This chart is intentionally disposable. It owns only the generated TLS
+# Secrets, runtime-generated credentials, Services, workloads, persistence, and
+# connection contract it creates for PostgreSQL and Valkey.
+
+imagePullSecrets: []
+
+credentials:
+  # The hook creates credentials at runtime; no credential values are rendered
+  # into the Helm release. This image is also used by the operator's tested
+  # development TLS bootstrap path.
+  image:
+    repository: docker.io/bitnami/kubectl
+    tag: latest
+    digest: sha256:6e2cdb22d6ab7264ea198c717f555e30536b54029d26c8781b9f25f78951b564
+    pullPolicy: IfNotPresent
+
+postgresql:
+  name: postgresql
+  serviceName: postgresql
+  secretName: postgresql-secret
+  database: kubernaut
+  sslMode: require
+  image:
+    repository: registry.redhat.io/rhel10/postgresql-16
+    tag: "16"
+    digest: sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
+    pullPolicy: IfNotPresent
+  # rhel uses the OpenShift-compatible image entrypoint and its
+  # /opt/app-root/src/postgresql-cfg include directory. The official mode is
+  # used by the Kind harness with a locally loaded Docker Hub image.
+  commandMode: rhel
+  tls:
+    secretName: postgresql-tls
+    validityDays: 365
+  persistence:
+    enabled: false
+    size: 1Gi
+    storageClass: ""
+  securityContext:
+    enabled: true
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+valkey:
+  name: valkey
+  serviceName: valkey
+  secretName: valkey-secret
+  tls:
+    serverSecretName: valkey-tls
+    caSecretName: valkey-ca
+    clientCertSecretName: valkey-tls-client
+    validityDays: 365
+  image:
+    repository: docker.io/valkey/valkey
+    tag: 8.0.2
+    digest: sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
+    pullPolicy: IfNotPresent
+  persistence:
+    enabled: false
+    size: 1Gi
+    storageClass: ""
+  securityContext:
+    enabled: true
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi

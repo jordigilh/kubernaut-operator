@@ -18,29 +18,22 @@ package kind
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/yaml"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
-	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
 const (
-	postgresImage    = "docker.io/library/postgres:16.4"
-	valkeyImage      = "docker.io/valkey/valkey:8.0.2"
-	postgresUser     = "kubernaut"
-	postgresPassword = "kind-postgres-password" //nolint:gosec // disposable Kind fixture credential
-	postgresDB       = "kubernaut"
-	valkeyPassword   = "kind-valkey-password"
+	postgresImage = "docker.io/library/postgres:16.4"
+	valkeyImage   = "docker.io/valkey/valkey:8.0.2"
 	// This is a disposable Secret name, not credential material.
 	defaultInternalCASecretName = "kubernaut-internal-ca" //nolint:gosec
 )
@@ -52,29 +45,83 @@ func ensureKubernautInfrastructure(ctx context.Context) error {
 	if err := ensureNamespace(ctx, kubernautNamespace); err != nil {
 		return err
 	}
-	objects := []interface{}{
-		postgresSecret(),
-		valkeySecret(),
-		llmSecret(),
-		aiAnalysisPolicyConfigMap(),
-		signalProcessingPolicyConfigMap(),
-		postgresDeployment(),
-		postgresService(),
-		valkeyDeployment(),
-		valkeyService(),
+	args := []string{
+		"upgrade", "--install", "kubernaut-development-dependencies", developmentDependenciesChartPath(),
+		"--namespace", kubernautNamespace,
+		"--create-namespace",
+		"--set", "postgresql.commandMode=official",
+		"--set", "postgresql.securityContext.enabled=false",
+		"--set", "valkey.securityContext.enabled=false",
+		"--set-string", "postgresql.image.repository=docker.io/library/postgres",
+		"--set-string", "postgresql.image.tag=16.4",
+		"--set-string", "postgresql.image.digest=sha256:e62fbf9d3e2b49816a32c400ed2dba83e3b361e6833e624024309c35d334b412",
+		"--wait", "--timeout", "10m",
 	}
-	if err := applyYAML(ctx, objects...); err != nil {
-		return fmt.Errorf("applying Kubernaut infrastructure: %w", err)
+	if _, err := helmInCluster(ctx, args...); err != nil {
+		return fmt.Errorf("installing Kubernaut development dependencies chart: %w", err)
 	}
-	for _, deployment := range []string{"postgresql", "valkey"} {
-		if _, err := kubectl(
-			ctx, "wait", "--for=condition=Available", "deployment/"+deployment,
-			"-n", kubernautNamespace, "--timeout=10m",
-		); err != nil {
-			return fmt.Errorf("waiting for %s prerequisite: %w", deployment, err)
-		}
+	if err := ensureKubernautApplicationFixtures(ctx); err != nil {
+		return err
 	}
 	return nil
+}
+
+//nolint:gosec // disposable E2E fixture
+const syntheticLLMCredentials = `{"type":"authorized_user","client_id":"dev-only-client",` +
+	`"client_secret":"dev-only-secret","refresh_token":"dev-only-refresh-token"}`
+
+// ensureKubernautApplicationFixtures applies resources owned by the application test.
+func ensureKubernautApplicationFixtures(ctx context.Context) error {
+	labels := map[string]string{
+		"app.kubernetes.io/managed-by": applicationFixtureManager,
+		"app.kubernetes.io/part-of":    "kubernaut-application-fixtures",
+	}
+	objects := []client.Object{
+		&corev1.Secret{
+			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "llm-credentials",
+				Namespace: kubernautNamespace,
+				Labels:    labels,
+			},
+			Type: corev1.SecretTypeOpaque,
+			StringData: map[string]string{
+				"api_key":          syntheticLLMCredentials,
+				"api-key":          syntheticLLMCredentials,
+				"credentials.json": syntheticLLMCredentials,
+			},
+		},
+		&corev1.ConfigMap{
+			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "aianalysis-policy",
+				Namespace: kubernautNamespace,
+				Labels:    labels,
+			},
+			Data: map[string]string{
+				"approval.rego": "package approval\ndefault allow = true\n",
+			},
+		},
+		&corev1.ConfigMap{
+			TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "signalprocessing-policy",
+				Namespace: kubernautNamespace,
+				Labels:    labels,
+			},
+			Data: map[string]string{
+				"policy.rego": "package signalprocessing\ndefault allow = true\n",
+			},
+		},
+	}
+	if err := applyYAML(ctx, objects...); err != nil {
+		return fmt.Errorf("applying kubernaut application fixtures: %w", err)
+	}
+	return nil
+}
+
+func developmentDependenciesChartPath() string {
+	return filepath.Join(repositoryRoot(), "charts", "kubernaut-development-dependencies")
 }
 
 // ensureCertManagerRuntimeTLS creates the cert-manager objects consumed by
@@ -300,178 +347,16 @@ func ensureNamespace(ctx context.Context, namespace string) error {
 	return nil
 }
 
-func postgresSecret() *corev1.Secret {
-	return &corev1.Secret{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
-		ObjectMeta: metav1.ObjectMeta{Name: "postgresql-secret", Namespace: kubernautNamespace},
-		StringData: map[string]string{
-			"POSTGRES_USER":     postgresUser,
-			"POSTGRES_PASSWORD": postgresPassword,
-			"POSTGRES_DB":       postgresDB,
-		},
-	}
-}
-
-func valkeySecret() *corev1.Secret {
-	return &corev1.Secret{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
-		ObjectMeta: metav1.ObjectMeta{Name: "valkey-secret", Namespace: kubernautNamespace},
-		StringData: map[string]string{
-			"valkey-secrets.yaml": fmt.Sprintf("password: %q\n", valkeyPassword),
-		},
-	}
-}
-
-func llmSecret() *corev1.Secret {
-	return &corev1.Secret{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
-		ObjectMeta: metav1.ObjectMeta{Name: "llm-credentials", Namespace: kubernautNamespace},
-		StringData: map[string]string{"api_key": "kind-e2e-not-a-real-credential"},
-	}
-}
-
-func aiAnalysisPolicyConfigMap() *corev1.ConfigMap {
-	return &corev1.ConfigMap{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
-		ObjectMeta: metav1.ObjectMeta{Name: "aianalysis-policy", Namespace: kubernautNamespace},
-		Data:       map[string]string{"approval.rego": "package approval\ndefault allow = true\n"},
-	}
-}
-
-func signalProcessingPolicyConfigMap() *corev1.ConfigMap {
-	return &corev1.ConfigMap{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
-		ObjectMeta: metav1.ObjectMeta{Name: "signalprocessing-policy", Namespace: kubernautNamespace},
-		Data:       map[string]string{"policy.rego": "package signalprocessing\ndefault allow = true\n"},
-	}
-}
-
-func postgresDeployment() *appsv1.Deployment {
-	labels := prerequisiteLabels("postgresql")
-	return &appsv1.Deployment{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
-		ObjectMeta: metav1.ObjectMeta{Name: "postgresql", Namespace: kubernautNamespace, Labels: labels},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: ptr.To(int32(1)),
-			Selector: &metav1.LabelSelector{MatchLabels: labels},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
-				Spec: corev1.PodSpec{Containers: []corev1.Container{{
-					Name: "postgresql", Image: postgresImage,
-					Command: []string{"bash", "-ceu"},
-					Args: []string{`mkdir -p /tmp/postgres-tls
-          openssl req -x509 -nodes -newkey rsa:2048 \
-            -keyout /tmp/postgres-tls/server.key \
-            -out /tmp/postgres-tls/server.crt \
-            -days 2 -subj /CN=postgresql
-          chown postgres:postgres /tmp/postgres-tls/server.key /tmp/postgres-tls/server.crt
-          chmod 600 /tmp/postgres-tls/server.key
-exec docker-entrypoint.sh postgres \
-  -c ssl=on \
-  -c ssl_cert_file=/tmp/postgres-tls/server.crt \
-  -c ssl_key_file=/tmp/postgres-tls/server.key`},
-					Env: []corev1.EnvVar{
-						{Name: "POSTGRES_USER", Value: postgresUser},
-						{Name: "POSTGRES_PASSWORD", Value: postgresPassword},
-						{Name: "POSTGRES_DB", Value: postgresDB},
-					},
-					Ports: []corev1.ContainerPort{{Name: "postgres", ContainerPort: 5432}},
-					ReadinessProbe: &corev1.Probe{
-						ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{
-							Command: []string{"pg_isready", "-U", postgresUser, "-d", postgresDB},
-						}},
-						InitialDelaySeconds: 5,
-						PeriodSeconds:       2,
-					},
-				}}},
-			},
-		},
-	}
-}
-
-func postgresService() *corev1.Service {
-	return &corev1.Service{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
-		ObjectMeta: metav1.ObjectMeta{Name: "postgresql", Namespace: kubernautNamespace},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{"app": "postgresql"},
-			Ports:    []corev1.ServicePort{{Port: 5432, TargetPort: intstr.FromInt(5432)}},
-		},
-	}
-}
-
-func valkeyDeployment() *appsv1.Deployment {
-	labels := prerequisiteLabels("valkey")
-	return &appsv1.Deployment{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
-		ObjectMeta: metav1.ObjectMeta{Name: "valkey", Namespace: kubernautNamespace, Labels: labels},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: ptr.To(int32(1)),
-			Selector: &metav1.LabelSelector{MatchLabels: labels},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
-				Spec: corev1.PodSpec{Containers: []corev1.Container{{
-					Name: "valkey", Image: valkeyImage,
-					Args:  []string{"--requirepass", valkeyPassword, "--save", ""},
-					Ports: []corev1.ContainerPort{{Name: "valkey", ContainerPort: 6379}},
-					ReadinessProbe: &corev1.Probe{
-						ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{
-							Command: []string{"valkey-cli", "-a", valkeyPassword, "ping"},
-						}},
-						InitialDelaySeconds: 3,
-						PeriodSeconds:       2,
-					},
-				}}},
-			},
-		},
-	}
-}
-
-func valkeyService() *corev1.Service {
-	return &corev1.Service{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
-		ObjectMeta: metav1.ObjectMeta{Name: "valkey", Namespace: kubernautNamespace},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{"app": "valkey"},
-			Ports:    []corev1.ServicePort{{Port: 6379, TargetPort: intstr.FromInt(6379)}},
-		},
-	}
-}
-
-// prerequisiteLabels places the disposable BYO dependencies in the same
-// provider-policy trust domain as the Kubernaut workloads. Native Cilium and
-// Calico policies identify allowed in-namespace endpoints by the instance and
-// managed-by labels; no owner reference is set, so these remain user-owned
-// prerequisites and are never removed by the operator's cleanup path.
-func prerequisiteLabels(app string) map[string]string {
-	labels := map[string]string{"app": app}
-	if configuredProvider == providerCilium || configuredProvider == providerCalico {
-		labels["app.kubernetes.io/managed-by"] = "kubernaut-operator"
-		labels["app.kubernetes.io/instance"] = kubernautv1alpha2.SingletonName
-	}
-	return labels
-}
-
 func applyKubernautCR(ctx context.Context) error {
-	if err := applyYAML(ctx, kubernautCR()); err != nil {
-		return fmt.Errorf("creating Kubernaut CR: %w", err)
-	}
-	return nil
+	return pollUntilSuccess(ctx, 2*time.Minute, 2*time.Second, func() error {
+		if err := applyYAML(ctx, kubernautCR()); err != nil {
+			return fmt.Errorf("creating Kubernaut CR: %w", err)
+		}
+		return nil
+	})
 }
 
 func kubernautCR() *kubernautv1alpha2.Kubernaut {
-	provider := kubernautv1alpha2.NetworkPolicyProviderAuto
-	isolationMode := kubernautv1alpha2.NetworkIsolationRequired
-	switch configuredProvider {
-	case providerCilium:
-		provider = kubernautv1alpha2.NetworkPolicyProviderCilium
-	case providerCalico:
-		provider = kubernautv1alpha2.NetworkPolicyProviderCalico
-	case providerGeneric:
-		// The generic lane qualifies an explicit administrator-owned isolation
-		// acknowledgement, not a supported native CNI or an implicit opt-out.
-		isolationMode = kubernautv1alpha2.NetworkIsolationInherited
-	}
 	tlsMode, err := TLSModeForSource(string(configuredTLS), string(activeManualTLSSelection))
 	if err != nil {
 		panic(fmt.Sprintf("resolving configured TLS fixture mode: %v", err))
@@ -479,38 +364,23 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 	tls := kubernautv1alpha2.TLSConfigSpec{Mode: tlsMode}
 	dataStorage := kubernautv1alpha2.DataStorageSpec{}
 	monitoring := kubernautv1alpha2.MonitoringSpec{}
-	if configuredProvider != providerGeneric {
-		monitoring = kubernautv1alpha2.MonitoringSpec{
-			TLS: &kubernautv1alpha2.MonitoringTLSSpec{
-				Source: kubernautv1alpha2.MonitoringTLSSourceSecret,
-				CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{
-					Name: monitoringCASecretName,
-				},
-			},
-			Prometheus:   kubernautv1alpha2.PrometheusSpec{URL: monitoringPrometheusURL()},
-			AlertManager: kubernautv1alpha2.AlertManagerSpec{URL: monitoringAlertManagerURL()},
-		}
-	}
 	switch configuredTLS {
-	case tlsDevelopment:
-		tls.DevelopmentSelfSigned = &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{}
-	case tlsHook:
-		tls.Hooks = &kubernautv1alpha2.TLSHooksConfig{TLSCerts: kubernautv1alpha2.TLSCertsConfig{
-			ExtraSANs: []string{"localhost"},
-		}}
 	case tlsManualAdmin:
 		tls = manualAdminTLSConfig(activeManualTLSSelection)
 		prefix := string(manualTLSSelectionManual)
 		if activeManualTLSSelection == manualTLSSelectionAdmin {
 			prefix = manualTLSAdminPrefix
 		}
-		dataStorage.SigningCert = &kubernautv1alpha2.SigningCertSpec{
-			SecretName: manualTLSSigningSecretName(prefix),
+		dataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{
+			SigningCertificate: &kubernautv1alpha2.SigningCertSpec{
+				SecretName: manualTLSSigningSecretName(prefix),
+			},
 		}
 	case tlsCertManager:
 		tls = kubernautv1alpha2.TLSConfigSpec{
 			Mode: kubernautv1alpha2.TLSModeCertManager,
 			CertManager: &kubernautv1alpha2.CertManagerTLSConfig{ //nolint:gosec // disposable Kind fixture Secret references
+				Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{Enabled: ptr.To(false)},
 				IssuerRef: kubernautv1alpha2.TLSIssuerRef{
 					Name:  "kubernaut-ca",
 					Kind:  "Issuer",
@@ -544,6 +414,11 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 			Valkey: kubernautv1alpha2.ValkeySpec{
 				SecretName: "valkey-secret",
 				Host:       "valkey.kubernaut-system.svc.cluster.local",
+				TLS: &kubernautv1alpha2.ValkeyTLSSpec{ //nolint:gosec // disposable Kind fixture Secret references
+					Enabled:              true,
+					CASecretName:         "valkey-ca",
+					ClientCertSecretName: "valkey-tls-client",
+				},
 			},
 			DataStorage: dataStorage,
 			AIAnalysis: kubernautv1alpha2.AIAnalysisSpec{
@@ -567,206 +442,9 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 			Gateway:         kubernautv1alpha2.GatewaySpec{Enabled: ptr.To(false)},
 			APIFrontend:     apiFrontend,
 			TLS:             tls,
-			NetworkPolicies: kubernautv1alpha2.NetworkPoliciesSpec{Provider: provider, Mode: isolationMode},
+			NetworkPolicies: kubernautv1alpha2.NetworkPoliciesSpec{},
 		},
 	}
-}
-
-func exerciseMonitoringTLSSources(ctx context.Context) error {
-	if configuredProvider == providerGeneric {
-		return nil
-	}
-	encoded, err := kubectl(ctx, "get", "secret", monitoringCASecretName, "-n", kubernautNamespace,
-		"-o", "jsonpath={.data.ca\\.crt}")
-	if err != nil {
-		return fmt.Errorf("reading monitoring CA Secret for ConfigMap fixture: %w", err)
-	}
-	caPEM, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
-	if err != nil {
-		return fmt.Errorf("decoding monitoring CA Secret for ConfigMap fixture: %w", err)
-	}
-	configMap := &corev1.ConfigMap{
-		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "monitoring-ca-config",
-			Namespace: kubernautNamespace,
-		},
-		Data: map[string]string{tlsCACertificateKey: string(caPEM)},
-	}
-	if err := applyYAML(ctx, configMap); err != nil {
-		return fmt.Errorf("creating monitoring ConfigMap fixture: %w", err)
-	}
-	defer func() {
-		_, _ = kubectl(ctx, "delete", "configmap", configMap.Name, "-n", configMap.Namespace,
-			"--ignore-not-found=true") //nolint:errcheck
-	}()
-
-	if err := patchMonitoringTLSSource(ctx, "configMap"); err != nil {
-		return err
-	}
-	if err := waitForMonitoringTLSDeploymentSource(
-		ctx, kubernautv1alpha2.MonitoringTLSSourceConfigMap, configMap.Name,
-	); err != nil {
-		return err
-	}
-	if _, err := agentMonitoringGET(
-		ctx, monitoringPrometheusServiceName, monitoringPrometheusServicePort,
-		"/api/v1/label/__name__/values",
-	); err != nil {
-		return fmt.Errorf("ConfigMap-backed monitoring trust handshake failed: %w", err)
-	}
-
-	if err := patchMonitoringTLSSource(ctx, "system"); err != nil {
-		return err
-	}
-	if err := waitForMonitoringTLSDeploymentSource(ctx, kubernautv1alpha2.MonitoringTLSSourceSystem, ""); err != nil {
-		return err
-	}
-	if _, err := agentMonitoringGET(
-		ctx, monitoringPrometheusServiceName, monitoringPrometheusServicePort,
-		"/api/v1/label/__name__/values",
-	); err == nil {
-		return fmt.Errorf("system monitoring trust unexpectedly accepted the private fixture CA without a mounted CA")
-	}
-
-	if err := patchMonitoringTLSSource(ctx, "secret"); err != nil {
-		return err
-	}
-	if err := waitForMonitoringTLSDeploymentSource(
-		ctx, kubernautv1alpha2.MonitoringTLSSourceSecret, monitoringCASecretName,
-	); err != nil {
-		return err
-	}
-	if _, err := agentMonitoringGET(
-		ctx, monitoringPrometheusServiceName, monitoringPrometheusServicePort,
-		"/api/v1/label/__name__/values",
-	); err != nil {
-		return fmt.Errorf("secret-backed monitoring trust handshake failed after source restoration: %w", err)
-	}
-	_, _, wrongCAPEM, err := generateManualCA(time.Now().UTC(), "wrong-monitoring")
-	if err != nil {
-		return fmt.Errorf("generating wrong monitoring CA fixture: %w", err)
-	}
-	wrongCA := &corev1.Secret{
-		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      monitoringCASecretName,
-			Namespace: kubernautNamespace,
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{tlsCACertificateKey: wrongCAPEM},
-	}
-	if err := applyYAML(ctx, wrongCA); err != nil {
-		return fmt.Errorf("applying wrong monitoring CA fixture: %w", err)
-	}
-	if err := pollUntilSuccess(ctx, 3*time.Minute, 2*time.Second, func() error {
-		_, getErr := agentMonitoringGET(
-			ctx, monitoringPrometheusServiceName, monitoringPrometheusServicePort,
-			"/api/v1/label/__name__/values",
-		)
-		if getErr == nil {
-			return fmt.Errorf("wrong monitoring CA is still accepted")
-		}
-		return nil
-	}); err != nil {
-		return fmt.Errorf("wrong monitoring CA was not rejected: %w", err)
-	}
-	restoredCA := wrongCA.DeepCopy()
-	restoredCA.Data[tlsCACertificateKey] = caPEM
-	if err := applyYAML(ctx, restoredCA); err != nil {
-		return fmt.Errorf("restoring monitoring CA fixture: %w", err)
-	}
-	if err := pollUntilSuccess(ctx, 3*time.Minute, 2*time.Second, func() error {
-		_, getErr := agentMonitoringGET(
-			ctx, monitoringPrometheusServiceName, monitoringPrometheusServicePort,
-			"/api/v1/label/__name__/values",
-		)
-		return getErr
-	}); err != nil {
-		return fmt.Errorf("monitoring CA trust was not restored: %w", err)
-	}
-	return nil
-}
-
-func patchMonitoringTLSSource(ctx context.Context, source string) error {
-	tls := fmt.Sprintf(`{"source":%q,"caCertSecretRef":null,"caCertConfigMapRef":null}`, source)
-	switch source {
-	case "secret":
-		tls = fmt.Sprintf(
-			`{"source":%q,"caCertSecretRef":{"name":%q},"caCertConfigMapRef":null}`,
-			source, monitoringCASecretName,
-		)
-	case "configMap":
-		tls = fmt.Sprintf(`{"source":%q,"caCertSecretRef":null,"caCertConfigMapRef":{"name":"monitoring-ca-config"}}`, source)
-	}
-	if _, err := kubectl(ctx, "patch", "kubernaut", kubernautv1alpha2.SingletonName, "-n", kubernautNamespace,
-		"--type=merge", "-p", fmt.Sprintf(`{"spec":{"monitoring":{"tls":%s}}}`, tls)); err != nil {
-		return fmt.Errorf("patching monitoring TLS source to %s: %w", source, err)
-	}
-	return nil
-}
-
-func waitForMonitoringTLSDeploymentSource(
-	ctx context.Context, source kubernautv1alpha2.MonitoringTLSSource, objectName string,
-) error {
-	return pollUntilSuccess(ctx, 3*time.Minute, 2*time.Second, func() error {
-		for _, component := range monitoringTLSDeploymentComponents() {
-			output, err := kubectl(
-				ctx, "get", "deployment", resources.DeploymentName(component), "-n", kubernautNamespace, "-o", "json",
-			)
-			if err != nil {
-				return fmt.Errorf("reading %s monitoring TLS Deployment: %w", component, err)
-			}
-			deployment := &appsv1.Deployment{}
-			if err := yaml.Unmarshal([]byte(output), deployment); err != nil {
-				return fmt.Errorf("decoding %s monitoring TLS Deployment: %w", component, err)
-			}
-			desiredReplicas := int32(1)
-			if deployment.Spec.Replicas != nil {
-				desiredReplicas = *deployment.Spec.Replicas
-			}
-			rolloutReady := deployment.Status.ObservedGeneration >= deployment.Generation &&
-				deployment.Status.Replicas == desiredReplicas &&
-				deployment.Status.UpdatedReplicas >= desiredReplicas &&
-				deployment.Status.ReadyReplicas >= desiredReplicas
-			volume := findMonitoringDeploymentVolume(deployment)
-			matches := false
-			if source == kubernautv1alpha2.MonitoringTLSSourceSystem {
-				matches = rolloutReady && volume == nil &&
-					deployment.Spec.Template.Annotations[resources.AnnotationMonitoringMaterialRevision] == ""
-			} else if volume != nil {
-				matches = rolloutReady
-				switch source {
-				case kubernautv1alpha2.MonitoringTLSSourceSecret:
-					matches = matches && volume.Secret != nil && volume.Secret.SecretName == objectName
-				case kubernautv1alpha2.MonitoringTLSSourceConfigMap:
-					matches = matches && volume.ConfigMap != nil && volume.ConfigMap.Name == objectName
-				}
-			}
-			if !matches {
-				return fmt.Errorf("%s deployment has not selected monitoring TLS source %s", component, source)
-			}
-		}
-		return nil
-	})
-}
-
-func monitoringTLSDeploymentComponents() []string {
-	components := []string{resources.ComponentEffectivenessMonitor, resources.ComponentKubernautAgent}
-	if kubernautCR().Spec.APIFrontendEnabled() {
-		components = append(components, resources.ComponentAPIFrontend)
-	}
-	return components
-}
-
-func findMonitoringDeploymentVolume(deployment *appsv1.Deployment) *corev1.Volume {
-	for index := range deployment.Spec.Template.Spec.Volumes {
-		volume := &deployment.Spec.Template.Spec.Volumes[index]
-		if volume.Name == resources.MonitoringTLSCAVolumeName {
-			return volume
-		}
-	}
-	return nil
 }
 
 func manualAdminTLSConfig(selection manualTLSSelection) kubernautv1alpha2.TLSConfigSpec {
@@ -778,15 +456,15 @@ func manualAdminTLSConfig(selection manualTLSSelection) kubernautv1alpha2.TLSCon
 	if selection == manualTLSSelectionAdmin {
 		prefix = manualTLSAdminPrefix
 	}
-	config := &kubernautv1alpha2.AdministratorManagedTLSConfig{
+	config := &kubernautv1alpha2.ManualTLSConfig{
 		ServiceTLSSecretNames: manualTLSServiceSecretNames(prefix),
 	}
 	if selection == manualTLSSelectionAdmin {
 		config.InternalCASecretName = manualTLSCASecretName(prefix)
 	}
 	return kubernautv1alpha2.TLSConfigSpec{
-		Mode:                 mode,
-		AdministratorManaged: config,
+		Mode:   mode,
+		Manual: config,
 	}
 }
 
@@ -889,18 +567,6 @@ func tlsProbeCAKey() (string, error) {
 		}
 	}
 	return tlsCACertificateKey, nil
-}
-
-func hookTLSSecretNames() []string {
-	return []string{
-		defaultInternalCASecretName,
-		"gateway-tls",
-		"datastorage-tls",
-		"kubernautagent-tls",
-		"apifrontend-tls",
-		"authwebhook-tls",
-		"datastorage-signing-cert",
-	}
 }
 
 func exerciseManualAdminAliases(ctx context.Context) error {
@@ -1032,24 +698,6 @@ func waitForContractReady(ctx context.Context) error {
 		return err
 	}
 	return nil
-}
-
-func deleteTLSSecret(ctx context.Context, name string) error {
-	if _, err := kubectl(ctx, "delete", "secret", name, "-n", kubernautNamespace, "--ignore-not-found=true"); err != nil {
-		return fmt.Errorf("deleting TLS Secret %q: %w", name, err)
-	}
-	return nil
-}
-
-func secretPresent(ctx context.Context, name string) (bool, error) {
-	output, err := kubectl(ctx, "get", "secret", name, "-n", kubernautNamespace)
-	if err != nil && (strings.Contains(output, "NotFound") || strings.Contains(output, "not found")) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 func serviceHasNoPlaintextPort(ctx context.Context, name string) (bool, error) {

@@ -8,9 +8,9 @@
 
 **Status:** Approved for RED tests on 2026-10-05; production implementation
 may proceed only through the RED → GREEN → REFACTOR sequence below. Release
-readiness also depends on the separate #501 evidence-schema follow-up described
-below; that follow-up must remove the retired application-chart requirement
-before an operator release can pass its qualification gate.
+readiness also depends on the separate #501 evidence-boundary follow-up described
+below; upstream compatibility acceptance remains a manual release-owner
+responsibility and is not an automated operator-workflow gate.
 
 **Deployment contract:** The operator is the only supported way to deploy
 Kubernaut services on OpenShift, generic Kubernetes, and Kind. A Helm chart may
@@ -91,7 +91,6 @@ The baseline passed before this plan was written:
 - `golangci-lint run` — zero issues
 - `make test` — unit coverage 87.3%, controller integration coverage 78.3%
 - `make test-pyramid`
-- `make test-security-traceability`
 - generated-artifact checks with no unexpected working-tree changes
 
 Post-merge triage checks on `ffa8577` also passed:
@@ -156,8 +155,8 @@ TLS follow-up and is not an issue-499 acceptance criterion.
 The merged CI boundary requires the operator repository and its Kind harness to
 avoid upstream source checkouts, application images, and upstream workflow
 dispatch. `make test-pyramid` now includes `make test-ci-boundary`; release
-publication also consumes an immutable upstream qualification record for the
-exact operator SHA.
+provenance records that upstream qualification is manual and release-owner
+controlled.
 
 Therefore, issue-499 operator tests may prove CRD admission, rendered
 configuration, Deployment mounts, RBAC, ownership, status, and trust behavior
@@ -280,7 +279,7 @@ The recommended v2 record keeps immutable upstream image digests and adds:
     "repository": "jordigilh/kubernaut-operator",
     "ref": "refs/heads/release/v1.6",
     "sha": "<operator-sha>",
-    "image": "quay.io/kubernaut-ai/kubernaut-operator@sha256:<digest>"
+    "image": "quay.io/kubernaut-ai/kubernaut-operator-image@sha256:<digest>"
   },
   "qualification": {
     "workflow_run_id": "<run-id>",
@@ -903,7 +902,6 @@ make test
 make test-pyramid
 make test-ci-boundary
 make test-hack-scripts
-make test-security-traceability
 git diff --check
 ```
 

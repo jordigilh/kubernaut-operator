@@ -110,7 +110,7 @@ var _ = Describe("Additional component ClusterRoleBindings (#277)", func() {
 		createBYOSecrets(ctx)
 		createSharedEcosystemClusterRole(ctx, "shared-ecosystem-reader")
 
-		cr := newCRWithRouteDisabled()
+		cr := newMinimalCR()
 		cr.Spec.AdditionalClusterRoles = []string{"shared-ecosystem-reader"}
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 		reconcileToRunning(ctx)
@@ -122,7 +122,7 @@ var _ = Describe("Additional component ClusterRoleBindings (#277)", func() {
 		createBYOSecrets(ctx)
 		createSharedEcosystemClusterRole(ctx, "shared-ecosystem-reader-2")
 
-		cr := newCRWithRouteDisabled()
+		cr := newMinimalCR()
 		cr.Spec.AdditionalClusterRoles = []string{"shared-ecosystem-reader-2"}
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 		reconcileToRunning(ctx)
@@ -153,7 +153,7 @@ var _ = Describe("Additional component ClusterRoleBindings (#277)", func() {
 		createBYOSecrets(ctx)
 		createSharedEcosystemClusterRole(ctx, "shared-ecosystem-reader-3")
 
-		cr := newCRWithRouteDisabled()
+		cr := newMinimalCR()
 		cr.Spec.AdditionalClusterRoles = []string{"shared-ecosystem-reader-3"}
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 		r := reconcileToRunning(ctx)
@@ -181,7 +181,7 @@ var _ = Describe("Additional component ClusterRoleBindings (#277)", func() {
 		createBYOSecrets(ctx)
 		createSharedEcosystemClusterRole(ctx, "shared-ecosystem-reader-v2")
 
-		cr := newCRWithRouteDisabled()
+		cr := newMinimalCR()
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
 		reconcileToRunning(ctx)
 

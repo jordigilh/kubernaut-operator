@@ -64,7 +64,7 @@ replacement or ownership change cannot be deleted using a prior authorization.
 
 | Resource group | Contract |
 |---|---|
-| Same-namespace workloads, Services, derived Secrets/ConfigMaps, RBAC, PDB/HPA, exposure and monitoring | Current controller reference or complete matching marker; repair references for a marked reinstall; garbage collected with CR |
+| Same-namespace workloads, Services, operator-generated ConfigMaps, RBAC, PDB/HPA, exposure and monitoring | Current controller reference or complete matching marker; repair references for a marked reinstall; garbage collected with CR. PostgreSQL/Valkey Secrets are administrator-owned read-only inputs; no derived dependency credential Secret is created |
 | Cluster-scoped RBAC/webhooks and cross-namespace workflow/MCP RBAC/SA | Complete marker; no owner references; explicit finalizer cleanup |
 | Operator-created workflow namespace | Ownership-checked PSA convergence; retained on uninstall to avoid namespace-wide cascading deletion of unmarked content |
 | Pre-existing administrator workflow namespace | Read-only reuse only when restricted enforce/audit/warn PSA labels are already set and there is no operator identity claim, owner reference or termination; otherwise actionable conflict, not an implicit label update or namespace adoption. Restricted PSA never overrides conflicting operator provenance |

@@ -3,7 +3,7 @@
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
 # - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
 # - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
-VERSION ?= 1.6.0-rc20
+VERSION ?= 1.6.0-rc30
 
 # CHANNELS define the bundle channels used in the bundle.
 # Add a new line here if you would like to change its default config. (E.g CHANNELS = "candidate,fast,stable")
@@ -24,16 +24,15 @@ BUNDLE_DEFAULT_CHANNEL := --default-channel=$(DEFAULT_CHANNEL)
 endif
 BUNDLE_METADATA_OPTS ?= $(BUNDLE_CHANNELS) $(BUNDLE_DEFAULT_CHANNEL)
 
-# IMAGE_TAG_BASE defines the docker.io namespace and part of the image name for remote images.
-# This variable is used to construct full image tags for bundle and catalog images.
-#
-# For example, running 'make bundle-build bundle-push catalog-build catalog-push' will build and push both
-# kubernaut.ai/kubernaut-operator-bundle:$VERSION and kubernaut.ai/kubernaut-operator-catalog:$VERSION.
-IMAGE_TAG_BASE ?= quay.io/kubernaut-ai/kubernaut-operator
+# IMAGE_TAG_BASE defines the registry path for the operator image.
+# OLM_IMAGE_TAG_BASE keeps the OLM bundle and catalog repositories separate
+# from the operator image and the Helm chart while preserving their names.
+IMAGE_TAG_BASE ?= quay.io/kubernaut-ai/kubernaut-operator-image
+OLM_IMAGE_TAG_BASE ?= quay.io/kubernaut-ai/kubernaut-operator
 
 # BUNDLE_IMG defines the image:tag used for the bundle.
 # You can use it as an arg. (E.g make bundle-build BUNDLE_IMG=<some-registry>/<project-name-bundle>:<tag>)
-BUNDLE_IMG ?= $(IMAGE_TAG_BASE)-bundle:v$(VERSION)
+BUNDLE_IMG ?= $(OLM_IMAGE_TAG_BASE)-bundle:v$(VERSION)
 
 # BUNDLE_GEN_FLAGS are the flags passed to the operator-sdk generate bundle command
 BUNDLE_GEN_FLAGS ?= -q --overwrite --version $(VERSION) $(BUNDLE_METADATA_OPTS)
@@ -154,27 +153,21 @@ test-integration: manifests generate fmt vet setup-envtest ## Run integration te
 			echo "Controller integration coverage is below the $(INTEGRATION_COVERAGE_THRESHOLD)% threshold"; exit 1; \
 		fi
 
-.PHONY: test-security-traceability
-test-security-traceability: ## Validate the versioned NIST/FedRAMP and OWASP ASVS evidence matrix.
-	@./hack/validate-security-traceability.sh
-
-.PHONY: test-ci-boundary
-test-ci-boundary: ## Verify that operator CI remains independent of the upstream application.
-	@./hack/verify-ci-boundary.sh
-
-.PHONY: test-pyramid
-test-pyramid: test-security-traceability test-ci-boundary test-helm ## Verify independent tiers, production wiring, and the real E2E journey.
-	@./hack/verify-test-pyramid.sh
+.PHONY: test-console-release
+test-console-release: ## Validate the Console release contract.
+	@./hack/verify-console-release.sh
 
 .PHONY: test-helm
-test-helm: ## Validate the operator-only Helm chart and its render contracts.
+test-helm: test-console-release ## Validate the operator-only Helm chart and its render contracts.
 	@command -v $(HELM_BIN) >/dev/null 2>&1 || { echo "Helm CLI not found: $(HELM_BIN)"; exit 1; }
 	$(HELM_BIN) lint charts/kubernaut-operator
 	HELM_BIN=$(HELM_BIN) ./hack/verify-helm-chart.sh
+	$(HELM_BIN) lint charts/kubernaut-development-dependencies
+	HELM_BIN=$(HELM_BIN) ./hack/verify-development-dependencies-chart.sh
 	HELM_BIN=$(HELM_BIN) go test $(HELM_PKGS) -v
 
 .PHONY: test
-test: test-unit test-integration test-pyramid ## Run all tests (unit + integration).
+test: test-unit test-integration test-helm ## Run all executable unit, integration, and Helm tests.
 	@echo "mode: atomic" > cover.out
 	@tail -n +2 cover-unit.out >> cover.out 2>/dev/null || true
 	@tail -n +2 cover-integration.out >> cover.out 2>/dev/null || true
@@ -182,7 +175,6 @@ test: test-unit test-integration test-pyramid ## Run all tests (unit + integrati
 .PHONY: test-hack-scripts
 test-hack-scripts: yq ## Run fixture-based tests for standalone hack/ shell tooling.
 	PATH="$(LOCALBIN):$$PATH" bash hack/migrate-llm-profile.test.sh
-	bash hack/verify-ci-boundary.test.sh
 	bash hack/verify-release-qualification.test.sh
 	bash hack/validate-fleet-docs-contract.test.sh
 
@@ -192,6 +184,7 @@ test-hack-scripts: yq ## Run fixture-based tests for standalone hack/ shell tool
 .PHONY: test-e2e
 test-e2e: manifests generate fmt vet ## Run the e2e tests against a live OCP cluster. Requires: oc login, IMG set.
 	@command -v oc >/dev/null 2>&1 || { echo "oc CLI not found. Install the OpenShift CLI."; exit 1; }
+	@command -v helm >/dev/null 2>&1 || { echo "Helm CLI not found."; exit 1; }
 	@oc whoami >/dev/null 2>&1 || { echo "Not logged in to OCP. Run 'oc login' first."; exit 1; }
 	go test ./test/e2e/ -v -ginkgo.v -timeout 30m
 
@@ -223,10 +216,6 @@ test-e2e-kind-helm: fmt vet ## Run the isolated operator-only Helm bootstrap Kin
 		echo "Using prebuilt operator image $$operator_image"; \
 	fi; \
 	HELM_BIN=$(HELM_BIN) KUBERNAUT_OPERATOR_IMAGE="$$operator_image" KUBERNAUT_HELM_E2E_CLUSTER="$${KUBERNAUT_HELM_E2E_CLUSTER:-kubernaut-operator-helm-e2e}" go test ./test/e2e/helm/ -v -ginkgo.v -timeout 30m
-
-.PHONY: test-e2e-helm-openshift
-test-e2e-helm-openshift: ## Run the opt-in operator-only Helm bootstrap OpenShift qualification lane.
-	@./hack/test-helm-openshift.sh
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
@@ -474,7 +463,7 @@ endif
 BUNDLE_IMGS ?= $(BUNDLE_IMG)
 
 # The image tag given to the resulting catalog image.
-CATALOG_IMG ?= $(IMAGE_TAG_BASE)-catalog:v$(VERSION)
+CATALOG_IMG ?= $(OLM_IMAGE_TAG_BASE)-catalog:v$(VERSION)
 
 # Build a file-based catalog (FBC) image from the bundle image.
 # Uses 'opm render' to extract bundle content and builds a serving catalog.

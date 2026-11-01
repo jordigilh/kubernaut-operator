@@ -25,10 +25,13 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	sigsyaml "sigs.k8s.io/yaml"
 )
 
+// TestCleanBreak runs the v1alpha2 CRD contract suite without a conversion
+// webhook or legacy served version.
 func TestCleanBreak(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "v1alpha2 Clean-Break Contract Suite")
@@ -44,6 +47,17 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		Expect(crd.Spec.Conversion).To(BeNil())
 	})
 
+	It("defaults API Frontend to disabled for autonomous deployments", func() {
+		crd := loadKubernautCRD()
+		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+		apiFrontend := schema.Properties["spec"].Properties["apiFrontend"]
+		enabled := apiFrontend.Properties["enabled"]
+		Expect(enabled.Default).NotTo(BeNil())
+		Expect(string(enabled.Default.Raw)).To(Equal("false"))
+		spec := KubernautSpec{}
+		Expect(spec.APIFrontendEnabled()).To(BeFalse())
+	})
+
 	It("does not publish a fabricated issuer default", func() {
 		crd := loadKubernautCRD()
 		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
@@ -57,6 +71,50 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
 		apiFrontend := schema.Properties["spec"].Properties["apiFrontend"]
 		Expect(apiFrontend.Properties).NotTo(HaveKey("spire"))
+	})
+
+	It("UT-EXP-565-API-001 [CM-3, CM-6, SI-10; SOC2 CC8.1; ASVS v5.0.0-V16.5.2]: leaves external exposure to administrators", func() {
+		crd := loadKubernautCRD()
+		spec := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+
+		for _, component := range []string{"gateway", "apiFrontend", "console"} {
+			properties := spec.Properties[component].Properties
+			Expect(properties).NotTo(HaveKey("route"), "%s must not publish a CR-managed Route", component)
+			Expect(properties).NotTo(HaveKey("ingress"), "%s must not publish a CR-managed Ingress", component)
+		}
+	})
+
+	It("UT-EXP-565-RBAC-001 [AC-6, SC-7; SOC2 CC6.1, CC6.6; ASVS v5.0.0-V8.2.1, v5.0.0-V8.3.1, v5.0.0-V13.1.1]: does not grant the operator external exposure access", func() {
+		for _, relativePath := range []string{
+			filepath.Join("..", "..", "config", "rbac", "role.yaml"),
+			filepath.Join("..", "..", "charts", "kubernaut-operator", "files", "manager-role.yaml"),
+		} {
+			manifest, err := os.ReadFile(relativePath) //nolint:gosec // test paths are fixed within the repository
+			Expect(err).NotTo(HaveOccurred())
+
+			role := &rbacv1.ClusterRole{}
+			Expect(sigsyaml.Unmarshal(manifest, role)).To(Succeed())
+			for _, rule := range role.Rules {
+				Expect(rule.APIGroups).NotTo(ContainElement("route.openshift.io"), relativePath)
+				if containsString(rule.APIGroups, "networking.k8s.io") {
+					Expect(rule.Resources).NotTo(ContainElement("ingresses"), relativePath)
+				}
+			}
+		}
+	})
+
+	It("UT-NP-555-API-001 [AC-3, AC-6; SOC2 CC6.1, CC6.6; ASVS V4.1, V4.2] publishes only the portable NetworkPolicy contract", func() {
+		crd := loadKubernautCRD()
+		networkPolicies := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["networkPolicies"]
+		Expect(networkPolicies.Properties).To(HaveKey("scrapeSources"))
+		Expect(networkPolicies.Properties).To(HaveKey("gateway"))
+		Expect(networkPolicies.Properties).To(HaveKey("apifrontend"))
+		Expect(networkPolicies.Properties).To(HaveKey("console"))
+		Expect(networkPolicies.Properties).To(HaveKey("datastorage"))
+		Expect(networkPolicies.Properties).To(HaveKey("kubernautAgent"))
+		for _, removed := range []string{"mode", "provider", "apiServerCIDR", "apiServerCIDRs", "apiServerPort", "monitoring", "externalWebhooks", "idp", "llm", "mcpGateway", "prometheus"} {
+			Expect(networkPolicies.Properties).NotTo(HaveKey(removed), "obsolete network policy field %s must not be published", removed)
+		}
 	})
 
 	It("UT-WE-480-API-001 publishes bounded failed WorkflowExecution retention with safe defaults", func() {
@@ -80,6 +138,42 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		Expect(workflowExecution.XValidations).To(HaveLen(1))
 		Expect(workflowExecution.XValidations[0].Rule).To(ContainSubstring("retainFailedExecutions"))
 		Expect(workflowExecution.XValidations[0].Rule).To(ContainSubstring("failedExecutionRetentionSeconds > 0"))
+	})
+
+	It("UT-483-API-001 publishes optional HTTPS Console provider logout configuration", func() {
+		crd := loadKubernautCRD()
+		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+		console := schema.Properties["spec"].Properties["console"]
+		auth := console.Properties["auth"]
+		logout := auth.Properties["providerLogoutURL"]
+
+		Expect(logout.Type).To(Equal("string"))
+		Expect(logout.Pattern).To(Equal(`^https://.+`))
+		Expect(auth.Required).NotTo(ContainElement("providerLogoutURL"))
+	})
+
+	It("UT-DS-550-API-001 publishes the semantic DataStorage contract with secure defaults", func() {
+		crd := loadKubernautCRD()
+		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+		dataStorage := schema.Properties["spec"].Properties["dataStorage"]
+		Expect(dataStorage.Properties).To(HaveKey("server"))
+		Expect(dataStorage.Properties).To(HaveKey("database"))
+		Expect(dataStorage.Properties).To(HaveKey("redis"))
+		Expect(dataStorage.Properties).To(HaveKey("audit"))
+		Expect(dataStorage.Properties).NotTo(HaveKey("retention"))
+		Expect(dataStorage.Properties).NotTo(HaveKey("signingCert"))
+		Expect(dataStorage.Properties).NotTo(HaveKey("auditHashKey"))
+
+		server := dataStorage.Properties["server"]
+		Expect(string(server.Properties["maxBodySize"].Default.Raw)).To(Equal(`"5242880"`))
+		Expect(string(server.Properties["maxConcurrentRequests"].Default.Raw)).To(Equal("100"))
+		Expect(string(server.Properties["rateLimit"].Properties["requestsPerSecond"].Default.Raw)).To(Equal("50"))
+
+		audit := dataStorage.Properties["audit"]
+		retention := audit.Properties["retention"]
+		Expect(string(retention.Properties["enabled"].Default.Raw)).To(Equal("true"))
+		Expect(string(retention.Properties["defaultDays"].Default.Raw)).To(Equal("2555"))
+		Expect(*retention.Properties["defaultDays"].Maximum).To(BeEquivalentTo(2555))
 	})
 
 	It("resolves only configured issuer sources", func() {
@@ -155,6 +249,29 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		}
 	})
 
+	It("UT-539-GW-AUTH-API-001 [IA-2, AC-3, CM-3, CM-6; ASVS v5.0.0-V8.2.1, v5.0.0-V8.3.1, v5.0.0-V16.5.2]: publishes the nested Gateway auth contract with a deployable default and no dead source fields", func() {
+		crd := loadKubernautCRD()
+		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+		gateway := schema.Properties["spec"].Properties["gateway"]
+		auth := gateway.Properties["auth"]
+
+		Expect(auth.Type).To(Equal("object"))
+		Expect(auth.Properties).To(HaveKey("enabled"))
+		enabled := auth.Properties["enabled"]
+		Expect(enabled.Type).To(Equal("boolean"))
+		Expect(enabled.Default).NotTo(BeNil())
+		Expect(string(enabled.Default.Raw)).To(Equal("false"))
+
+		Expect(auth.Properties).To(HaveKey("alertManager"))
+		alertManager := auth.Properties["alertManager"]
+		Expect(alertManager.Properties).To(HaveKey("tokenSecretName"))
+		Expect(gateway.Properties).NotTo(HaveKey("alertManagerTokenSecretName"))
+		Expect(gateway.Properties).NotTo(HaveKey("signalSources"))
+		Expect(gateway.Properties).NotTo(HaveKey("kubernetesEvents"))
+		Expect(auth.Properties).NotTo(HaveKey("signalSources"))
+		Expect(auth.Properties).NotTo(HaveKey("kubernetesEvents"))
+	})
+
 	It("retains OAuth2 enabled only for the separate LLM profile API", func() {
 		profile := LLMProfileSpec{
 			Provider:              "openai",
@@ -179,6 +296,23 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 			Expect(string(manifest)).NotTo(ContainSubstring("spec.fleet.oauth2.enabled"))
 		}
 	})
+
+	It("UT-MON-563-API-001 [AC-6, CM-3, CM-6, SI-10; SOC2 CC6.1, CC8.1; ASVS V16.1.1, V16.2.1, V16.5.2]: publishes Secret-only monitoring trust", func() {
+		crd := loadKubernautCRD()
+		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+		monitoring := schema.Properties["spec"].Properties["monitoring"]
+		tls := monitoring.Properties["tls"]
+
+		Expect(tls.Properties).To(HaveKey("caCertSecretRef"))
+		for _, removed := range []string{"source", "caCertConfigMapRef"} {
+			Expect(tls.Properties).NotTo(HaveKey(removed), "removed monitoring TLS field %s must not be published", removed)
+		}
+		secretRef := tls.Properties["caCertSecretRef"]
+		Expect(secretRef.Properties).To(HaveKey("name"))
+		Expect(secretRef.Properties).To(HaveKey("key"))
+		Expect(string(secretRef.Properties["key"].Default.Raw)).To(Equal(`"ca.crt"`))
+	})
+
 })
 
 func loadKubernautCRD() *apiextensionsv1.CustomResourceDefinition {
@@ -189,4 +323,13 @@ func loadKubernautCRD() *apiextensionsv1.CustomResourceDefinition {
 	crd := &apiextensionsv1.CustomResourceDefinition{}
 	Expect(sigsyaml.Unmarshal(manifest, crd)).To(Succeed())
 	return crd
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

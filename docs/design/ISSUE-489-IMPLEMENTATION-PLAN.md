@@ -540,8 +540,14 @@ proves the installation journey.
 |---|---|---|
 | Unit/render | Ginkgo or a pinned maintained Helm render harness; schema, object identity, values rejection, no-application-resource assertions, certificate-profile and RBAC shape tests. | `BA-489-OWNERSHIP-01`, `BA-489-VALUES-01`, `BA-489-TLS-01`, `BA-489-RBAC-01` |
 | Integration | envtest/controller tests for singleton admission shape, manager configuration seams, CRD compatibility diagnostics, certificate readiness/failure, and user-CR sequencing. | `BA-489-SINGLETON-01`, `BA-489-CRD-01`, `BA-489-TLS-02`, `BA-489-READINESS-01` |
-| E2E | Dedicated Kind Helm install with pinned Helm v4.3.0; development, administrator-managed, cert-manager, metrics, pull-secret, disconnected bootstrap, conflict, CRD schema upgrade/rollback, failed manager rollout recovery, uninstall retention, and reinstall journeys. Hosted OpenShift separately verifies service-CA, restricted SCC startup, singleton admission, upgrade, uninstall, and reinstall. | `BA-489-INSTALL-01`, `BA-489-UPGRADE-01`, `BA-489-UNINSTALL-01`, `BA-489-DISCONNECTED-01`, `BA-489-TLS-03`, `BA-489-OCP-01` |
+| E2E | Dedicated Kind Helm install with pinned Helm v4.3.0; development, administrator-managed, cert-manager, metrics, pull-secret, disconnected bootstrap, conflict, CRD schema upgrade/rollback, failed manager rollout recovery, uninstall retention, and reinstall journeys. OpenShift verification is an external, manually owned release-qualification procedure; no repository-hosted harness or CI lane is claimed. | `BA-489-INSTALL-01`, `BA-489-UPGRADE-01`, `BA-489-UNINSTALL-01`, `BA-489-DISCONNECTED-01`, `BA-489-TLS-03`, `BA-489-OCP-01` |
 | CI/wiring | Helm version pin, generated-artifact diff, `make test`, `make lint`, `make test-pyramid`, release-gated Helm Kind E2E, SBOM/vulnerability checks, and a production caller for every new helper. | `BA-489-CI-01`, `BA-489-AUDIT-01` |
+
+`BA-489-OCP-01` is an external release-qualification gate owned by the release
+operator and cluster owner. A retained result must include the exact source
+revision, immutable image digest, cluster/platform version, test namespace,
+observed assertions, and cleanup receipt. The repository does not provide or
+claim an automated hosted OpenShift harness for this gate.
 
 No pending `XIt`, `PIt`, or skipped business test is acceptable. No E2E test may
 call a resource helper directly in place of installing the rendered chart.
@@ -680,8 +686,9 @@ Implementation evidence includes the chart render suite, source-sync checks,
 `make test`, `make lint`, workflow sequencing guards, a release-gated generic
 operator Kind contract, Helm-backed generic/CNI Kind lanes, and the dedicated
 Helm lifecycle suite. Local Helm-backed bootstrap/runtime journeys passed. The
-hosted Cilium, Calico, SBOM, release, PR-preview, and OpenShift lanes remain
-required qualification. No production controller code or OLM/Kustomize
+hosted Cilium, Calico, SBOM, release, PR-preview, and external OpenShift
+qualification remain separate release gates; no repository-owned OpenShift
+harness is part of this plan. No production controller code or OLM/Kustomize
 packaging was changed.
 
 The default `1.6.0-rc20` manager tag remains a pre-release source-tree

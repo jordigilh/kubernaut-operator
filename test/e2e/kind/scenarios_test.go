@@ -19,28 +19,30 @@ package kind
 import (
 	"context"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
 	. "github.com/onsi/gomega"    //nolint:revive,staticcheck
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
-var _ = Describe("Kind operator journey and native provider contract", Ordered, func() {
+var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Ordered, func() {
 	var ctx context.Context
-	var provisioned, namespaces []ownershipWitness
+	var provisioned, applicationFixtures, namespaces []ownershipWitness
 
 	BeforeAll(func() {
 		ctx = context.Background()
 		Expect(ensureProbeWorkloads(ctx)).To(Succeed())
-		if configuredProvider != providerGeneric {
-			Expect(ensureMonitoringWorkloads(ctx)).To(Succeed())
-		}
 		var err error
 		provisioned, err = captureProvisioningWitnesses(ctx)
 		Expect(err).NotTo(HaveOccurred())
+		applicationFixtures, err = captureApplicationFixtureWitnesses(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(assertApplicationFixtureOwnership(ctx, applicationFixtures)).To(Succeed())
 	})
 
 	AfterEach(func() {
@@ -75,8 +77,10 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 		By("uninstalling the failed CR without destroying the conflicting resources")
 		Expect(deleteKubernautCR(ctx)).To(Succeed())
 		Expect(assertOwnershipWitnesses(ctx, witnesses)).To(Succeed())
+		Expect(assertApplicationFixtureOwnership(ctx, applicationFixtures)).To(Succeed())
 		Expect(assertProvisioningWitnesses(ctx, provisioned)).To(Succeed())
-		_, err = kubectl(ctx, "delete", "secret", "datastorage-db-secret", "-n", kubernautNamespace)
+		Expect(assertProvisioningWitnesses(ctx, applicationFixtures)).To(Succeed())
+		_, err = kubectl(ctx, "delete", "configmap", "kubernaut-migrations", "-n", kubernautNamespace)
 		Expect(err).NotTo(HaveOccurred())
 		witnesses = witnesses[1:]
 		if configuredTLS == tlsManualAdmin {
@@ -113,6 +117,8 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 		Expect(assertOwnershipWitnesses(ctx, witnesses)).To(Succeed())
 		Expect(assertRetainedNamespaces(ctx, namespaces)).To(Succeed())
 		Expect(assertProvisioningWitnesses(ctx, provisioned)).To(Succeed())
+		Expect(assertProvisioningWitnesses(ctx, applicationFixtures)).To(Succeed())
+		Expect(assertApplicationFixtureOwnership(ctx, applicationFixtures)).To(Succeed())
 		Eventually(func(g Gomega) {
 			output, getErr := kubectl(ctx, "get", "deployment", "workflowexecution-controller", "-n", kubernautNamespace,
 				"--ignore-not-found", "-o", "name")
@@ -141,15 +147,17 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 		Expect(assertOwnershipWitnesses(ctx, witnesses)).To(Succeed())
 		Expect(assertRetainedNamespaces(ctx, namespaces)).To(Succeed())
 		Expect(assertProvisioningWitnesses(ctx, provisioned)).To(Succeed())
+		Expect(assertProvisioningWitnesses(ctx, applicationFixtures)).To(Succeed())
+		Expect(assertApplicationFixtureOwnership(ctx, applicationFixtures)).To(Succeed())
 	})
 
 	It(
-		"E2E-MON-424-001 / E2E-TLS-GAP-001 / E2E-TLS-DEV-001 / E2E-TLS-CERTMANAGER-001 / E2E-TLS-HOOK-001 / "+
+		"E2E-MON-424-001 / E2E-TLS-GAP-001 / E2E-TLS-CERTMANAGER-001 / "+
 			"E2E-AUDIT-209-001 / "+
 			"E2E-TLS-MANUAL-001 / E2E-TLS-ADMIN-001 / E2E-TLS-CLEANUP-001 [SC-8, SC-13, SC-17, SI-4; "+
 			"SOC2 CC6, CC7, A1; ASVS v5.0.0-V12.1.3, v5.0.0-V13.2.1, v5.0.0-V16.5.2] drives the CR through "+
 			"validation, migration, deployment, "+
-			"TLS source, and provider status",
+			"TLS source, and NetworkPolicy status",
 		func() {
 			By("waiting for the real operator to validate the CR")
 			Eventually(func(g Gomega) {
@@ -164,7 +172,7 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 				g.Expect(kubernautCondition(ctx, "MigrationComplete")).To(Equal(conditionTrue))
 			}).Should(Succeed())
 
-			By("waiting for service manifests and native policy reconciliation")
+			By("waiting for service manifests and standard NetworkPolicy reconciliation")
 			Eventually(func(g Gomega) {
 				g.Expect(kubernautCondition(ctx, "ServicesDeployed")).To(Equal(conditionTrue))
 			}).Should(Succeed())
@@ -202,21 +210,8 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			caKey, err := tlsProbeCAKey()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(verifyTLSWorkloadTrust(ctx, caKey)).To(Succeed())
-			if configuredProvider != providerGeneric {
-				By("qualifying Secret, ConfigMap, and system monitoring trust sources")
-				Expect(exerciseMonitoringTLSSources(ctx)).To(Succeed())
-			}
 
 			switch configuredTLS {
-			case tlsHook:
-				By("proving hook-mode material is operator-owned")
-				for _, name := range hookTLSSecretNames() {
-					Eventually(func(g Gomega) {
-						owner, ownerErr := secretOwnerKind(ctx, name)
-						g.Expect(ownerErr).NotTo(HaveOccurred(), name)
-						g.Expect(owner).To(Equal("Kubernaut"), name)
-					}).Should(Succeed())
-				}
 			case tlsManualAdmin:
 				By("proving manual TLS material is administrator-owned and unchanged")
 				Expect(assertManualTLSFixtureUnchanged(ctx, activeManualTLSSelection)).To(Succeed())
@@ -245,27 +240,13 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 				}).Should(Succeed())
 			}
 
-			if configuredProvider == providerGeneric {
-				Eventually(func(g Gomega) {
-					g.Expect(kubernautCondition(ctx, "ProviderDetected")).To(Equal("False"))
-				}).Should(Succeed())
-				Eventually(func(g Gomega) {
-					g.Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal(conditionTrue))
-				}).Should(Succeed())
-				Expect(noManagedPolicies(ctx)).To(Succeed())
-				return
-			}
-
 			Eventually(func(g Gomega) {
-				g.Expect(kubernautCondition(ctx, "ProviderDetected")).To(Equal(conditionTrue))
-			}).Should(Succeed())
-			Eventually(func(g Gomega) {
-				g.Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal(conditionTrue))
+				g.Expect(kubernautCondition(ctx, "NetworkPolicyReady")).To(Equal(conditionTrue))
 			}).Should(Succeed())
 			Eventually(func(g Gomega) {
 				g.Expect(managedNativePolicyExists(ctx)).To(Succeed())
 			}).Should(Succeed())
-			Expect(ensureNoRawNetworkPolicy(ctx)).To(Succeed())
+			Expect(ensureManagedPoliciesHaveNoEgress(ctx)).To(Succeed())
 		})
 
 	It(
@@ -273,29 +254,24 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			"ASVS v5.0.0-V2.2.1, v5.0.0-V14.2.4, v5.0.0-V16.5.2] reconciles the live KA evidence handoff "+
 			"default and explicit override",
 		func() {
-			By("verifying the operator-generated live KA ConfigMap and read-only ConfigMap mount")
-			Eventually(func(g Gomega) {
-				config, err := kubectl(ctx, "get", "configmap", "kubernaut-agent-config", "-n", kubernautNamespace,
-					"-o", "jsonpath={.data.config\\.yaml}")
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(config).To(ContainSubstring("maxEvidenceHandoffBytes: 262144"))
-				deployment, deploymentErr := kubectl(ctx, "get", "deployment", "kubernaut-agent", "-n", kubernautNamespace,
-					"-o", "yaml")
-				g.Expect(deploymentErr).NotTo(HaveOccurred())
-				g.Expect(deployment).To(ContainSubstring("name: kubernaut-agent-config"))
-				g.Expect(deployment).To(ContainSubstring("readOnly: true"))
-			}).Should(Succeed())
+			assertLiveKAConfigOverride(ctx,
+				"maxEvidenceHandoffBytes: 262144",
+				`{"spec":{"kubernautAgent":{"workflowDiscovery":{"maxEvidenceHandoffBytes":131072}}}}`,
+				"maxEvidenceHandoffBytes: 131072",
+			)
+		},
+	)
 
-			By("patching the live CR with an explicit workflow-discovery budget")
-			patchOutput, patchErr := kubectl(ctx, "patch", "kubernaut", "kubernaut", "-n", kubernautNamespace,
-				"--type=merge", "-p", `{"spec":{"kubernautAgent":{"workflowDiscovery":{"maxEvidenceHandoffBytes":131072}}}}`)
-			Expect(patchErr).NotTo(HaveOccurred(), patchOutput)
-			Eventually(func(g Gomega) {
-				config, err := kubectl(ctx, "get", "configmap", "kubernaut-agent-config", "-n", kubernautNamespace,
-					"-o", "jsonpath={.data.config\\.yaml}")
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(config).To(ContainSubstring("maxEvidenceHandoffBytes: 131072"))
-			}).Should(Succeed())
+	It(
+		"E2E-KA-567-001 [CM-2, CM-3, CM-6, SA-11, SI-4; SOC2 CC7.2, CC8.1; "+
+			"ASVS v5.0.0-V2.2.1, v5.0.0-V14.2.4, v5.0.0-V16.5.2] reconciles the live KA investigation "+
+			"concurrency default and explicit override",
+		func() {
+			assertLiveKAConfigOverride(ctx,
+				"maxConcurrentInvestigations: 50",
+				`{"spec":{"kubernautAgent":{"session":{"maxConcurrentInvestigations":75}}}}`,
+				"maxConcurrentInvestigations: 75",
+			)
 		},
 	)
 
@@ -332,104 +308,19 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 		},
 	)
 
-	It(
-		"E2E-TLS-HOOK-002 [SC-8, SC-12, SC-13, SI-4; SOC2 CC7, A1; "+
-			"ASVS v5.0.0-V11.1.1, v5.0.0-V11.1.2, v5.0.0-V12.1.1, "+
-			"v5.0.0-V16.5.2] rotates a hook leaf without losing trust",
-		func() {
-			if configuredTLS != tlsHook {
-				return
-			}
-
-			for _, name := range []string{"gateway-tls", "datastorage-tls"} {
-				before, err := secretTLSCertificate(ctx, name)
-				Expect(err).NotTo(HaveOccurred())
-				By("deleting operator-owned hook leaf " + name + " to request reissuance")
-				Expect(deleteTLSSecret(ctx, name)).To(Succeed())
-				Eventually(func(g Gomega) {
-					current, getErr := secretTLSCertificate(ctx, name)
-					g.Expect(getErr).NotTo(HaveOccurred())
-					g.Expect(current).NotTo(Equal(before))
-					owner, ownerErr := secretOwnerKind(ctx, name)
-					g.Expect(ownerErr).NotTo(HaveOccurred())
-					g.Expect(owner).To(Equal("Kubernaut"))
-					g.Expect(kubernautCondition(ctx, "TLSReady")).To(Equal(conditionTrue))
-				}).Should(Succeed())
-			}
-			caKey, caErr := tlsProbeCAKey()
-			Expect(caErr).NotTo(HaveOccurred())
-			Expect(verifyTLSWorkloadTrust(ctx, caKey)).To(Succeed())
-		},
-	)
-
-	It("proves provider enforcement through the reconciled policy", func() {
-		if configuredProvider == providerGeneric {
-			Eventually(func(g Gomega) {
-				allowed, err := probeHTTP(ctx, "probe-target")
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(allowed).To(BeTrue(), "generic Kubernetes must preserve ordinary pod connectivity")
-			}).Should(Succeed())
-			Eventually(func(g Gomega) {
-				allowed, err := probeHTTPFromRole(ctx, "probe-target", probeUnmanagedClientRole)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(allowed).To(BeTrue(), "generic Kubernetes must not receive an implicit raw policy")
-			}).Should(Succeed())
-			return
-		}
-
-		Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal(conditionTrue))
-		Expect(ensureNoRawNetworkPolicy(ctx)).To(Succeed())
-
-		Eventually(func(g Gomega) {
-			allowed, err := probeHTTP(ctx, "probe-target")
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(allowed).To(BeTrue(), "a provider-managed endpoint must accept traffic from a managed endpoint")
-		}).Should(Succeed())
-		Eventually(func(g Gomega) {
-			allowed, err := probeHTTPFromRole(ctx, "probe-target", probeUnmanagedClientRole)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(allowed).To(BeFalse(), "the reconciled provider policy must deny an unmanaged source")
-		}).Should(Succeed())
+	It("proves the standard policy is applied without claiming dataplane enforcement", func() {
+		Expect(kubernautCondition(ctx, "NetworkPolicyReady")).To(Equal(conditionTrue))
+		Expect(managedNativePolicyExists(ctx)).To(Succeed())
+		Expect(ensureManagedPoliciesHaveNoEgress(ctx)).To(Succeed())
+		By("proving the Kubernetes API client remains usable")
+		_, err := kubectl(ctx, "get", "kubernaut", "kubernaut", "-n", kubernautNamespace, "-o", "name")
+		Expect(err).NotTo(HaveOccurred())
 	})
 
-	It("E2E-POLICY-MONITORING-001 [AC-4, SC-7, SC-8, SI-4; SOC2 CC6.1, CC7.2; "+
-		"ASVS V4.1, V5.1] preserves Agent get_metric_names and get_alerts while denying unrelated monitoring egress", func() {
-		if configuredProvider == providerGeneric {
-			return
-		}
-
-		Expect(kubernautCondition(ctx, "ProviderPolicyReady")).To(Equal(conditionTrue))
-		Expect(agentMonitoringConfigContains(ctx, monitoringPrometheusURL())).To(Succeed())
-		Expect(agentMonitoringConfigContains(ctx, monitoringAlertManagerURL())).To(Succeed())
-
-		By("calling the Prometheus API path used by get_metric_names from the kubernaut-agent workload")
-		Eventually(func(g Gomega) {
-			body, err := agentMonitoringGET(
-				ctx, monitoringPrometheusServiceName, monitoringPrometheusServicePort,
-				"/api/v1/label/__name__/values",
-			)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(body).To(ContainSubstring("kubernaut_e2e_metric"))
-		}).Should(Succeed())
-
-		By("calling the Alertmanager API path used by get_alerts from the kubernaut-agent workload")
-		Eventually(func(g Gomega) {
-			body, err := agentMonitoringGET(
-				ctx, monitoringAlertManagerServiceName, monitoringAlertManagerServicePort,
-				"/api/v2/alerts",
-			)
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(body).To(Equal("[]"))
-		}).Should(Succeed())
-
-		By("proving the native monitoring allowlist does not widen to another Service")
-		Eventually(func(g Gomega) {
-			_, err := agentMonitoringGET(
-				ctx, monitoringBlockedServiceName, monitoringBlockedServicePort,
-				"/api/v1/label/__name__/values",
-			)
-			g.Expect(err).To(HaveOccurred())
-		}).Should(Succeed())
+	It("E2E-POLICY-PORTABLE-001 [AC-3, SC-7, SI-4; SOC2 CC6.1, CC7.2; "+
+		"ASVS V4.1, V4.2] does not generate egress restrictions", func() {
+		Expect(kubernautCondition(ctx, "NetworkPolicyReady")).To(Equal(conditionTrue))
+		Expect(ensureManagedPoliciesHaveNoEgress(ctx)).To(Succeed())
 	})
 
 	It("E2E-TLS-CERTMANAGER-002 [SC-8, SC-12, SC-13, SI-4; SOC2 CC7, A1; "+
@@ -459,11 +350,152 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 		}).Should(Succeed())
 	})
 
-	It("preserves a user-owned provider policy while cleaning up the CR journey", func() {
-		if configuredProvider != providerGeneric {
-			Expect(applyUnmanagedNativePolicy(ctx)).To(Succeed())
-			Expect(unmanagedNativePolicyExists(ctx)).To(Succeed())
-		}
+	It(
+		"E2E-587-BYO-001 [AC-3, AC-6, CM-3, CM-6, SI-4; SOC2 CC6.1, CC6.6, CC7.2, CC8.1; "+
+			"ASVS v5.0.0-V8.3.1, V13.3.1, V14.2.4, V16.5.2] leaves BYO dependencies and DataStorage unchanged "+
+			"after a Gateway-only patch",
+		func() {
+			beforeDataStorage, err := issue587DataStorageSnapshot(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			beforeConfigMap, err := issue587ObjectMetadata(ctx, "configmap", "datastorage-config")
+			Expect(err).NotTo(HaveOccurred())
+			beforeReplicaSets, err := issue587ReplicaSetSnapshot(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			beforeDependencies, err := issue587DependencySnapshot(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			secretOutput, secretErr := kubectl(ctx, "get", "secret", "datastorage-db-secret", "-n", kubernautNamespace,
+				"--ignore-not-found", "-o", "name")
+			Expect(secretErr).NotTo(HaveOccurred(), secretOutput)
+			Expect(strings.TrimSpace(secretOutput)).To(BeEmpty())
+
+			patchOutput, patchErr := kubectl(ctx, "patch", "kubernaut", "kubernaut", "-n", kubernautNamespace,
+				"--type=merge", "-p", `{"spec":{"gateway":{"enabled":true}}}`)
+			Expect(patchErr).NotTo(HaveOccurred(), patchOutput)
+			Eventually(func(g Gomega) {
+				condition, conditionErr := kubernautCondition(ctx, "ServicesDeployed")
+				g.Expect(conditionErr).NotTo(HaveOccurred())
+				g.Expect(condition).To(Equal(conditionTrue))
+				_, waitErr := kubectl(ctx, "wait", "--for=condition=available", "deployment/gateway", "-n",
+					kubernautNamespace, "--timeout=10s")
+				g.Expect(waitErr).NotTo(HaveOccurred())
+			}).Should(Succeed())
+
+			afterDataStorage, err := issue587DataStorageSnapshot(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			afterConfigMap, err := issue587ObjectMetadata(ctx, "configmap", "datastorage-config")
+			Expect(err).NotTo(HaveOccurred())
+			afterReplicaSets, err := issue587ReplicaSetSnapshot(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			afterDependencies, err := issue587DependencySnapshot(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(afterDataStorage).To(Equal(beforeDataStorage))
+			Expect(afterConfigMap).To(Equal(beforeConfigMap))
+			Expect(afterReplicaSets).To(Equal(beforeReplicaSets))
+			Expect(afterDependencies).To(Equal(beforeDependencies))
+			secretOutput, secretErr = kubectl(ctx, "get", "secret", "datastorage-db-secret", "-n", kubernautNamespace,
+				"--ignore-not-found", "-o", "name")
+			Expect(secretErr).NotTo(HaveOccurred(), secretOutput)
+			Expect(strings.TrimSpace(secretOutput)).To(BeEmpty())
+		},
+	)
+
+	It(
+		"E2E-587-BYO-002 [IA-5, SI-10, SI-4; SOC2 CC7.2; ASVS v5.0.0-V2.2.1, V13.3.2, "+
+			"V16.2.1, V16.5.2] retains a failed migration and preserves BYO PostgreSQL resources",
+		func() {
+			beforePostgreSQL, err := issue587ObjectMetadata(ctx, "deployment", "postgresql")
+			Expect(err).NotTo(HaveOccurred())
+			beforeDependencies, err := issue587DependencySnapshot(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			mismatch := &corev1.Secret{
+				TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+				ObjectMeta: metav1.ObjectMeta{Name: "postgresql-mismatch", Namespace: kubernautNamespace},
+				StringData: map[string]string{
+					"POSTGRES_USER":     "mismatched-user",
+					"POSTGRES_PASSWORD": "mismatched-password",
+					"POSTGRES_DB":       "action_history",
+					"db-secrets.yaml":   "username: mismatched-user\npassword: mismatched-password\n",
+				},
+			}
+			Expect(applyYAML(ctx, mismatch)).To(Succeed())
+			DeferCleanup(func() {
+				cleanupOutput, cleanupErr := kubectl(ctx, "delete", "secret", mismatch.Name, "-n", kubernautNamespace,
+					"--ignore-not-found")
+				Expect(cleanupErr).NotTo(HaveOccurred(), "deleting Secret %s/%s: %s",
+					kubernautNamespace, mismatch.Name, cleanupOutput)
+			})
+
+			patchOutput, patchErr := kubectl(ctx, "patch", "kubernaut", "kubernaut", "-n", kubernautNamespace,
+				"--type=merge", "-p", `{"spec":{"postgresql":{"secretName":"postgresql-mismatch"}}}`)
+			Expect(patchErr).NotTo(HaveOccurred(), patchOutput)
+			_, deleteErr := kubectl(ctx, "delete", "job", "kubernaut-db-migration", "-n", kubernautNamespace,
+				"--ignore-not-found", "--wait=true")
+			Expect(deleteErr).NotTo(HaveOccurred())
+			Eventually(func(g Gomega) {
+				_, getErr := kubectl(ctx, "get", "job", "kubernaut-db-migration", "-n", kubernautNamespace)
+				g.Expect(getErr).NotTo(HaveOccurred())
+			}).Should(Succeed())
+			jobSecretName, jobSecretErr := kubectl(ctx, "get", "job", "kubernaut-db-migration", "-n", kubernautNamespace,
+				"-o", "jsonpath={.spec.template.spec.containers[0].envFrom[0].secretRef.name}")
+			Expect(jobSecretErr).NotTo(HaveOccurred(), jobSecretName)
+			Expect(jobSecretName).To(Equal(mismatch.Name))
+			jobCredentialRevision, revisionErr := kubectl(ctx, "get", "job", "kubernaut-db-migration", "-n", kubernautNamespace,
+				"-o", `jsonpath={.metadata.annotations.kubernaut\.ai/postgresql-credential-revision}`)
+			Expect(revisionErr).NotTo(HaveOccurred(), jobCredentialRevision)
+			Expect(strings.TrimSpace(jobCredentialRevision)).NotTo(BeEmpty())
+			failureMessage := "contract fixture simulated PostgreSQL authentication failure"
+			failureStatus := `{"status":{"active":0,"ready":0,"failed":3,"conditions":[` +
+				`{"type":"FailureTarget","status":"True","reason":"BackoffLimitExceeded","message":"` + failureMessage + `"},` +
+				`{"type":"Failed","status":"True","reason":"BackoffLimitExceeded","message":"` + failureMessage + `"}]}}`
+			failureOutput, failureErr := kubectl(ctx, "patch", "job", "kubernaut-db-migration", "-n", kubernautNamespace,
+				"--subresource=status", "--type=merge", "-p", failureStatus)
+			Expect(failureErr).NotTo(HaveOccurred(), failureOutput)
+			Eventually(func(g Gomega) {
+				phase, phaseErr := kubernautPhase(ctx)
+				g.Expect(phaseErr).NotTo(HaveOccurred())
+				g.Expect(phase).To(Equal(string(kubernautv1alpha2.PhaseError)))
+				condition, conditionErr := kubernautCondition(ctx, "MigrationComplete")
+				g.Expect(conditionErr).NotTo(HaveOccurred())
+				g.Expect(condition).To(Equal("False"))
+			}).Should(Succeed())
+
+			failedJobUID, uidErr := kubectl(ctx, "get", "job", "kubernaut-db-migration", "-n", kubernautNamespace,
+				"-o", "jsonpath={.metadata.uid}")
+			Expect(uidErr).NotTo(HaveOccurred(), failedJobUID)
+			failedJobUID = strings.TrimSpace(failedJobUID)
+			Expect(failedJobUID).NotTo(BeEmpty())
+			Consistently(func() string {
+				uid, getErr := kubectl(ctx, "get", "job", "kubernaut-db-migration", "-n", kubernautNamespace,
+					"-o", "jsonpath={.metadata.uid}")
+				if getErr != nil {
+					return getErr.Error()
+				}
+				return strings.TrimSpace(uid)
+			}, 40*time.Second, 2*time.Second).Should(Equal(failedJobUID))
+			afterPostgreSQL, postgreSQLErr := issue587ObjectMetadata(ctx, "deployment", "postgresql")
+			Expect(postgreSQLErr).NotTo(HaveOccurred(), "capturing PostgreSQL metadata after failed migration")
+			Expect(afterPostgreSQL).To(Equal(beforePostgreSQL))
+			afterDependencies, dependencyErr := issue587DependencySnapshot(ctx)
+			Expect(dependencyErr).NotTo(HaveOccurred(), "capturing BYO dependency metadata after failed migration")
+			Expect(afterDependencies).To(Equal(beforeDependencies))
+
+			patchOutput, patchErr = kubectl(ctx, "patch", "kubernaut", "kubernaut", "-n", kubernautNamespace,
+				"--type=merge", "-p", `{"spec":{"postgresql":{"secretName":"postgresql-secret"}}}`)
+			Expect(patchErr).NotTo(HaveOccurred(), patchOutput)
+			Eventually(func(g Gomega) {
+				currentJobUID, getErr := kubectl(ctx, "get", "job", "kubernaut-db-migration", "-n", kubernautNamespace,
+					"-o", "jsonpath={.metadata.uid}")
+				g.Expect(getErr).NotTo(HaveOccurred())
+				g.Expect(strings.TrimSpace(currentJobUID)).NotTo(BeEmpty())
+				g.Expect(strings.TrimSpace(currentJobUID)).NotTo(Equal(strings.TrimSpace(failedJobUID)))
+			}).Should(Succeed())
+			Expect(waitForContractReady(ctx)).To(Succeed())
+		},
+	)
+
+	It("preserves a user-owned NetworkPolicy while cleaning up the CR journey", func() {
+		Expect(applyUnmanagedNativePolicy(ctx)).To(Succeed())
+		Expect(unmanagedNativePolicyExists(ctx)).To(Succeed())
 
 		By("deleting the Kubernaut CR through its finalizer path")
 		Expect(deleteKubernautCR(ctx)).To(Succeed())
@@ -471,27 +503,90 @@ var _ = Describe("Kind operator journey and native provider contract", Ordered, 
 			g.Expect(assertRetainedNamespaces(ctx, namespaces)).To(Succeed())
 			g.Expect(assertProvisioningWitnesses(ctx, provisioned)).To(Succeed())
 			g.Expect(noManagedPolicies(ctx)).To(Succeed())
-			g.Expect(ensureNoRawNetworkPolicy(ctx)).To(Succeed())
-			if configuredProvider != providerGeneric {
-				g.Expect(unmanagedNativePolicyExists(ctx)).To(Succeed())
-			}
+			g.Expect(unmanagedNativePolicyExists(ctx)).To(Succeed())
 			if configuredTLS == tlsManualAdmin {
 				g.Expect(assertManualTLSFixtureUnchanged(ctx, activeManualTLSSelection)).To(Succeed())
-			}
-			if configuredTLS == tlsHook {
-				for _, name := range hookTLSSecretNames() {
-					present, secretErr := secretPresent(ctx, name)
-					g.Expect(secretErr).NotTo(HaveOccurred(), name)
-					g.Expect(present).To(BeFalse(), name)
-				}
 			}
 		}).Should(Succeed())
 	})
 
 	AfterAll(func() {
 		Expect(deleteProbeWorkloads(context.Background())).To(Succeed())
-		if configuredProvider != providerGeneric {
-			Expect(deleteMonitoringWorkloads(context.Background())).To(Succeed())
-		}
 	})
 })
+
+// issue587ObjectMetadata snapshots stable ownership metadata for a named
+// resource without reading Secret data.
+func issue587ObjectMetadata(ctx context.Context, resource, name string) (string, error) {
+	return kubectl(ctx, "get", resource, name, "-n", kubernautNamespace, "-o",
+		`jsonpath={.metadata.uid}|{.metadata.ownerReferences}|{.metadata.labels}`)
+}
+
+// issue587DataStorageSnapshot captures the DataStorage Deployment identity and
+// direct PostgreSQL Secret projection used by the no-roll journey.
+func issue587DataStorageSnapshot(ctx context.Context) (string, error) {
+	return kubectl(ctx, "get", "deployment", "data-storage", "-n", kubernautNamespace, "-o",
+		`jsonpath={.metadata.uid}|`+
+			`{.spec.template.metadata.annotations.kubernaut\.ai/configmap-hash}|`+
+			`{.spec.template.spec.volumes[1].projected.sources[0].secret.name}`)
+}
+
+// issue587ReplicaSetSnapshot captures all DataStorage ReplicaSets for rollout
+// comparison across a Gateway-only reconciliation.
+func issue587ReplicaSetSnapshot(ctx context.Context) (string, error) {
+	return kubectl(ctx, "get", "replicasets", "-n", kubernautNamespace, "-l", "app=data-storage",
+		"--sort-by=.metadata.creationTimestamp", "-o",
+		"custom-columns=NAME:.metadata.name,UID:.metadata.uid,REPLICAS:.spec.replicas", "--no-headers")
+}
+
+// issue587DependencySnapshot captures stable metadata for the BYO dependency
+// workloads, Services, and credential Secrets.
+func issue587DependencySnapshot(ctx context.Context) (string, error) {
+	dependencies := []struct {
+		kind string
+		name string
+	}{
+		{kind: "deployment", name: "postgresql"},
+		{kind: "deployment", name: "valkey"},
+		{kind: "service", name: "postgresql"},
+		{kind: "service", name: "valkey"},
+		{kind: "secret", name: "postgresql-secret"},
+		{kind: "secret", name: "valkey-secret"},
+	}
+	snapshots := make([]string, 0, len(dependencies))
+	for _, dependency := range dependencies {
+		snapshot, err := issue587ObjectMetadata(ctx, dependency.kind, dependency.name)
+		if err != nil {
+			return "", err
+		}
+		snapshots = append(snapshots, dependency.kind+"/"+dependency.name+"="+snapshot)
+	}
+	return strings.Join(snapshots, ";"), nil
+}
+
+// assertLiveKAConfigOverride verifies a live default and an explicit CR override.
+func assertLiveKAConfigOverride(ctx context.Context, defaultFragment, patchJSON, overrideFragment string) {
+	By("verifying the operator-generated live KA ConfigMap and read-only ConfigMap mount")
+	Eventually(func(g Gomega) {
+		config, err := kubectl(ctx, "get", "configmap", "kubernaut-agent-config", "-n", kubernautNamespace,
+			"-o", "jsonpath={.data.config\\.yaml}")
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(config).To(ContainSubstring(defaultFragment))
+		deployment, deploymentErr := kubectl(ctx, "get", "deployment", "kubernaut-agent", "-n", kubernautNamespace,
+			"-o", "yaml")
+		g.Expect(deploymentErr).NotTo(HaveOccurred())
+		g.Expect(deployment).To(ContainSubstring("name: kubernaut-agent-config"))
+		g.Expect(deployment).To(ContainSubstring("readOnly: true"))
+	}).Should(Succeed())
+
+	By("patching the live CR with an explicit configuration override")
+	patchOutput, patchErr := kubectl(ctx, "patch", "kubernaut", "kubernaut", "-n", kubernautNamespace,
+		"--type=merge", "-p", patchJSON)
+	Expect(patchErr).NotTo(HaveOccurred(), patchOutput)
+	Eventually(func(g Gomega) {
+		config, err := kubectl(ctx, "get", "configmap", "kubernaut-agent-config", "-n", kubernautNamespace,
+			"-o", "jsonpath={.data.config\\.yaml}")
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(config).To(ContainSubstring(overrideFragment))
+	}).Should(Succeed())
+}

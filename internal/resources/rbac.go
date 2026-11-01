@@ -1464,10 +1464,15 @@ func gatewaySignalSourceClusterRole(kn *kubernautv1alpha2.Kubernaut, labels map[
 	}
 }
 
+// apifrontendClusterRole builds the API Frontend permissions, including the
+// InvestigationSession patch operations required by the interactive lifecycle.
 func apifrontendClusterRole(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	rules := []rbacv1.PolicyRule{
-		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch", "create", "update", "delete"}},
-		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update"}},
+		// kubernaut#566: API Frontend backfills the RemediationRequest
+		// OwnerReference with a base-resource Patch. The status subresource
+		// has its own patch grant because Kubernetes authorizes it separately.
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions/status"}, Verbs: []string{"get", "update", "patch"}},
 		// kubernaut#2172 (AwaitAgentSessionInteractive, DD-AA-KA-001
 		// Amendment Gap 1): read-only watch of KA's own ack signal.
 		// kubernaut#2214 (v1.6.0-rc4, finalizer redesign, CI RCA PR #2222

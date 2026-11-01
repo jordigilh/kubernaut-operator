@@ -22,7 +22,6 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
-	"github.com/jordigilh/kubernaut-operator/internal/policy"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
@@ -34,7 +33,7 @@ var _ = Describe("integrated ownership API boundaries", Label("unit"), func() {
 		kn := newMinimalCR()
 		kn.UID = "unit-ownership"
 		r := businessUnitReconciler(kn, interceptor.Funcs{})
-		foreign := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "datastorage-db-secret", Namespace: kn.Namespace}}
+		foreign := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "kubernaut-migrations", Namespace: kn.Namespace}}
 		Expect(r.Create(ctx, foreign)).To(Succeed())
 		_, err := r.phaseMigrate(ctx, kn)
 		Expect(err).NotTo(HaveOccurred()) // failed prerequisites use the existing condition/requeue contract
@@ -110,34 +109,28 @@ var _ = Describe("integrated ownership API boundaries", Label("unit"), func() {
 		}
 	})
 
-	It("UT-AUDIT-515-OWNERSHIP-004: rejects foreign webhook trust, service-CA repair, generated keys and native-policy writes", func() {
+	It("UT-OWN-555-001 [AC-6, IA-5; SOC2 CC6.6; ASVS V4.1] rejects foreign webhook, service, and TLS material", func() {
 		kn := newMinimalCR()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
 		r := businessUnitReconciler(kn, interceptor.Funcs{})
 		webhook := resources.MutatingWebhookConfiguration(kn)
 		webhook.Labels = nil
 		Expect(r.Create(ctx, webhook)).To(Succeed())
 		Expect(r.ensureWebhookConfiguration(ctx, kn, resources.MutatingWebhookConfiguration(kn))).To(MatchError(ContainSubstring("ownership conflict")))
+
 		service := resources.Services(kn, kn)[0]
 		service.Labels = nil
 		service.Annotations = map[string]string{resources.OCPServingCertAnnotation: "foreign-serving-key"}
 		Expect(r.Create(ctx, service)).To(Succeed())
 		Expect(r.clearStaleServingCertErrors(ctx, kn, service)).To(MatchError(ContainSubstring("ownership conflict")))
+
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
+		kn.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{InternalCASecretName: "foreign-ca"}
 		material, err := resources.ResolveTLSMaterial(kn)
 		Expect(err).NotTo(HaveOccurred())
-		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: material.InternalCASecretName, Namespace: kn.Namespace}}
-		Expect(r.Create(ctx, secret)).To(Succeed())
+		foreignSecret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: material.InternalCASecretName, Namespace: kn.Namespace}}
+		Expect(r.Create(ctx, foreignSecret)).To(Succeed())
 		_, _, err = r.ensureRuntimeTLS(ctx, kn)
-		Expect(err).To(MatchError(ContainSubstring("ownership conflict")))
-		desired := nativePolicyOwnershipFixture()
-		desired.SetNamespace(kn.Namespace)
-		foreign := desired.DeepCopy()
-		foreign.SetLabels(nil)
-		Expect(r.Create(ctx, foreign)).To(Succeed())
-		_, err = r.ensureRenderedProviderPolicies(ctx, kn, []policy.RenderedPolicy{{Object: desired, Namespaced: true}})
-		Expect(err).To(MatchError(ContainSubstring("ownership conflict")))
-		Expect(r.deleteObservedProviderPolicy(ctx, foreign)).To(Succeed(), "foreign policy is preserved, not deleted")
-		Expect(r.Get(ctx, client.ObjectKeyFromObject(foreign), foreign)).To(Succeed())
+		Expect(err).To(MatchError(ContainSubstring("missing ca.crt")))
 	})
 
 	It("UT-AUDIT-515-OWNERSHIP-005: authorizes migration metadata repair and surfaces failed writes for migration and cert-manager objects", func() {
@@ -180,8 +173,6 @@ var _ = Describe("integrated ownership API boundaries", Label("unit"), func() {
 		Expect(ownershipMetadataMatches(desired, object)).To(BeFalse())
 		r.Scheme = runtime.NewScheme()
 		Expect(r.resourceKind(ctx, object)).To(Equal("*v1.ConfigMap"))
-		_, err := r.reconcileOptionalRoute(ctx, kn, "Gateway", nil, resources.GatewayRouteStub(kn))
-		Expect(err).NotTo(HaveOccurred())
 		r.Scheme = nil
 		Expect(r.resourceKind(ctx, object)).To(Equal("*v1.ConfigMap"))
 	})

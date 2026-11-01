@@ -2,12 +2,14 @@ name: Release
 
 # Triggered by version tag push (e.g., v1.4.0, v1.5.0-rc1)
 # Builds multi-arch operator image (amd64 + arm64), creates manifest list,
-# builds and pushes the OLM bundle image, and creates a GitHub Release.
+# publishes the operator image and Helm charts, and creates a GitHub Release.
 # Pre-release tags (-rc*, -alpha*, -beta*) create a pre-release and skip :latest tagging.
 #
 # Prerequisites:
-#   - Quay.io robot account with push access to kubernaut-ai org
+#   - Quay.io production robot account with push access to kubernaut-ai org
+#   - Quay.io staging robot account with push access to kubernaut-cicd org
 #   - GitHub Actions secrets: QUAY_ROBOT_USERNAME, QUAY_ROBOT_TOKEN
+#   - GitHub Actions secrets: QUAY_CICD_ROBOT_USERNAME, QUAY_CICD_ROBOT_TOKEN
 
 on:
   push:
@@ -18,7 +20,8 @@ permissions:
 
 env:
   IMAGE_REGISTRY: quay.io/kubernaut-ai
-  IMAGE_NAME: kubernaut-operator
+  STAGING_IMAGE_REGISTRY: quay.io/kubernaut-cicd
+  IMAGE_NAME: kubernaut-operator-image
 
 jobs:
   # ========================================
@@ -55,66 +58,61 @@ jobs:
           fi
 
   # ========================================
-  # STAGE 0b: UPSTREAM COMPATIBILITY GATE
+  # STAGE 0b: MANUAL UPSTREAM COMPATIBILITY BOUNDARY
   #
-  # Upstream publishes and qualifies the full Kubernaut RC first. This job
-  # consumes only the immutable qualification evidence; it never checks out
-  # upstream source, pulls upstream application images, or invokes upstream CI.
-  # The image build jobs depend on this gate, so an unqualified operator SHA
-  # cannot publish an operator image.
+  # Full Kubernaut application compatibility qualification is an external,
+  # release-owner-controlled operation. This workflow does not fetch or require
+  # an upstream qualification asset; it publishes only after the operator-local
+  # release gates and contract E2E pass.
   # ========================================
 
-  qualification:
-    name: Verify upstream compatibility qualification
-    needs: prepare
+  # ========================================
+  # STAGE 0c: OPERATOR-LOCAL RELEASE GATES
+  #
+  # These checks prove the tagged operator itself is buildable and testable
+  # before the architecture-specific release images are built. Full application compatibility
+  # remains a manual release-owner responsibility outside this workflow.
+  # ========================================
+
+  operator-lint:
+    name: Verify operator lint
+    needs: [prepare]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
       - name: Checkout operator source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Download upstream qualification manifest
-        env:
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          set -euo pipefail
-          URL="https://github.com/jordigilh/kubernaut/releases/download/${TAG}/operator-compatibility-qualification.json"
-          echo "Downloading immutable upstream qualification evidence for ${TAG}"
-          curl --fail --location --retry 3 --silent --show-error \
-            "$URL" -o upstream-qualification.json
-          test -s upstream-qualification.json
-
-      - name: Verify qualification matches this operator tag
-        env:
-          TAG: ${{ needs.prepare.outputs.tag }}
-          OPERATOR_SHA: ${{ github.sha }}
-        run: |
-          ./hack/verify-release-qualification.sh \
-            --manifest upstream-qualification.json \
-            --operator-sha "$OPERATOR_SHA" \
-            --expected-upstream-ref "refs/tags/${TAG}"
-
-      - name: Retain qualification evidence for the operator release
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          name: upstream-qualification-${{ needs.prepare.outputs.tag }}
-          path: upstream-qualification.json
-          if-no-files-found: error
-          retention-days: 30
+          go-version-file: go.mod
+      - name: Run Go lint gate
+        run: make lint
+      - name: Shellcheck executable hack/ scripts
+        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/verify-helm-chart.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
 
-  # ========================================
-  # STAGE 0c: OPERATOR-LOCAL RELEASE GATES
-  #
-  # These checks remain deliberately independent of the upstream qualification
-  # gate. They prove the tagged operator itself is buildable and testable
-  # before the post-test contract image is built.
-  # ========================================
+  operator-unit:
+    name: Run operator unit tests
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout operator source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Run unit gate
+        run: make test-unit
 
-  operator-gates:
-    name: Verify operator release gates
-    needs: [prepare, qualification]
+  operator-integration:
+    name: Run operator integration tests
+    needs: [prepare]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -122,12 +120,27 @@ jobs:
     steps:
       - name: Checkout operator source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - name: Run integration gate
+        run: make test-integration
 
+  operator-helm:
+    name: Run operator Helm tests
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout operator source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
       - name: Install pinned Helm 4
         run: |
           set -euo pipefail
@@ -140,73 +153,57 @@ jobs:
           tar -xzf "${HELM_ARCHIVE}" -C /tmp
           sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
           helm version --short
+      - name: Run Helm chart gate
+        run: make test-helm
 
-      - name: Run Go lint gate
-        run: make lint
-
-      - name: Run unit, integration, security, and pyramid gates
-        run: make test
-
-      - name: Run hack script tests
-        run: make test-hack-scripts
-
-      - name: Verify generated manifests are clean
-        run: git diff --exit-code -- api config
-
-      - name: Shellcheck hack/ scripts
-        run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/validate-security-traceability.sh hack/test-helm-openshift.sh hack/verify-helm-chart.sh hack/verify-test-pyramid.sh hack/verify-ci-boundary.sh hack/verify-ci-boundary.test.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
-
-  # ========================================
-  # STAGE 0d: POST-TEST CONTRACT IMAGE
-  #
-  # Build the exact operator image consumed by the release contract E2E. The
-  # publish jobs below still produce architecture-specific release images, but
-  # the E2E gate must not rebuild a different operator image in its runner.
-  # ========================================
-
-  operator-e2e-image:
-    name: Build operator image for contract E2E
-    needs: [prepare, qualification, operator-gates]
+  operator-hack:
+    name: Run operator hack-script tests
+    needs: [prepare]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
       - name: Checkout operator source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Run hack script tests
+        run: make test-hack-scripts
 
-      - name: Build contract E2E operator image
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-          GIT_COMMIT: ${{ github.sha }}
-          IMAGE: localhost/kubernaut-operator:ci
+  operator-manifests:
+    name: Verify generated operator manifests
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout operator source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Verify generated manifests are clean
         run: |
           set -euo pipefail
-          docker build \
-            --build-arg VERSION="${VERSION}" \
-            --build-arg GIT_COMMIT="${GIT_COMMIT}" \
-            -t "${IMAGE}" .
-          docker save "${IMAGE}" --output operator-e2e-image.tar
-          sha256sum operator-e2e-image.tar > operator-e2e-image.tar.sha256
-
-      - name: Upload contract E2E operator image
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
-        with:
-          name: operator-e2e-image-${{ needs.prepare.outputs.version }}
-          path: |
-            operator-e2e-image.tar
-            operator-e2e-image.tar.sha256
-          retention-days: 1
+          make manifests generate build-installer
+          git diff --exit-code -- api config charts/kubernaut-operator/files dist
 
   # ========================================
-  # STAGE 0e: CONTRACT E2E GATE
+  # STAGE 0d: CONTRACT E2E GATE
   # ========================================
 
   operator-e2e:
     name: Run contract-only Kind E2E
-    needs: [prepare, qualification, operator-e2e-image]
+    needs: [prepare, build-amd64]
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 50
+    env:
+      KIND_CLUSTER_NAME: kubernaut-kind-release
     permissions:
       contents: read
     steps:
@@ -243,16 +240,31 @@ jobs:
           kubectl version --client
           helm version --short
 
-      - name: Download contract E2E operator image
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.0
-        with:
-          name: operator-e2e-image-${{ needs.prepare.outputs.version }}
-
-      - name: Load contract E2E operator image
+      - name: Login to Quay.io
+        env:
+          QUAY_CICD_ROBOT_USERNAME: ${{ secrets.QUAY_CICD_ROBOT_USERNAME }}
+          QUAY_CICD_ROBOT_TOKEN: ${{ secrets.QUAY_CICD_ROBOT_TOKEN }}
         run: |
           set -euo pipefail
-          sha256sum --check operator-e2e-image.tar.sha256
-          docker load --input operator-e2e-image.tar
+          printf '%s' "${QUAY_CICD_ROBOT_TOKEN}" | docker login quay.io \
+            --username "${QUAY_CICD_ROBOT_USERNAME}" \
+            --password-stdin
+
+      - name: Pull amd64 release image by digest
+        id: pull-amd64
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          AMD64_DIGEST: ${{ needs.build-amd64.outputs.digest }}
+        run: |
+          set -euo pipefail
+          REMOTE_IMAGE="${STAGING_IMAGE_REGISTRY}/${IMAGE_NAME}@${AMD64_DIGEST}"
+          LOCAL_IMAGE="localhost/kubernaut-operator:${VERSION}-amd64"
+          test -n "${AMD64_DIGEST}"
+          docker pull "${REMOTE_IMAGE}"
+          IMAGE_ID=$(docker image inspect --format='{{.Id}}' "${REMOTE_IMAGE}")
+          docker tag "${IMAGE_ID}" "${LOCAL_IMAGE}"
+          echo "image=${LOCAL_IMAGE}" >> "${GITHUB_OUTPUT}"
+          echo "Pulled ${REMOTE_IMAGE} and tagged local Kind image ${LOCAL_IMAGE}"
 
       - name: Pull pinned dependency images
         run: |
@@ -260,13 +272,73 @@ jobs:
           docker pull docker.io/valkey/valkey:8.0.2
 
       - name: Run contract-only Kind gate
+        id: contract-e2e
         env:
-          KIND_OPERATOR_VERSION: ci
-          KUBERNAUT_OPERATOR_IMAGE: localhost/kubernaut-operator:ci
-          KUBERNAUT_E2E_PROVIDER: generic
-          KUBERNAUT_E2E_TLS_SOURCE: development
-          KIND_CLUSTER_NAME: kubernaut-kind-release
+          KIND_OPERATOR_VERSION: ${{ needs.prepare.outputs.version }}-amd64
+          KUBERNAUT_OPERATOR_IMAGE: ${{ steps.pull-amd64.outputs.image }}
+          KUBERNAUT_E2E_TLS_SOURCE: certmanager
+          KEEP_CLUSTER: "1"
         run: make test-e2e-kind
+
+      - name: Collect Kind diagnostics
+        if: ${{ failure() && steps.contract-e2e.outcome == 'failure' }}
+        run: |
+          set +e
+          diagnostics="${RUNNER_TEMP}/operator-e2e-diagnostics.txt"
+          # The nested shell intentionally expands inherited runtime variables.
+          # shellcheck disable=SC2016
+          timeout 180s bash -c '
+            KUBECTL=(kubectl --request-timeout=10s --context "kind-${KIND_CLUSTER_NAME}")
+            {
+              echo "=== cluster ==="
+              "${KUBECTL[@]}" cluster-info
+              echo "=== nodes ==="
+              "${KUBECTL[@]}" get nodes -o wide
+              echo "=== pods ==="
+              "${KUBECTL[@]}" get pods -A -o wide
+              echo "=== deployments ==="
+              "${KUBECTL[@]}" get deployments -A
+              echo "=== events ==="
+              "${KUBECTL[@]}" get events -A --sort-by=.lastTimestamp
+              echo "=== operator deployment ==="
+              "${KUBECTL[@]}" describe deployment \
+                kubernaut-operator-controller-manager \
+                -n kubernaut-operator-system
+              echo "=== pod descriptions ==="
+              "${KUBECTL[@]}" describe pods -A
+              echo "=== pod logs ==="
+              while read -r namespace pod; do
+                test -n "${namespace}" || continue
+                test -n "${pod}" || continue
+                echo "--- ${namespace}/${pod} ---"
+                "${KUBECTL[@]}" logs \
+                  --namespace "${namespace}" "${pod}" \
+                  --all-containers=true --prefix --tail=200
+                "${KUBECTL[@]}" logs \
+                  --namespace "${namespace}" "${pod}" \
+                  --all-containers=true --prefix --tail=200 --previous
+              done < <(
+                "${KUBECTL[@]}" get pods -A \
+                  -o custom-columns="NAMESPACE:.metadata.namespace,NAME:.metadata.name" \
+                  --no-headers
+              )
+            }
+          ' 2>&1 | tee "${diagnostics}" || true
+          timeout 120s kind export logs "${RUNNER_TEMP}/kind-logs" --name "${KIND_CLUSTER_NAME}" || true
+
+      - name: Upload Kind diagnostics
+        if: ${{ failure() && steps.contract-e2e.outcome == 'failure' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
+        with:
+          name: operator-release-kind-diagnostics-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/operator-e2e-diagnostics.txt
+            ${{ runner.temp }}/kind-logs
+          if-no-files-found: warn
+
+      - name: Delete retained Kind cluster
+        if: always()
+        run: timeout 120s kind delete cluster --name "${KIND_CLUSTER_NAME}" || true
 
   # ========================================
   # STAGE 1a: BUILD & PUSH amd64 IMAGE
@@ -275,7 +347,7 @@ jobs:
 
   build-amd64:
     name: Build Operator (amd64)
-    needs: [prepare, qualification, operator-e2e]
+    needs: [prepare, operator-lint, operator-unit, operator-integration, operator-helm, operator-hack, operator-manifests]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -287,16 +359,21 @@ jobs:
 
       - name: Login to Quay.io
         run: |
-          podman login -u "${{ secrets.QUAY_ROBOT_USERNAME }}" \
-                       -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
-                       quay.io
+          set -euo pipefail
+          STAGING_AUTHFILE="${RUNNER_TEMP}/quay-staging-auth.json"
+          printf '%s' "${{ secrets.QUAY_CICD_ROBOT_TOKEN }}" | podman login \
+            --authfile "${STAGING_AUTHFILE}" \
+            --username "${{ secrets.QUAY_CICD_ROBOT_USERNAME }}" \
+            --password-stdin quay.io
+          echo "STAGING_AUTHFILE=${STAGING_AUTHFILE}" >> "${GITHUB_ENV}"
+          echo "REGISTRY_AUTH_FILE=${STAGING_AUTHFILE}" >> "${GITHUB_ENV}"
 
       - name: Build image
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           GIT_COMMIT: ${{ github.sha }}
         run: |
-          IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-amd64"
+          IMAGE="${STAGING_IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-amd64"
           echo "Building ${IMAGE}..."
           podman build \
             --platform linux/amd64 \
@@ -310,9 +387,16 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-amd64"
+          IMAGE="${STAGING_IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-amd64"
           echo "Pushing ${IMAGE}..."
           podman push "${IMAGE}"
+
+      - name: Install Skopeo for registry digest resolution
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends skopeo
+          skopeo --version
 
       # #93: pushed digest, required as input to the SLSA3 provenance
       # generator job below -- re-pulling to inspect (rather than parsing
@@ -323,65 +407,12 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}"
-          podman pull "${IMAGE}:${VERSION}-amd64"
-          DIGEST=$(podman inspect --format='{{.Digest}}' "${IMAGE}:${VERSION}-amd64")
+          set -euo pipefail
+          IMAGE="${STAGING_IMAGE_REGISTRY}/${IMAGE_NAME}"
+          DIGEST=$(skopeo inspect --authfile "${STAGING_AUTHFILE}" \
+            --format='{{.Digest}}' "docker://${IMAGE}:${VERSION}-amd64")
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
-
-  # ========================================
-  # SBOM (amd64 image) + Cosign SBOM attestation
-  # ========================================
-
-  sbom:
-    name: Generate SBOM and attest
-    needs: [prepare, build-amd64]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Login to Quay.io (podman)
-        run: |
-          podman login -u "${{ secrets.QUAY_ROBOT_USERNAME }}" \
-                       -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
-                       quay.io
-
-      - name: Login to Quay.io (docker credentials)
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.0.0
-        with:
-          registry: quay.io
-          username: ${{ secrets.QUAY_ROBOT_USERNAME }}
-          password: ${{ secrets.QUAY_ROBOT_TOKEN }}
-
-      - name: Install Syft
-        run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
-
-      - name: Generate SBOM
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          podman pull "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-amd64"
-          syft packages "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-amd64" -o cyclonedx-json > sbom.cdx.json
-
-      - name: Upload SBOM artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
-        with:
-          name: sbom-${{ needs.prepare.outputs.version }}
-          path: sbom.cdx.json
-
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-
-      - name: Attest SBOM
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          cosign attest --yes --type cyclonedx --predicate sbom.cdx.json "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-amd64"
 
   # ========================================
   # STAGE 1b: BUILD & PUSH arm64 IMAGE
@@ -391,7 +422,7 @@ jobs:
 
   build-arm64:
     name: Build Operator (arm64)
-    needs: [prepare, qualification, operator-e2e]
+    needs: [prepare, operator-lint, operator-unit, operator-integration, operator-helm, operator-hack, operator-manifests]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -419,15 +450,20 @@ jobs:
 
       - name: Login to Quay.io
         run: |
-          podman login -u "${{ secrets.QUAY_ROBOT_USERNAME }}" \
-                       -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
-                       quay.io
+          set -euo pipefail
+          STAGING_AUTHFILE="${RUNNER_TEMP}/quay-staging-auth.json"
+          printf '%s' "${{ secrets.QUAY_CICD_ROBOT_TOKEN }}" | podman login \
+            --authfile "${STAGING_AUTHFILE}" \
+            --username "${{ secrets.QUAY_CICD_ROBOT_USERNAME }}" \
+            --password-stdin quay.io
+          echo "STAGING_AUTHFILE=${STAGING_AUTHFILE}" >> "${GITHUB_ENV}"
+          echo "REGISTRY_AUTH_FILE=${STAGING_AUTHFILE}" >> "${GITHUB_ENV}"
 
       - name: Build runtime image (no QEMU)
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-arm64"
+          IMAGE="${STAGING_IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-arm64"
           echo "Building ${IMAGE}..."
           podman build \
             --platform linux/arm64 \
@@ -439,9 +475,16 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-arm64"
+          IMAGE="${STAGING_IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-arm64"
           echo "Pushing ${IMAGE}..."
           podman push "${IMAGE}"
+
+      - name: Install Skopeo for registry digest resolution
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends skopeo
+          skopeo --version
 
       # #93: see the matching step in build-amd64 for why this re-pulls
       # rather than parsing `podman push` output.
@@ -450,11 +493,87 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          IMAGE="${IMAGE_REGISTRY}/${IMAGE_NAME}"
-          podman pull "${IMAGE}:${VERSION}-arm64"
-          DIGEST=$(podman inspect --format='{{.Digest}}' "${IMAGE}:${VERSION}-arm64")
+          set -euo pipefail
+          IMAGE="${STAGING_IMAGE_REGISTRY}/${IMAGE_NAME}"
+          DIGEST=$(skopeo inspect --authfile "${STAGING_AUTHFILE}" \
+            --format='{{.Digest}}' "docker://${IMAGE}:${VERSION}-arm64")
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+  # ========================================
+  # STAGE 1c: PROMOTE TESTED IMAGES
+  # Copy the exact tested architecture images from the staging Quay namespace
+  # into the production namespace. The digest check prevents a retag or push
+  # conversion from silently changing the tested image content.
+  # ========================================
+
+  promote-images:
+    name: Promote tested images to production Quay
+    needs: [prepare, build-amd64, build-arm64, operator-e2e]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Login to staging Quay
+        env:
+          QUAY_CICD_ROBOT_USERNAME: ${{ secrets.QUAY_CICD_ROBOT_USERNAME }}
+          QUAY_CICD_ROBOT_TOKEN: ${{ secrets.QUAY_CICD_ROBOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          STAGING_AUTHFILE="${RUNNER_TEMP}/quay-staging-auth.json"
+          printf '%s' "${QUAY_CICD_ROBOT_TOKEN}" | podman login \
+            --authfile "${STAGING_AUTHFILE}" \
+            --username "${QUAY_CICD_ROBOT_USERNAME}" \
+            --password-stdin quay.io
+          echo "STAGING_AUTHFILE=${STAGING_AUTHFILE}" >> "${GITHUB_ENV}"
+
+      - name: Login to production Quay
+        env:
+          QUAY_ROBOT_USERNAME: ${{ secrets.QUAY_ROBOT_USERNAME }}
+          QUAY_ROBOT_TOKEN: ${{ secrets.QUAY_ROBOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          PRODUCTION_AUTHFILE="${RUNNER_TEMP}/quay-production-auth.json"
+          printf '%s' "${QUAY_ROBOT_TOKEN}" | podman login \
+            --authfile "${PRODUCTION_AUTHFILE}" \
+            --username "${QUAY_ROBOT_USERNAME}" \
+            --password-stdin quay.io
+          echo "PRODUCTION_AUTHFILE=${PRODUCTION_AUTHFILE}" >> "${GITHUB_ENV}"
+
+      - name: Install Skopeo for staging digest verification
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends skopeo
+          skopeo --version
+
+      - name: Promote amd64 and arm64 images
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          EXPECTED_AMD64_DIGEST: ${{ needs.build-amd64.outputs.digest }}
+          EXPECTED_ARM64_DIGEST: ${{ needs.build-arm64.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          promote() {
+            local arch="$1"
+            local expected_digest="$2"
+            local staging_image="${STAGING_IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-${arch}"
+            local staging_digest_ref="${staging_image%:*}@${expected_digest}"
+            local production_image="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-${arch}"
+
+            actual_digest=$(skopeo inspect --authfile "${STAGING_AUTHFILE}" \
+              --format='{{.Digest}}' "docker://${staging_image}")
+            test "${actual_digest}" = "${expected_digest}"
+            REGISTRY_AUTH_FILE="${STAGING_AUTHFILE}" podman pull "${staging_digest_ref}"
+            podman tag "${staging_digest_ref}" "${production_image}"
+            REGISTRY_AUTH_FILE="${PRODUCTION_AUTHFILE}" podman push "${production_image}"
+            echo "promoted ${arch}: ${actual_digest}"
+          }
+
+          promote amd64 "${EXPECTED_AMD64_DIGEST}"
+          promote arm64 "${EXPECTED_ARM64_DIGEST}"
 
   # ========================================
   # STAGE 2: MULTI-ARCH MANIFESTS
@@ -465,12 +584,12 @@ jobs:
 
   create-manifests:
     name: Create Multi-Arch Manifests
-    needs: [prepare, build-amd64, build-arm64]
-    runs-on: ubuntu-latest
+    needs: [prepare, build-amd64, build-arm64, operator-e2e, promote-images]
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
-      amd64_digest: ${{ needs.build-amd64.outputs.digest }}
-      arm64_digest: ${{ needs.build-arm64.outputs.digest }}
+      amd64_digest: ${{ steps.manifest-digest.outputs.amd64_digest }}
+      arm64_digest: ${{ steps.manifest-digest.outputs.arm64_digest }}
       manifest_digest: ${{ steps.manifest-digest.outputs.digest }}
     steps:
       - name: Login to Quay.io
@@ -506,18 +625,99 @@ jobs:
           podman manifest push "${LATEST}" "docker://${LATEST}"
           echo "Pushed ${LATEST}"
 
+      - name: Install Skopeo for registry inspection
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends skopeo
+          skopeo --version
+
       - name: Resolve published manifest digest
         id: manifest-digest
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
+          EXPECTED_AMD64_DIGEST: ${{ needs.build-amd64.outputs.digest }}
+          EXPECTED_ARM64_DIGEST: ${{ needs.build-arm64.outputs.digest }}
         run: |
           set -euo pipefail
           MANIFEST="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
-          podman pull "${MANIFEST}"
-          DIGEST=$(podman inspect --format='{{.Digest}}' "${MANIFEST}")
+          AMD64_DIGEST=$(skopeo inspect --format='{{.Digest}}' "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-amd64")
+          ARM64_DIGEST=$(skopeo inspect --format='{{.Digest}}' "docker://${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}-arm64")
+          DIGEST=$(skopeo inspect --format='{{.Digest}}' "docker://${MANIFEST}")
+          test "${AMD64_DIGEST}" = "${EXPECTED_AMD64_DIGEST}"
+          test "${ARM64_DIGEST}" = "${EXPECTED_ARM64_DIGEST}"
+          test "${DIGEST}" != "${AMD64_DIGEST}"
+          test "${DIGEST}" != "${ARM64_DIGEST}"
           test -n "${DIGEST}"
-          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
-          echo "Manifest digest: ${DIGEST}"
+          {
+            echo "amd64_digest=${AMD64_DIGEST}"
+            echo "arm64_digest=${ARM64_DIGEST}"
+            echo "digest=${DIGEST}"
+          } >> "$GITHUB_OUTPUT"
+          echo "amd64 digest: ${AMD64_DIGEST}"
+          echo "arm64 digest: ${ARM64_DIGEST}"
+          echo "top-level manifest digest: ${DIGEST}"
+
+  # ========================================
+  # SBOM coverage and Cosign SBOM attestations
+  # Runs only after the final registry manifest has been created. The single
+  # job records SBOMs for both architecture images and the final manifest.
+  # ========================================
+
+  sbom:
+    name: Generate SBOMs and attest
+    needs: [prepare, create-manifests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Login to Quay.io
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_ROBOT_USERNAME }}
+          password: ${{ secrets.QUAY_ROBOT_TOKEN }}
+
+      - name: Install Syft
+        run: curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Generate architecture and manifest SBOMs
+        env:
+          IMAGE: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}
+          AMD64_DIGEST: ${{ needs.create-manifests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ needs.create-manifests.outputs.arm64_digest }}
+          MANIFEST_DIGEST: ${{ needs.create-manifests.outputs.manifest_digest }}
+        run: |
+          set -euo pipefail
+          test -n "${AMD64_DIGEST}"
+          test -n "${ARM64_DIGEST}"
+          test -n "${MANIFEST_DIGEST}"
+          syft packages "${IMAGE}@${AMD64_DIGEST}" -o cyclonedx-json > sbom-amd64.cdx.json
+          syft packages "${IMAGE}@${ARM64_DIGEST}" -o cyclonedx-json > sbom-arm64.cdx.json
+          syft packages "${IMAGE}@${MANIFEST_DIGEST}" -o cyclonedx-json > sbom-manifest.cdx.json
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.0
+        with:
+          name: sbom-${{ needs.prepare.outputs.version }}
+          path: sbom-*.cdx.json
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Attest architecture and manifest SBOMs
+        env:
+          IMAGE: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}
+          AMD64_DIGEST: ${{ needs.create-manifests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ needs.create-manifests.outputs.arm64_digest }}
+          MANIFEST_DIGEST: ${{ needs.create-manifests.outputs.manifest_digest }}
+        run: |
+          set -euo pipefail
+          cosign attest --yes --type cyclonedx --predicate sbom-amd64.cdx.json "${IMAGE}@${AMD64_DIGEST}"
+          cosign attest --yes --type cyclonedx --predicate sbom-arm64.cdx.json "${IMAGE}@${ARM64_DIGEST}"
+          cosign attest --yes --type cyclonedx --predicate sbom-manifest.cdx.json "${IMAGE}@${MANIFEST_DIGEST}"
 
   # ========================================
   # Cosign sign multi-arch manifest (keyless)
@@ -536,7 +736,7 @@ jobs:
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Login to Quay.io
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.0.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: quay.io
           username: ${{ secrets.QUAY_ROBOT_USERNAME }}
@@ -544,16 +744,22 @@ jobs:
 
       - name: Sign version manifest
         env:
-          VERSION: ${{ needs.prepare.outputs.version }}
+          IMAGE: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}
+          AMD64_DIGEST: ${{ needs.create-manifests.outputs.amd64_digest }}
+          ARM64_DIGEST: ${{ needs.create-manifests.outputs.arm64_digest }}
+          MANIFEST_DIGEST: ${{ needs.create-manifests.outputs.manifest_digest }}
         run: |
-          cosign sign --yes "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
+          set -euo pipefail
+          cosign sign --yes "${IMAGE}@${AMD64_DIGEST}"
+          cosign sign --yes "${IMAGE}@${ARM64_DIGEST}"
+          cosign sign --yes "${IMAGE}@${MANIFEST_DIGEST}"
 
       - name: Sign latest manifest
         if: needs.prepare.outputs.is_prerelease == 'false'
         run: |
           cosign sign --yes "${IMAGE_REGISTRY}/${IMAGE_NAME}:latest"
 
-      - name: Verify signature
+      - name: Verify manifest signature
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
@@ -563,7 +769,7 @@ jobs:
             "${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
 
   # ========================================
-  # SLSA Build Level 3 provenance (per-arch digest)
+  # SLSA Build Level 3 provenance (final multi-arch manifest digest)
   #
   # #93: upgraded from actions/attest-build-provenance (SLSA Build L1-2)
   # to slsa-framework/slsa-github-generator's container workflow (SLSA
@@ -572,10 +778,10 @@ jobs:
   # it does not build the image -- only slsa-github-generator's
   # ecosystem-specific *builders*, e.g. its Go builder, do that):
   #
-  # - Before: the "Attest amd64/arm64 provenance" steps ran as part of
-  #   *this* repo's own workflow, so the provenance's builder identity
-  #   was self-asserted (release.yml attesting to its own build).
-  # - After: the provenance job below is a *reusable workflow call*
+  # - Before: the attestation steps ran as part of *this* repo's own workflow,
+  #   so the provenance's builder identity was self-asserted (release.yml
+  #   attesting to its own build).
+  # - After: the final multi-arch manifest is attested by a *reusable workflow call*
   #   (`uses:`, not a step), so GitHub mints its OIDC token against the
   #   *generator's* job, not ours. The resulting provenance's builder.id
   #   is slsa-github-generator's own pinned identity
@@ -596,114 +802,106 @@ jobs:
   # interact (see slsa-github-generator#1257).
   # ========================================
 
-  provenance-amd64:
-    name: SLSA3 provenance (amd64)
-    needs: build-amd64
+  provenance:
+    name: SLSA3 provenance (multi-arch manifest)
+    needs: create-manifests
     permissions:
       actions: read
       id-token: write
       packages: write
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.1.0 # exact release tag required by the generator
     with:
-      image: ${{ needs.build-amd64.outputs.image }}
-      digest: ${{ needs.build-amd64.outputs.digest }}
-    secrets:
-      registry-username: ${{ secrets.QUAY_ROBOT_USERNAME }}
-      registry-password: ${{ secrets.QUAY_ROBOT_TOKEN }}
-
-  provenance-arm64:
-    name: SLSA3 provenance (arm64)
-    needs: build-arm64
-    permissions:
-      actions: read
-      id-token: write
-      packages: write
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
-    with:
-      image: ${{ needs.build-arm64.outputs.image }}
-      digest: ${{ needs.build-arm64.outputs.digest }}
+      image: quay.io/kubernaut-ai/kubernaut-operator-image
+      digest: ${{ needs.create-manifests.outputs.manifest_digest }}
     secrets:
       registry-username: ${{ secrets.QUAY_ROBOT_USERNAME }}
       registry-password: ${{ secrets.QUAY_ROBOT_TOKEN }}
 
   # ========================================
-  # STAGE 3: OLM BUNDLE IMAGE
-  # Builds and pushes the operator bundle image used by OLM / OperatorHub.
-  # The bundle version matches the release version.
+  # STAGE 3: OPERATOR HELM CHART
+  # Packages and publishes the operator chart after all release artifacts,
+  # security attestations, and provenance have completed.
   # ========================================
 
-  bundle:
-    name: Build & Push OLM Bundle
-    needs: [prepare, create-manifests]
+  operator-chart:
+    name: Package & Push Operator Helm Chart
+    needs: [prepare, operator-e2e, create-manifests, sbom, sign, provenance]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      chart_version: ${{ steps.package.outputs.chart_version }}
+      chart_digest: ${{ steps.push.outputs.chart_digest }}
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
+      - name: Install pinned Helm 4
+        run: |
+          set -euo pipefail
+          HELM_VERSION=v4.3.0
+          HELM_ARCHIVE="/tmp/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" -o "${HELM_ARCHIVE}"
+          printf '%s  %s\n' \
+            86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb \
+            "${HELM_ARCHIVE}" | sha256sum -c -
+          tar -xzf "${HELM_ARCHIVE}" -C /tmp
+          sudo install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+
+      - name: Package operator chart with released image digest
+        id: package
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          MANIFEST_DIGEST: ${{ needs.create-manifests.outputs.manifest_digest }}
+        run: |
+          set -euo pipefail
+          test -n "${MANIFEST_DIGEST}"
+          chart_dir="${RUNNER_TEMP}/kubernaut-operator"
+          mkdir -p dist
+          cp -R charts/kubernaut-operator "${chart_dir}"
+          sed -i "0,/^  tag: /s/^  tag: .*/  tag: ${VERSION}/" "${chart_dir}/values.yaml"
+          sed -i "0,/^  digest: /s/^  digest: .*/  digest: ${MANIFEST_DIGEST}/" "${chart_dir}/values.yaml"
+          helm lint "${chart_dir}"
+          helm package "${chart_dir}" \
+            --version "${VERSION}" \
+            --app-version "${VERSION}" \
+            --destination dist
+          chart="dist/kubernaut-operator-${VERSION}.tgz"
+          test -s "${chart}"
+          test "$(helm show chart "${chart}" | awk '$1 == "version:" {print $2; exit}')" = "${VERSION}"
+          test "$(helm show chart "${chart}" | awk '$1 == "appVersion:" {print $2; exit}')" = "${VERSION}"
+          test "$(helm show values "${chart}" | awk '$1 == "tag:" {print $2; exit}')" = "${VERSION}"
+          test "$(helm show values "${chart}" | awk '$1 == "digest:" {print $2; exit}')" = "${MANIFEST_DIGEST}"
+          echo "chart_version=${VERSION}" >> "${GITHUB_OUTPUT}"
 
       - name: Login to Quay.io
+        env:
+          QUAY_ROBOT_USERNAME: ${{ secrets.QUAY_ROBOT_USERNAME }}
+          QUAY_ROBOT_TOKEN: ${{ secrets.QUAY_ROBOT_TOKEN }}
         run: |
-          podman login -u "${{ secrets.QUAY_ROBOT_USERNAME }}" \
-                       -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
-                       quay.io
+          set -euo pipefail
+          printf '%s' "${QUAY_ROBOT_TOKEN}" | helm registry login quay.io \
+            --username "${QUAY_ROBOT_USERNAME}" \
+            --password-stdin
 
-      - name: Regenerate bundle with release version
+      - name: Push operator chart
+        id: push
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          export IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
-          make bundle
-
-      - name: Build bundle image
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          BUNDLE_IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}-bundle:v${VERSION}"
-          echo "Building bundle image ${BUNDLE_IMG}..."
-          podman build -f bundle.Dockerfile -t "${BUNDLE_IMG}" .
-
-      - name: Push bundle image
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          BUNDLE_IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}-bundle:v${VERSION}"
-          echo "Pushing ${BUNDLE_IMG}..."
-          podman push "${BUNDLE_IMG}"
-
-  # ========================================
-  # STAGE 3b: OLM CATALOG IMAGE
-  # Builds a file-based catalog (FBC) containing the bundle and pushes it.
-  # This catalog can be referenced by a CatalogSource on OCP clusters.
-  # ========================================
-
-  catalog:
-    name: Build & Push OLM Catalog
-    needs: [prepare, bundle]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Login to Quay.io
-        run: |
-          podman login -u "${{ secrets.QUAY_ROBOT_USERNAME }}" \
-                       -p "${{ secrets.QUAY_ROBOT_TOKEN }}" \
-                       quay.io
-
-      - name: Build and push catalog image
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          BUNDLE_IMGS="${IMAGE_REGISTRY}/${IMAGE_NAME}-bundle:v${VERSION}" \
-            CATALOG_IMG="${IMAGE_REGISTRY}/${IMAGE_NAME}-catalog:v${VERSION}" \
-            CONTAINER_TOOL=podman \
-            make catalog-build catalog-push
+          set -euo pipefail
+          chart="dist/kubernaut-operator-${VERSION}.tgz"
+          push_output=$(helm push "${chart}" oci://quay.io/kubernaut-ai)
+          printf '%s\n' "${push_output}"
+          digest=$(printf '%s\n' "${push_output}" | sed -n 's/^Digest: //p')
+          test -n "${digest}"
+          echo "chart_digest=${digest}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "### Operator Helm chart"
+            echo "- Version: \`${VERSION}\`"
+            echo "- Immutable OCI reference: \`oci://quay.io/kubernaut-ai/kubernaut-operator@${digest}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
   # ========================================
   # STAGE 4: GITHUB RELEASE
@@ -712,7 +910,7 @@ jobs:
 
   release:
     name: Create GitHub Release
-    needs: [prepare, qualification, operator-e2e, create-manifests, bundle, catalog, sbom, sign, provenance-amd64, provenance-arm64]
+    needs: [prepare, operator-e2e, create-manifests, operator-chart, sbom, sign, provenance]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -730,12 +928,6 @@ jobs:
           name: sbom-${{ needs.prepare.outputs.version }}
           path: .
 
-      - name: Download upstream qualification evidence
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.0
-        with:
-          name: upstream-qualification-${{ needs.prepare.outputs.tag }}
-          path: qualification
-
       - name: Create operator release provenance manifest
         env:
           TAG: ${{ needs.prepare.outputs.tag }}
@@ -744,37 +936,54 @@ jobs:
           AMD64_DIGEST: ${{ needs.create-manifests.outputs.amd64_digest }}
           ARM64_DIGEST: ${{ needs.create-manifests.outputs.arm64_digest }}
           MANIFEST_DIGEST: ${{ needs.create-manifests.outputs.manifest_digest }}
-          QUALIFICATION_URL: https://github.com/jordigilh/kubernaut/releases/download/${{ needs.prepare.outputs.tag }}/operator-compatibility-qualification.json
+          OPERATOR_CHART_VERSION: ${{ needs.operator-chart.outputs.chart_version }}
+          OPERATOR_CHART_DIGEST: ${{ needs.operator-chart.outputs.chart_digest }}
         run: |
           set -euo pipefail
           test -n "$AMD64_DIGEST"
           test -n "$ARM64_DIGEST"
           test -n "$MANIFEST_DIGEST"
+          test -n "$OPERATOR_CHART_VERSION"
+          test -n "$OPERATOR_CHART_DIGEST"
           python3 - <<'PY'
           import json
           import os
           from pathlib import Path
 
-          qualification_path = Path("qualification/upstream-qualification.json")
-          with qualification_path.open(encoding="utf-8") as qualification_file:
-              qualification = json.load(qualification_file)
-
           registry = os.environ["IMAGE_REGISTRY"]
-          image = f"{registry}/kubernaut-operator"
+          image = f"{registry}/{os.environ['IMAGE_NAME']}"
           manifest = {
-              "schema": "kubernaut-operator-release-provenance/v1",
+              "schema": "kubernaut-operator-release-provenance/v2",
               "operator": {
                   "repository": os.environ["GITHUB_REPOSITORY"],
                   "tag": os.environ["TAG"],
                   "sha": os.environ["OPERATOR_SHA"],
                   "images": {
                       "amd64": f"{image}@{os.environ['AMD64_DIGEST']}",
-                      "arm64": f"{image}@{os.environ['ARM64_DIGEST']}",
-                      "manifest": f"{image}@{os.environ['MANIFEST_DIGEST']}",
-                  },
-              },
-              "upstream_qualification": qualification,
-              "qualification_manifest_url": os.environ["QUALIFICATION_URL"],
+                       "arm64": f"{image}@{os.environ['ARM64_DIGEST']}",
+                       "manifest": f"{image}@{os.environ['MANIFEST_DIGEST']}",
+                   },
+                   "chart": {
+                       "name": "kubernaut-operator",
+                       "version": os.environ["OPERATOR_CHART_VERSION"],
+                       "tag": (
+                           "oci://quay.io/kubernaut-ai/"
+                           "kubernaut-operator:"
+                           + os.environ["OPERATOR_CHART_VERSION"]
+                       ),
+                       "digest": (
+                           "oci://quay.io/kubernaut-ai/"
+                           "kubernaut-operator@"
+                           + os.environ["OPERATOR_CHART_DIGEST"]
+                       ),
+                   },
+               },
+               "upstream_qualification": {
+                   "mode": "manual",
+                   "automated": False,
+                   "responsibility": "release operator",
+                   "evidence": "maintained outside this workflow",
+               },
               "release_workflow": {
                   "run_id": os.environ["GITHUB_RUN_ID"],
                   "run_url": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
@@ -797,12 +1006,12 @@ jobs:
             PRERELEASE_FLAG="--prerelease"
           fi
 
-          gh release create "${TAG}" sbom.cdx.json operator-release-provenance.json \
+          gh release create "${TAG}" sbom-amd64.cdx.json sbom-arm64.cdx.json sbom-manifest.cdx.json operator-release-provenance.json \
             --title "Kubernaut Operator ${TAG}" \
             --generate-notes \
             ${PRERELEASE_FLAG} \
             --notes-start-tag "$(git tag --sort=-creatordate | grep '^v' | sed -n '2p')" || \
-          gh release create "${TAG}" sbom.cdx.json operator-release-provenance.json \
+          gh release create "${TAG}" sbom-amd64.cdx.json sbom-arm64.cdx.json sbom-manifest.cdx.json operator-release-provenance.json \
             --title "Kubernaut Operator ${TAG}" \
             --generate-notes \
             ${PRERELEASE_FLAG}
@@ -812,4 +1021,3 @@ jobs:
           echo ""
           echo "Images:"
           echo "  Operator: ${IMAGE_REGISTRY}/${IMAGE_NAME}:${VERSION}"
-          echo "  Bundle:   ${IMAGE_REGISTRY}/${IMAGE_NAME}-bundle:v${VERSION}"

@@ -19,10 +19,8 @@ package resources
 import (
 	"fmt"
 
-	routev1 "github.com/openshift/api/route/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
@@ -36,9 +34,9 @@ const (
 )
 
 // ConsoleDeployment builds the Deployment for the standalone web console.
-// ingressDomain is the cluster's ingress domain (e.g. "apps.dev.example.com")
-// used to derive the oauth2-proxy redirect URL when console.route.host is empty.
-func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*appsv1.Deployment, error) {
+// The administrator-owned external exposure supplies the explicit OAuth2
+// callback URL through spec.console.auth.redirectURL.
+func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 	consoleImage, err := ResolveImage(kn, "console")
 	if err != nil {
 		return nil, err
@@ -57,12 +55,62 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*
 	if secretName == "" {
 		return nil, fmt.Errorf("console.auth.secretName is required")
 	}
+	if err := validateConsoleRedirectURL(kn); err != nil {
+		return nil, err
+	}
+	if err := validateConsoleProviderLogoutURL(kn); err != nil {
+		return nil, err
+	}
 
-	redirectURL := consoleRedirectURL(kn, ingressDomain)
+	redirectURL := consoleRedirectURL(kn)
 	caFile := InterServiceTLSCAFileFor(kn)
 	caDir := InterServiceTLSCADirFor(kn)
+	logoutURL := kn.Spec.Console.Auth.ProviderLogoutURL
+	combinedCAFile, initContainers, err := consoleLogoutTLSSettings(kn, logoutURL, caFile, caDir)
+	if err != nil {
+		return nil, err
+	}
 
-	oauthArgs := []string{
+	oauthArgs := consoleOAuthArgs(issuerURL, redirectURL, caFile, logoutURL)
+	resources := consoleContainerResources(kn)
+
+	volumes := consoleDeploymentVolumes(kn, logoutURL != "")
+
+	replicas := int32(1)
+	dep := &appsv1.Deployment{
+		ObjectMeta: ObjectMeta(kn, ComponentConsole, ComponentConsole),
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: SelectorLabels(ComponentConsole),
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: ComponentLabels(kn, ComponentConsole),
+				},
+				Spec: corev1.PodSpec{
+					InitContainers: initContainers,
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot: ptr.To(true),
+						SeccompProfile: &corev1.SeccompProfile{
+							Type: corev1.SeccompProfileTypeRuntimeDefault,
+						},
+					},
+					Containers: []corev1.Container{
+						consoleOAuth2ProxyContainer(oauth2ProxyImage, oauthArgs, secretName, caDir, combinedCAFile, resources),
+						consoleAppContainer(kn, consoleImage, resources),
+					},
+					Volumes: volumes,
+				},
+			},
+		},
+	}
+
+	return dep, nil
+}
+
+func consoleOAuthArgs(issuerURL, redirectURL, caFile, logoutURL string) []string {
+	args := []string{
 		"--provider=oidc",
 		fmt.Sprintf("--oidc-issuer-url=%s", issuerURL),
 		fmt.Sprintf("--redirect-url=%s", redirectURL),
@@ -84,75 +132,112 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) (*
 		"--use-system-trust-store=true",
 		"--ping-path=/oauth2/ping",
 	}
+	if logoutURL != "" {
+		args = append(args, "--backend-logout-url="+logoutURL)
+	}
+	return args
+}
 
-	replicas := int32(1)
-	dep := &appsv1.Deployment{
-		ObjectMeta: ObjectMeta(kn, ComponentConsole, ComponentConsole),
-		Spec: appsv1.DeploymentSpec{
-			Replicas: &replicas,
-			Selector: &metav1.LabelSelector{
-				MatchLabels: SelectorLabels(ComponentConsole),
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: ComponentLabels(kn, ComponentConsole),
-				},
-				Spec: corev1.PodSpec{
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot: ptr.To(true),
-						SeccompProfile: &corev1.SeccompProfile{
-							Type: corev1.SeccompProfileTypeRuntimeDefault,
-						},
-					},
-					Containers: []corev1.Container{
-						consoleOAuth2ProxyContainer(oauth2ProxyImage, oauthArgs, secretName, caDir),
-						consoleAppContainer(kn, consoleImage),
-					},
-					Volumes: []corev1.Volume{
-						{Name: "nginx-tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
-						{Name: "nginx-config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-							LocalObjectReference: corev1.LocalObjectReference{Name: ComponentConsole + "-nginx"},
-						}}},
-						InterServiceTLSCAVolume(kn),
-					},
-				},
-			},
+const (
+	consoleCombinedCADir  = "/etc/ssl/combined"
+	consoleCombinedCAFile = consoleCombinedCADir + "/ca-bundle.crt"
+)
+
+func consoleLogoutTLSSettings(kn *kubernautv1alpha2.Kubernaut, logoutURL, caFile, caDir string) (string, []corev1.Container, error) {
+	if logoutURL == "" {
+		return "", nil, nil
+	}
+	// #483: oauth2-proxy's backendLogout uses http.Get rather than the provider
+	// client configured by --provider-ca-file. Reuse the operator's existing
+	// merged system/provider trust pattern so self-signed endpoints remain
+	// certificate-verified without changing the pinned oauth2-proxy image.
+	initImage, err := ResolveImage(kn, "init-ubi-minimal")
+	if err != nil {
+		return "", nil, err
+	}
+	return consoleCombinedCAFile, []corev1.Container{consoleLogoutCAInitContainer(kn, initImage, caFile, caDir)}, nil
+}
+
+func consoleDeploymentVolumes(kn *kubernautv1alpha2.Kubernaut, includeCombinedCA bool) []corev1.Volume {
+	volumes := []corev1.Volume{
+		{Name: "nginx-tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
+		{Name: "nginx-config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+			LocalObjectReference: corev1.LocalObjectReference{Name: ComponentConsole + "-nginx"},
+		}}},
+		InterServiceTLSCAVolume(kn),
+	}
+	if includeCombinedCA {
+		volumes = append(volumes, corev1.Volume{
+			Name:         "combined-ca",
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		})
+	}
+	return volumes
+}
+
+func consoleLogoutCAInitContainer(kn *kubernautv1alpha2.Kubernaut, image, caFile, caDir string) corev1.Container {
+	return corev1.Container{
+		Name:            "build-ca-bundle",
+		Image:           image,
+		ImagePullPolicy: kn.Spec.Image.PullPolicy,
+		Command: []string{
+			"sh", "-c", "cat /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem \"$1\" > /combined/ca-bundle.crt",
+			"build-ca-bundle", caFile,
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "tls-ca", MountPath: caDir, ReadOnly: true},
+			{Name: "combined-ca", MountPath: "/combined"},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsNonRoot:             ptr.To(true),
+			AllowPrivilegeEscalation: ptr.To(false),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+			SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 		},
 	}
-
-	return dep, nil
 }
 
 // consoleOAuth2ProxyContainer builds the oauth2-proxy sidecar container that
 // terminates OIDC auth in front of the static console container.
-func consoleOAuth2ProxyContainer(image string, args []string, secretName, caDir string) corev1.Container {
+func consoleOAuth2ProxyContainer(image string, args []string, secretName, caDir, combinedCAFile string, resources corev1.ResourceRequirements) corev1.Container {
+	env := []corev1.EnvVar{
+		{Name: "OAUTH2_PROXY_CLIENT_ID", ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+				Key:                  "client-id",
+			},
+		}},
+		{Name: "OAUTH2_PROXY_CLIENT_SECRET", ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+				Key:                  "client-secret",
+			},
+		}},
+		{Name: "OAUTH2_PROXY_COOKIE_SECRET", ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
+				Key:                  "cookie-secret",
+			},
+		}},
+	}
+	if combinedCAFile != "" {
+		env = append(env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: combinedCAFile})
+	}
+	volumeMounts := []corev1.VolumeMount{
+		{Name: "tls-ca", MountPath: caDir, ReadOnly: true},
+	}
+	if combinedCAFile != "" {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name: "combined-ca", MountPath: consoleCombinedCADir, ReadOnly: true,
+		})
+	}
+
 	return corev1.Container{
-		Name:  "oauth2-proxy",
-		Image: image,
-		Args:  args,
-		VolumeMounts: []corev1.VolumeMount{
-			{Name: "tls-ca", MountPath: caDir, ReadOnly: true},
-		},
-		Env: []corev1.EnvVar{
-			{Name: "OAUTH2_PROXY_CLIENT_ID", ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
-					Key:                  "client-id",
-				},
-			}},
-			{Name: "OAUTH2_PROXY_CLIENT_SECRET", ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
-					Key:                  "client-secret",
-				},
-			}},
-			{Name: "OAUTH2_PROXY_COOKIE_SECRET", ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: secretName},
-					Key:                  "cookie-secret",
-				},
-			}},
-		},
+		Name:         "oauth2-proxy",
+		Image:        image,
+		Args:         args,
+		VolumeMounts: volumeMounts,
+		Env:          env,
 		Ports: []corev1.ContainerPort{
 			{Name: "http", ContainerPort: consoleProxyPort, Protocol: corev1.ProtocolTCP},
 		},
@@ -173,22 +258,13 @@ func consoleOAuth2ProxyContainer(image string, args []string, secretName, caDir 
 			}},
 			InitialDelaySeconds: 10, PeriodSeconds: 15,
 		},
-		Resources: corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("25m"),
-				corev1.ResourceMemory: resource.MustParse("32Mi"),
-			},
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    resource.MustParse("100m"),
-				corev1.ResourceMemory: resource.MustParse("128Mi"),
-			},
-		},
+		Resources: resources,
 	}
 }
 
 // consoleAppContainer builds the static nginx container that serves the
 // console SPA and proxies /a2a, /mcp, and /.well-known to API Frontend.
-func consoleAppContainer(kn *kubernautv1alpha2.Kubernaut, image string) corev1.Container {
+func consoleAppContainer(kn *kubernautv1alpha2.Kubernaut, image string, resources corev1.ResourceRequirements) corev1.Container {
 	return corev1.Container{
 		Name:            "console",
 		Image:           image,
@@ -212,7 +288,7 @@ func consoleAppContainer(kn *kubernautv1alpha2.Kubernaut, image string) corev1.C
 			}},
 			InitialDelaySeconds: 5, PeriodSeconds: 10,
 		},
-		Resources: consoleContainerResources(kn),
+		Resources: resources,
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "nginx-tmp", MountPath: "/tmp"},
 			{Name: "nginx-config", MountPath: "/opt/app-root/etc/nginx.d/kubernaut-http.conf", SubPath: "http.conf", ReadOnly: true},
@@ -243,7 +319,7 @@ func ConsoleNginxConfigMap(kn *kubernautv1alpha2.Kubernaut) *corev1.ConfigMap {
 		ObjectMeta: ObjectMeta(kn, ComponentConsole+"-nginx", ComponentConsole),
 		Data: map[string]string{
 			"http.conf":   consoleNginxHTTPConf(),
-			"server.conf": consoleNginxServerConf(afURL, true, InterServiceTLSCAFileFor(kn)),
+			"server.conf": consoleNginxServerConf(afURL, kn.Spec.Console.EnableRawThinkingValue(), InterServiceTLSCAFileFor(kn)),
 		},
 	}
 }
@@ -327,9 +403,8 @@ location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?|ttf|eot)$ {
 # #314: the console loads this same-origin script unconditionally on every
 # page load to source window.__KUBERNAUT_CONFIG__.enableRawThinking, which
 # hides the "Hide/Show raw thinking" header button when disabled. Default
-# true matches the console's own fallback; deployments targeting a backend
-# that never emits reasoning_content events (e.g. release/v1.5) should set
-# spec.console.enableRawThinking=false.
+# false keeps raw thinking hidden for new users; set
+# spec.console.enableRawThinking=true only for explicit diagnostic access.
 location = /runtime-config.js {
   default_type application/javascript;
   add_header Cache-Control "no-cache, must-revalidate" always;
@@ -343,80 +418,10 @@ location / {
 `, caFile, afURL, afURL, afURL, enableRawThinking)
 }
 
-// ConsoleRoute builds the OCP Route for external access to the console.
-func ConsoleRoute(kn *kubernautv1alpha2.Kubernaut) *routev1.Route {
-	if kn.Spec.Console.Route.Enabled != nil && !*kn.Spec.Console.Route.Enabled {
-		return nil
-	}
-
-	route := &routev1.Route{
-		ObjectMeta: ObjectMeta(kn, ComponentConsole, ComponentConsole),
-		Spec: routev1.RouteSpec{
-			To: routev1.RouteTargetReference{
-				Kind:   "Service",
-				Name:   ComponentConsole,
-				Weight: ptr.To(int32(100)),
-			},
-			Port: &routev1.RoutePort{
-				TargetPort: intstr.FromString("http"),
-			},
-			TLS: &routev1.TLSConfig{
-				Termination:                   routev1.TLSTerminationEdge,
-				InsecureEdgeTerminationPolicy: routev1.InsecureEdgeTerminationPolicyRedirect,
-			},
-		},
-	}
-	// #268: the console is the externally-reachable ingress for the A2A
-	// investigation stream (nginx proxies /a2a/ to apifrontend internally
-	// with a 3600s read/send timeout, see ConsoleNginxConfigMap); without
-	// this annotation OCP HAProxy's default server timeout kills
-	// long-running investigations mid-stream ("context canceled"),
-	// dropping the train-of-thought and decision UI. Mirrors
-	// GatewayRoute/APIFrontendRoute in ocp.go.
-	route.Annotations = map[string]string{
-		"haproxy.router.openshift.io/timeout": routeSSETimeout,
-	}
-
-	if kn.Spec.Console.Route.Host != "" {
-		route.Spec.Host = kn.Spec.Console.Route.Host
-	}
-
-	return route
-}
-
-// ConsoleRouteStub returns a minimal Route for deletion lookups.
-func ConsoleRouteStub(kn *kubernautv1alpha2.Kubernaut) *routev1.Route {
-	return &routev1.Route{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      ComponentConsole,
-			Namespace: kn.Namespace,
-		},
-	}
-}
-
-func consoleRedirectURL(kn *kubernautv1alpha2.Kubernaut, ingressDomain string) string {
-	if kn.Spec.Console.Route.Host != "" {
-		return fmt.Sprintf("https://%s/oauth2/callback", kn.Spec.Console.Route.Host)
-	}
-	if ingressDomain == "" {
-		ingressDomain = "apps.cluster.local"
-	}
-	return fmt.Sprintf("https://%s-%s.%s/oauth2/callback",
-		ComponentConsole, kn.Namespace, ingressDomain)
+func consoleRedirectURL(kn *kubernautv1alpha2.Kubernaut) string {
+	return kn.Spec.Console.Auth.RedirectURL
 }
 
 func consoleContainerResources(kn *kubernautv1alpha2.Kubernaut) corev1.ResourceRequirements {
-	if len(kn.Spec.Console.Resources.Requests) > 0 || len(kn.Spec.Console.Resources.Limits) > 0 {
-		return kn.Spec.Console.Resources
-	}
-	return corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("10m"),
-			corev1.ResourceMemory: resource.MustParse("16Mi"),
-		},
-		Limits: corev1.ResourceList{
-			corev1.ResourceCPU:    resource.MustParse("50m"),
-			corev1.ResourceMemory: resource.MustParse("64Mi"),
-		},
-	}
+	return MergeResources(kn.Spec.Console.Resources)
 }

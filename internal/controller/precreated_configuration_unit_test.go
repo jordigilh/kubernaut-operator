@@ -63,6 +63,64 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		Expect(collector.errs).To(BeEmpty(), "profile referential integrity reports this error before pre-created Secret collection")
 	})
 
+	It("UT-419-CTRL-001 [IA-5, AC-6; SOC2 CC6.6, CC8.1; ASVS v5.0.0-V8.2.1, v5.0.0-V13.3.1] collects pre-created Secrets for the enabled alignment sibling agent", func() {
+		kn := newMinimalCR()
+		kn.Spec.KubernautAgent.AlignmentCheck = kubernautv1alpha2.AlignmentCheckSpec{
+			Enabled:       true,
+			LLMProfileRef: "alignment-profile",
+		}
+		kn.Spec.LLMProfiles["alignment-profile"] = kubernautv1alpha2.LLMProfileSpec{
+			Provider:              "anthropic",
+			Model:                 "claude-3-5-sonnet",
+			CredentialsSecretName: "alignment-llm-credentials",
+			OAuth2: kubernautv1alpha2.OAuth2Spec{
+				Enabled:              true,
+				CredentialsSecretRef: "alignment-oauth",
+			},
+			TLSCertFile:        "/etc/llm/tls.crt",
+			TLSKeyFile:         "/etc/llm/tls.key",
+			TLSClientSecretRef: "alignment-tls",
+		}
+		collector := newPrecreatedReferenceCollector()
+		appendPrecreatedLLMReferences(collector, kn)
+		hasReference := func(path, name string, requiredKeys ...string) bool {
+			for _, reference := range collector.references {
+				if reference.path != path || reference.name != name || len(reference.requiredKeys) != len(requiredKeys) {
+					continue
+				}
+				keys := make(map[string]struct{}, len(reference.requiredKeys))
+				for _, key := range reference.requiredKeys {
+					keys[key] = struct{}{}
+				}
+				matched := true
+				for _, key := range requiredKeys {
+					if _, ok := keys[key]; !ok {
+						matched = false
+						break
+					}
+				}
+				if matched {
+					return true
+				}
+			}
+			return false
+		}
+
+		Expect(collector.errs).To(BeEmpty())
+		Expect(hasReference(
+			"spec.llmProfiles[\"alignment-profile\"].credentialsSecretName",
+			"alignment-llm-credentials", "api_key",
+		)).To(BeTrue())
+		Expect(hasReference(
+			"spec.llmProfiles[\"alignment-profile\"].oauth2.credentialsSecretRef",
+			"alignment-oauth", "client-id", "client-secret",
+		)).To(BeTrue())
+		Expect(hasReference(
+			"spec.llmProfiles[\"alignment-profile\"].tlsClientSecretRef",
+			"alignment-tls", "tls.crt", "tls.key",
+		)).To(BeTrue())
+	})
+
 	It("UT-CONFIG-512-001 rejects a missing required ConfigMap before migration", func() {
 		kn := newMinimalCR()
 		r := businessUnitReconciler(kn, clientInterceptorNone())
@@ -84,13 +142,16 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		Expect(jobs.Items).To(BeEmpty())
 	})
 
-	It("UT-CONFIG-512-002 rejects a referenced Secret with a missing required key", func() {
+	It("UT-CONFIG-512-002 rejects a provider-neutral credential Secret with a missing required key", func() {
 		kn := newMinimalCR()
-		kn.Spec.Notification.Slack.SecretName = "missing-slack-key"
+		kn.Spec.Notification.Credentials = []kubernautv1alpha2.NotificationCredentialSpec{{
+			Name:      "teams-primary",
+			SecretRef: kubernautv1alpha2.NotificationSecretRef{Name: "missing-credential-key", Key: "webhook-url"},
+		}}
 		r := businessUnitReconciler(kn, clientInterceptorNone())
 		seedValidPrecreatedInputs(r, kn)
 		seedPrecreatedObject(r, &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: "missing-slack-key", Namespace: kn.Namespace},
+			ObjectMeta: metav1.ObjectMeta{Name: "missing-credential-key", Namespace: kn.Namespace},
 			Data:       map[string][]byte{},
 		})
 
@@ -109,16 +170,19 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 	It("UT-CONFIG-512-003 accepts valid conditional references", func() {
 		kn := newMinimalCR()
 		kn.Spec.KubernautAgent.RuntimeConfigMapName = "custom-llm-runtime"
-		kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: "custom-proactive"}
 		kn.Spec.Notification.Routing = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: "custom-routing"}
-		kn.Spec.Notification.Slack.SecretName = "slack-webhook"
-		kn.Spec.Gateway.AlertManagerTokenSecretName = "alertmanager-token"
+		kn.Spec.Notification.Credentials = []kubernautv1alpha2.NotificationCredentialSpec{{
+			Name:      "slack-ops",
+			SecretRef: kubernautv1alpha2.NotificationSecretRef{Name: "slack-webhook", Key: "webhook-url"},
+		}}
+		kn.Spec.Gateway.Auth.AlertManager.TokenSecretName = "alertmanager-token"
 		kn.Spec.WorkflowExecution.Ansible.Enabled = true
 		kn.Spec.WorkflowExecution.Ansible.APIURL = "https://awx.example.com"
 		kn.Spec.WorkflowExecution.Ansible.TokenSecretRef = &kubernautv1alpha2.SecretKeyRef{Name: "ansible-token"}
 		kn.Spec.WorkflowExecution.Ansible.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "ansible-ca"}
 		kn.Spec.Console.Enabled = ptr.To(true)
 		kn.Spec.Console.Auth.SecretName = "console-oidc"
+		kn.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
 		kn.Spec.APIFrontend.SeverityTriage = &kubernautv1alpha2.APIFrontendSeverityTriageSpec{LLMProfileRef: "primary"}
 		kn.Spec.Valkey.TLS = &kubernautv1alpha2.ValkeyTLSSpec{
 			Enabled:              true,
@@ -127,6 +191,7 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		}
 		profile := kn.Spec.LLMProfiles["primary"]
 		profile.OAuth2.Enabled = true
+		profile.OAuth2.TokenURL = "https://idp.example/token"
 		profile.OAuth2.CredentialsSecretRef = "llm-oauth"
 		profile.TLSCertFile = "/etc/llm/tls.crt"
 		profile.TLSKeyFile = "/etc/llm/tls.key"
@@ -136,7 +201,6 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		seedValidPrecreatedInputs(r, kn)
 		for _, object := range []client.Object{
 			&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "custom-llm-runtime", Namespace: kn.Namespace}, Data: map[string]string{"llm-runtime.yaml": "model: gpt-4o"}},
-			&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "custom-proactive", Namespace: kn.Namespace}, Data: map[string]string{"proactive-signal-mappings.yaml": "proactive_signal_mappings: {}"}},
 			&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "custom-routing", Namespace: kn.Namespace}, Data: map[string]string{"routing.yaml": "route: {}"}},
 			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "slack-webhook", Namespace: kn.Namespace}, Data: map[string][]byte{"webhook-url": []byte("https://hooks.slack.example/unit")}},
 			&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "alertmanager-token", Namespace: kn.Namespace}, Data: map[string][]byte{"token": []byte("unit-token")}},
@@ -198,32 +262,29 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		_, defaultErrs := precreatedConfigurationReferences(defaultNames)
 		Expect(defaultErrs).To(BeEmpty())
 
+		invalidRouting := newMinimalCR()
+		invalidRouting.Spec.Notification.Routing = &kubernautv1alpha2.ConfigMapRef{}
+		_, invalidRoutingErrs := precreatedConfigurationReferences(invalidRouting)
+		Expect(invalidRoutingErrs).To(HaveLen(1))
+		Expect(invalidRoutingErrs[0]).To(MatchError("spec.notification.routing.configMapName: name must be set"))
+
 		kn.Spec.AIAnalysis.Policy.ConfigMapName = ""
-		kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha2.ConfigMapRef{}
 		kn.Spec.WorkflowExecution.Ansible.Enabled = true
 		kn.Spec.WorkflowExecution.Ansible.TokenSecretRef = nil
-		profile := kn.Spec.LLMProfiles["primary"]
+		const primaryProfile = "primary"
+		profile := kn.Spec.LLMProfiles[primaryProfile]
 		profile.OAuth2.Enabled = true
+		profile.OAuth2.TokenURL = "https://idp.example/token"
 		profile.OAuth2.CredentialsSecretRef = ""
-		kn.Spec.LLMProfiles["primary"] = profile
+		kn.Spec.LLMProfiles[primaryProfile] = profile
 		kn.Spec.LLMProfiles["vertex"] = kubernautv1alpha2.LLMProfileSpec{
 			Provider:              "vertex_ai",
 			Model:                 "gemini",
 			CredentialsSecretName: "vertex-credentials",
 		}
 		kn.Spec.KubernautAgent.Investigation.LLMProfileRef = "vertex"
-		kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "primary"
+		kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = primaryProfile
 		_, errs := precreatedConfigurationReferences(kn)
-		Expect(errs).NotTo(BeEmpty())
-
-		kn = newMinimalCR()
-		kn.Spec.Gateway.Ingress = kubernautv1alpha2.IngressSpec{
-			Enabled: ptr.To(true), IngressClassName: "nginx", Host: "gateway.example.com", TLSSecretName: "gateway-ingress-tls",
-		}
-		_, errs = precreatedConfigurationReferences(kn)
-		Expect(errs).To(BeEmpty())
-		kn.Spec.Gateway.Ingress.IngressClassName = ""
-		_, errs = precreatedConfigurationReferences(kn)
 		Expect(errs).NotTo(BeEmpty())
 
 		enabled := true
@@ -244,9 +305,8 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 	It("UT-CONFIG-512-004 does not require omitted optional references or generated runtime ConfigMaps", func() {
 		kn := newMinimalCR()
 		kn.Spec.KubernautAgent.RuntimeConfigMapName = ""
-		kn.Spec.SignalProcessing.ProactiveSignalMappings = nil
 		kn.Spec.Notification.Routing = nil
-		kn.Spec.Notification.Slack.SecretName = ""
+		kn.Spec.Notification.Credentials = nil
 		kn.Spec.WorkflowExecution.Ansible.Enabled = false
 		kn.Spec.Console.Enabled = ptr.To(false)
 		kn.Spec.APIFrontend.Enabled = ptr.To(false)
@@ -301,7 +361,7 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		}
 		seedPrecreatedObject(r, invalidJSON)
 		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
-			kind: precreatedSecretReference, path: "spec.credentials", name: invalidJSON.Name, requiredKeys: []string{"credentials.json"},
+			kind: precreatedSecretReference, path: "spec.credentials", name: invalidJSON.Name, requiredKeys: []string{"credentials.json"}, jsonKeys: []string{"credentials.json"},
 		})).To(MatchError(ContainSubstring("invalid JSON")))
 
 		validRuntime := &corev1.ConfigMap{
@@ -348,7 +408,7 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		}
 		seedPrecreatedObject(r, invalidCA)
 		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
-			kind: precreatedSecretReference, path: "spec.ca", name: invalidCA.Name, requiredKeys: []string{"ca.crt"},
+			kind: precreatedSecretReference, path: "spec.ca", name: invalidCA.Name, requiredKeys: []string{"ca.crt"}, pemKeys: []string{"ca.crt"},
 		})).To(MatchError(ContainSubstring("valid CA PEM")))
 
 		invalidTLS := &corev1.Secret{
@@ -360,14 +420,14 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 			kind: precreatedSecretReference, path: "spec.tls", name: invalidTLS.Name, requiredKeys: []string{corev1.TLSCertKey, corev1.TLSPrivateKeyKey},
 		})).To(MatchError(ContainSubstring("invalid TLS certificate/key pair")))
 
-		invalidURL := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: "invalid-url", Namespace: kn.Namespace},
-			Data:       map[string][]byte{"webhook-url": []byte("not-a-url")},
+		opaqueCredential := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "opaque-credential", Namespace: kn.Namespace},
+			Data:       map[string][]byte{"webhook-url": []byte("provider-specific-value")},
 		}
-		seedPrecreatedObject(r, invalidURL)
+		seedPrecreatedObject(r, opaqueCredential)
 		Expect(r.validatePrecreatedReference(ctx, kn.Namespace, precreatedReference{
-			kind: precreatedSecretReference, path: "spec.slack", name: invalidURL.Name, requiredKeys: []string{"webhook-url"},
-		})).To(MatchError(ContainSubstring("valid URL")))
+			kind: precreatedSecretReference, path: "spec.notification.credentials[0].secretRef", name: opaqueCredential.Name, requiredKeys: []string{"webhook-url"},
+		})).NotTo(HaveOccurred())
 
 		Expect(r.precreatedConfigurationToKubernaut(ctx, nil)).To(BeEmpty())
 		Expect(r.precreatedConfigurationToKubernaut(ctx, &appsv1.Deployment{})).To(BeEmpty())

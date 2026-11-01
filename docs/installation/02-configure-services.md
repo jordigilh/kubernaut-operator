@@ -70,7 +70,13 @@ spec:
       # Azure OpenAI:
       # azureApiVersion: "2024-02-01"
       # Custom CA for LLM TLS:
-      # tlsCaFile: /path/to/ca.pem
+      # tlsCaFile: /etc/kubernaut-agent/llm-tls-client/ca.crt
+      # tlsCaSecretRef:
+      #   name: primary-llm-ca       # key defaults to ca.crt
+      # Optional LLM mTLS client material:
+      # tlsCertFile: /etc/kubernaut-agent/llm-tls-client/tls.crt
+      # tlsKeyFile: /etc/kubernaut-agent/llm-tls-client/tls.key
+      # tlsClientSecretRef: primary-llm-client  # tls.crt + tls.key
     lightweight:
       provider: openai
       model: gpt-4o-mini
@@ -86,6 +92,14 @@ spec:
 ```
 
 Cross-credential Agent profile references are supported. The operator mounts each distinct credentials Secret read-only for its owning Agent invocation. Severity-triage retains its independent profile and fallback behavior.
+
+When `tlsCaSecretRef` is set, the selected CA key is validated as PEM before
+workloads are created and mounted read-only. `tlsClientSecretRef` is similarly
+validated for `tls.crt` and `tls.key`. Workflow-discovery and alignment profiles
+use their own deterministic TLS directories; material is reused only when the
+effective Secret/path identity is intentionally shared. Path-only `tlsCaFile`
+values without a Secret reference remain administrator-managed external files
+and are not inspected by the operator.
 
 The operator auto-generates each component's LLM runtime config from its resolved profile. If your environment includes custom CRDs or advanced routing needs beyond `provider`/`model`, see the BYO runtime ConfigMap section below.
 
@@ -287,29 +301,6 @@ data:
 EOF
 ```
 
-### Proactive signal mappings (optional)
-
-To enable proactive remediation for `predict_linear()` alerts, create a mapping ConfigMap. Signals matching a key are classified as `proactive` and normalized to the base type so existing workflows are reused:
-
-```bash
-oc apply -f - <<EOF
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: proactive-signal-mappings
-  namespace: kubernaut-system
-data:
-  proactive-signal-mappings.yaml: |
-    proactive_signal_mappings:
-      PredictedOOMKill: OOMKilled
-      PredictedCPUThrottling: CPUThrottling
-      PredictedDiskPressure: DiskPressure
-      PredictedNodeNotReady: NodeNotReady
-EOF
-```
-
-Reference it in the CR under `spec.signalProcessing.proactiveSignalMappings.configMapName`.
-
 ## AI Analysis (AA) -- Approval Policy (Required)
 
 The AA controller uses a Rego policy to decide whether an AI-generated remediation plan should be auto-approved or require human review. **This is a required prerequisite** -- the operator will not create a default policy. You must provide a ConfigMap with your Rego policy and reference it in `spec.aiAnalysis.policy.configMapName`. The operator will reject the CR with a validation error if this field is empty.
@@ -419,8 +410,6 @@ The Gateway accepts signals from AlertManager and routes them to Signal Processi
 ```yaml
 spec:
   gateway:
-    route:
-      enabled: true
     logging:
       level: info               # debug, info, warn, error
     config:
@@ -431,6 +420,10 @@ spec:
 ```
 
 All gateway config fields are optional; the operator uses sensible defaults when omitted.
+
+The operator creates the internal Gateway Service only. Configure any external
+Route, Ingress, Gateway API, mesh, hostname, edge TLS, and edge authorization
+resource separately as an administrator-owned object.
 
 ## Remediation Orchestrator Tuning (optional)
 
@@ -563,8 +556,10 @@ spec:
 
 The standalone web Console (A2A chat UI, `spec.console.enabled`) is fronted by an oauth2-proxy sidecar that needs its own OIDC client -- distinct from the Fleet client-credentials clients above and from AF's own OIDC config. Provision a **confidential, Authorization Code flow** client (`standardFlowEnabled`, not a service-account/client-credentials client) on your OIDC provider:
 
-- Redirect URI: `https://<console-route-host>/oauth2/callback`, matching `spec.console.route.host`.
-- Web origin: `https://<console-route-host>`.
+- Redirect URI: the explicit HTTPS callback URL set in
+  `spec.console.auth.redirectURL` (for example,
+  `https://console.example.com/oauth2/callback`).
+- Web origin: the administrator-owned external Console URL.
 
 Build the Secret from the client's credentials plus a locally-generated cookie secret (used by oauth2-proxy to encrypt the session cookie, not an OIDC value). `spec.console.auth.secretName` requires exactly these three keys. The cookie secret's raw value must be exactly 16, 24, or 32 bytes (oauth2-proxy uses it as an AES key) -- `head -c 32` truncates the base64 text to 32 *characters*, which is already the right raw length, so do not additionally base64-encode the result or oauth2-proxy will reject it (`cookie_secret must be 16, 24, or 32 bytes ... but is 44 bytes`):
 
@@ -581,7 +576,30 @@ spec:
     enabled: true
     auth:
       secretName: kubernaut-console-oidc
+      redirectURL: https://console.example.com/oauth2/callback
+      # Optional provider-discovered OIDC end_session_endpoint. Keep the
+      # literal {id_token} placeholder; oauth2-proxy substitutes it server-side.
+      providerLogoutURL: "https://idp.example.com/realms/kubernaut/protocol/openid-connect/logout?id_token_hint={id_token}"
 ```
+
+Raw thinking is hidden by default for new Console users. The operator serves
+this policy through the Console's same-origin runtime configuration, so the
+released Console image cannot silently restore the old header toggle. Set
+`spec.console.enableRawThinking: true` only when an administrator explicitly
+wants the raw LLM reasoning view for diagnostic purposes; leaving it unset or
+setting it to `false` keeps the view disabled.
+
+This is a deployment-wide setting: when enabled, raw thinking is available to
+every authenticated Console user. The operator does not provide per-user
+authorization for this diagnostic view, so enable it only when that audience
+is appropriate for the deployment.
+`providerLogoutURL` is optional. When configured, it must be an absolute HTTPS
+endpoint whose authority exactly matches the effective Console OIDC issuer. The
+operator rejects HTTP (including localhost), malformed placeholders, fragments,
+and client-controlled return-target parameters. It does not send the ID token
+to the Console SPA. The Console oauth2-proxy pod builds a combined system and
+configured-provider CA bundle so public and self-signed provider certificates
+are verified; certificate verification is never disabled.
 
 If you don't need the standalone Console UI, omit the `console` block entirely (it defaults to disabled).
 
@@ -597,24 +615,23 @@ oc get configmap -n kubernaut-system \
 
 > **Note**: The operator validates that `spec.signalProcessing.policy.configMapName` and `spec.aiAnalysis.policy.configMapName` are set. If either is missing, reconciliation will fail with a clear validation error on the CR status.
 
-If using BYO LLM runtime config or proactive mappings:
+If using BYO LLM runtime config:
 
 ```bash
 oc get configmap -n kubernaut-system \
-  custom-llm-runtime \
-  proactive-signal-mappings
+  custom-llm-runtime
 ```
 
 ## Additional RBAC for API Frontend
 
 > **Hard requirement, not optional, for tool access:** whenever
-> `spec.apiFrontend.enabled` is true (the default),
+> `spec.apiFrontend.enabled` is true,
 > `spec.apiFrontend.rbac.roleBindings` **must** list at least one OIDC
 > group your users actually belong to, before you apply the CR. There is
 > no permissive fallback if it's left unset — every user, including
 > `cluster-admin`, gets every tool call rejected. This is fail-closed by
 > design (least-privilege), with no dev-mode bypass; skip this section
-> only if you set `spec.apiFrontend.enabled: false`.
+> when API Frontend remains disabled.
 >
 > The Console UI itself is a *separate* gate and, unlike tool access, is
 > permissive by default (kubernaut#2150) — see "Console access" (2) below
@@ -784,25 +801,26 @@ Kubernetes RBAC.
 ### Monitoring client TLS trust
 
 Prometheus, AlertManager, EffectivenessMonitor, Kubernaut Agent, and API
-Frontend severity-triage share `spec.monitoring.tls`. Select `interService`
-(the default), `system`, or an administrator-owned `secret`/`configMap`:
+Frontend severity-triage share the optional `spec.monitoring.tls` trust
+configuration. Omit it for the container/system trust store, or provide an
+administrator-owned Secret:
 
 ```yaml
 spec:
   monitoring:
     tls:
-      source: secret
       caCertSecretRef:
         name: monitoring-ca
         key: ca.crt
 ```
 
-The operator verifies the referenced object and CA PEM before deployment and
+The operator verifies the referenced Secret and CA PEM before deployment and
 mounts it read-only at `/etc/monitoring-tls/ca.crt`. This is client trust only;
 serving TLS remains under `spec.tls`. Configured monitoring endpoints must use
-`https://`; the operator rejects plaintext monitoring URLs. The removed pre-publication fields
-`monitoring.prometheus.tlsCaFile` and `monitoring.alertManager.tlsCaFile` must
-not be used.
+`https://`; the operator rejects plaintext monitoring URLs. The removed
+pre-publication fields `monitoring.tls.source`,
+`monitoring.tls.caCertConfigMapRef`, `monitoring.prometheus.tlsCaFile`, and
+`monitoring.alertManager.tlsCaFile` must not be used.
 
 ---
 

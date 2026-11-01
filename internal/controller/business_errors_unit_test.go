@@ -11,7 +11,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -59,33 +58,38 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 		Expect(err).To(MatchError("injected status failure"))
 	})
 
-	It("UT-AUDIT-515-ERRORS-003: bounds failed migration retries and deletes stale completed Jobs", func() {
-		for _, failed := range []int32{1, maxMigrationRetries} {
-			kn := newMinimalCR()
-			r := businessUnitReconciler(kn, interceptor.Funcs{})
-			job, err := resources.MigrationJob(kn)
-			Expect(err).NotTo(HaveOccurred())
-			job.Status.Failed = failed
-			job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
-			Expect(r.Create(ctx, job)).To(Succeed())
-			result, err := r.ensureMigrationJob(ctx, kn)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result.RequeueAfter).To(Equal(requeueError))
-			Expect(meta.IsStatusConditionFalse(kn.Status.Conditions, kubernautv1alpha2.ConditionMigrationComplete)).To(BeTrue())
-			live := &batchv1.Job{}
-			readErr := r.Get(ctx, client.ObjectKeyFromObject(job), live)
-			Expect(apierrors.IsNotFound(readErr)).To(Equal(failed < maxMigrationRetries))
-		}
+	It("UT-AUDIT-515-ERRORS-003: retains current failed migration Jobs and deletes stale completed Jobs", func() {
 		kn := newMinimalCR()
 		r := businessUnitReconciler(kn, interceptor.Funcs{})
 		job, err := resources.MigrationJob(kn)
 		Expect(err).NotTo(HaveOccurred())
-		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+		credentialRevision, err := r.postgresqlCredentialRevision(ctx, kn)
+		Expect(err).NotTo(HaveOccurred())
+		job.Annotations = map[string]string{
+			resources.AnnotationPostgreSQLCredentialRevision: credentialRevision,
+		}
+		job.Annotations[resources.AnnotationSpecHash] = resources.SpecHash(job)
+		job.Status.Failed = 1
+		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
 		Expect(r.Create(ctx, job)).To(Succeed())
 		result, err := r.ensureMigrationJob(ctx, kn)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(result.RequeueAfter).To(Equal(time.Millisecond))
-		Expect(apierrors.IsNotFound(r.Get(ctx, client.ObjectKeyFromObject(job), &batchv1.Job{}))).To(BeTrue())
+		Expect(result.RequeueAfter).To(Equal(requeueError))
+		Expect(meta.IsStatusConditionFalse(kn.Status.Conditions, kubernautv1alpha2.ConditionMigrationComplete)).To(BeTrue())
+		Expect(r.Get(ctx, client.ObjectKeyFromObject(job), &batchv1.Job{})).To(Succeed())
+
+		{
+			kn := newMinimalCR()
+			r := businessUnitReconciler(kn, interceptor.Funcs{})
+			job, err := resources.MigrationJob(kn)
+			Expect(err).NotTo(HaveOccurred())
+			job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+			Expect(r.Create(ctx, job)).To(Succeed())
+			result, err := r.ensureMigrationJob(ctx, kn)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(time.Millisecond))
+			Expect(apierrors.IsNotFound(r.Get(ctx, client.ObjectKeyFromObject(job), &batchv1.Job{}))).To(BeTrue())
+		}
 	})
 
 	It("UT-AUDIT-515-ERRORS-004: retains finalizers when cleanup or finalizer removal fails", func() {
@@ -125,7 +129,6 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resources.DeploymentName(resources.ComponentGateway), Namespace: kn.Namespace}},
 			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resources.DeploymentName(resources.ComponentFleetMetadataCache), Namespace: kn.Namespace}},
 			&rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: resources.ConsoleAccessCRBName(kn)}},
-			&networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: "gateway-ingress", Namespace: kn.Namespace}},
 			&rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "stale-role"}})
 		for _, cleanup := range []func() error{
 			func() error { return r.cleanupDisabledGateway(ctx, kn) },
@@ -133,7 +136,6 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 			func() error { return r.deployToggleRBAC(ctx, kn) },
 			func() error { return r.deployConsoleAccessRBAC(ctx, kn) },
 			func() error { _, err := r.enabledDeploymentBuilders(ctx, kn, kn); return err },
-			func() error { _, err := r.reconcileGenericIngresses(ctx, kn); return err },
 		} {
 			Expect(cleanup()).To(MatchError(ContainSubstring("injected cleanup failure")))
 		}
@@ -148,7 +150,9 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 		kn.Spec.WorkflowExecution.Ansible.Enabled = true
 		Expect(r.validateAnsibleConfig(ctx, kn).Reason).To(Equal(ReasonAnsibleTokenNotFound))
 		kn.Spec.WorkflowExecution.Ansible.TokenSecretRef = &kubernautv1alpha2.SecretKeyRef{Name: "unit-token"}
-		kn.Spec.Gateway.AlertManagerTokenSecretName = "unit-token"
+		kn.Spec.Gateway.Auth.Enabled = ptr.To(true)
+		Expect(r.validateAlertManagerAuthConfig(ctx, kn).Reason).To(Equal(ReasonAlertManagerAuthNotConfigured))
+		kn.Spec.Gateway.Auth.AlertManager.TokenSecretName = "unit-token"
 		Expect(r.validateAnsibleConfig(ctx, kn).Reason).To(Equal(ReasonAnsibleTokenNotFound))
 		Expect(r.validateAlertManagerAuthConfig(ctx, kn).Reason).To(Equal(ReasonAlertManagerAuthSecretMissing))
 		secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "unit-token", Namespace: kn.Namespace}}
@@ -159,11 +163,28 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 		Expect(r.Update(ctx, secret)).To(Succeed())
 		Expect(r.validateAnsibleConfig(ctx, kn).Status).To(Equal(metav1.ConditionTrue))
 		Expect(r.validateAlertManagerAuthConfig(ctx, kn).Status).To(Equal(metav1.ConditionTrue))
+		kn.Spec.WorkflowExecution.Ansible.TokenSecretRef = nil
+		kn.Spec.Gateway.Auth.AlertManager.TokenSecretName = ""
+		Expect(r.validateAnsibleConfig(ctx, kn).Status).To(Equal(metav1.ConditionFalse))
+		_, phaseErr := r.phaseRunning(ctx, kn, kn)
+		Expect(phaseErr).NotTo(HaveOccurred())
 		kn.Spec.Gateway.Enabled = ptr.To(false)
 		Expect(r.validateAlertManagerAuthConfig(ctx, kn).Reason).To(Equal(ReasonAlertManagerAuthGatewayDisabled))
-		kn.Spec.WorkflowExecution.Ansible.TokenSecretRef = nil
 		_, err := r.phaseRunning(ctx, kn, kn)
 		Expect(err).NotTo(HaveOccurred())
+	})
+
+	It("UT-539-GW-AUTH-CONDITION-001 [AC-3, CM-6; ASVS v5.0.0-V8.3.1, v5.0.0-V16.5.2]: treats explicit Gateway auth disablement as intentional rather than missing credentials", func() {
+		kn := newMinimalCR()
+		disabled := false
+		kn.Spec.Gateway.Auth.Enabled = &disabled
+		kn.Spec.Gateway.Auth.AlertManager.TokenSecretName = "must-not-be-read"
+		r := businessUnitReconciler(kn, interceptor.Funcs{})
+
+		condition := r.validateAlertManagerAuthConfig(ctx, kn)
+		Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+		Expect(condition.Reason).To(Equal(ReasonAlertManagerAuthDisabled))
+		Expect(condition.Message).To(ContainSubstring("set spec.gateway.auth.enabled=true"))
 	})
 
 	It("UT-AUDIT-515-ERRORS-007: prunes additional-role and persona bindings on shrink and preserves required bindings", func() {

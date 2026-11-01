@@ -23,6 +23,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -44,6 +46,7 @@ const (
 	serviceAccountName     = "kubernaut-operator-controller-manager"
 	metricsServiceName     = "kubernaut-operator-controller-manager-metrics-service"
 	metricsRoleBindingName = "kubernaut-operator-metrics-binding"
+	defaultMustGatherImage = "quay.io/kubernaut-ai/must-gather:latest"
 )
 
 var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
@@ -53,6 +56,12 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 		By("creating the CR namespace")
 		cmd := exec.Command("kubectl", "create", "ns", crNS)
 		_, _ = utils.Run(cmd) // ignore if already exists
+
+		By("installing the disposable PostgreSQL and Valkey bootstrap")
+		installDevelopmentDependencies()
+
+		By("installing application-owned test fixtures")
+		installApplicationFixtures()
 
 		By("installing CRDs")
 		cmd = exec.Command("make", "install")
@@ -66,6 +75,11 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 	})
 
 	AfterAll(func() {
+		if preserveE2ENamespaces() {
+			_, _ = fmt.Fprintf(GinkgoWriter, "preserving E2E namespaces %q and %q for failure investigation\n", operatorNS, crNS)
+			return
+		}
+
 		By("cleaning up the curl pod for metrics")
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics",
 			"-n", operatorNS, "--ignore-not-found=true")
@@ -76,12 +90,18 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			"-n", crNS, "--ignore-not-found=true", "--timeout=60s")
 		_, _ = utils.Run(cmd)
 
-		By("cleaning up BYO secrets")
-		for _, s := range []string{"postgresql-secret", "valkey-secret", "llm-credentials"} {
-			cmd = exec.Command("kubectl", "delete", "secret", s,
-				"-n", crNS, "--ignore-not-found=true")
-			_, _ = utils.Run(cmd)
-		}
+		By("uninstalling the disposable PostgreSQL and Valkey bootstrap")
+		cmd = exec.Command("helm", "uninstall", "kubernaut-development-dependencies",
+			"-n", crNS, "--wait")
+		_, _ = utils.Run(cmd)
+
+		By("removing the test-owned audit key protection finalizer")
+		cmd = exec.Command("kubectl", "patch", "secret", "datastorage-audit-hmac-key",
+			"-n", crNS, "--type=merge", "-p", `{"metadata":{"finalizers":[]}}`)
+		_, _ = utils.Run(cmd)
+		cmd = exec.Command("kubectl", "patch", "configmap", "datastorage-audit-hmac-key-state",
+			"-n", crNS, "--type=merge", "-p", `{"metadata":{"finalizers":[]}}`)
+		_, _ = utils.Run(cmd)
 
 		By("undeploying the controller-manager")
 		cmd = exec.Command("make", "undeploy")
@@ -98,6 +118,7 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 
 	AfterEach(func() {
 		if CurrentSpecReport().Failed() {
+			collectMustGather()
 			collectDiagnostic("logs", controllerPodName, "-n", operatorNS)
 			collectDiagnostic("get", "events", "-n", operatorNS, "--sort-by=.lastTimestamp")
 			collectDiagnostic("get", "events", "-n", crNS, "--sort-by=.lastTimestamp")
@@ -201,9 +222,6 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 	// ── 2. CR lifecycle: create → Running ───────────────────────────────
 	Context("Kubernaut CR Lifecycle", func() {
 		BeforeAll(func() {
-			By("creating BYO prerequisite secrets")
-			createBYOSecrets()
-
 			By("applying the Kubernaut CR from config/samples")
 			cmd := exec.Command("kubectl", "apply", "-f", "config/samples/v1alpha2_kubernaut.yaml")
 			_, err := utils.Run(cmd)
@@ -248,15 +266,69 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 				Expect(err).NotTo(HaveOccurred(), "Deployment %q should exist", dep)
 				Expect(output).To(Equal(dep))
 
-				readyCmd := exec.Command("kubectl", "get", "deployment", dep,
-					"-n", crNS, "-o", "jsonpath={.status.readyReplicas}")
-				readyOutput, err := utils.Run(readyCmd)
-				Expect(err).NotTo(HaveOccurred(), "Deployment %q readyReplicas should be readable", dep)
-				Expect(readyOutput).NotTo(Equal("0"),
-					"Deployment %q should have at least one ready replica", dep)
-				Expect(readyOutput).NotTo(BeEmpty(),
-					"Deployment %q should have at least one ready replica", dep)
+				Eventually(func(g Gomega) {
+					readyCmd := exec.Command("kubectl", "get", "deployment", dep,
+						"-n", crNS, "-o", "jsonpath={.status.readyReplicas}")
+					readyOutput, getErr := utils.Run(readyCmd)
+					g.Expect(getErr).NotTo(HaveOccurred(),
+						"Deployment %q readyReplicas should be readable", dep)
+					g.Expect(readyOutput).NotTo(BeEmpty(),
+						"Deployment %q should have at least one ready replica", dep)
+					g.Expect(readyOutput).NotTo(Equal("0"),
+						"Deployment %q should have at least one ready replica", dep)
+				}, 10*time.Minute, 5*time.Second).Should(Succeed())
 			}
+		})
+
+		It("E2E-TLS-2545-OP-001 [AC-6, CM-7, SC-8; SOC2 CC7.2; "+
+			"ASVS v5.0.0-V12.3.1, v5.0.0-V15.2.5] uses upstream ambient CA ownership "+
+			"without legacy static env or ambient-only volumes", func() {
+			for _, dep := range []string{
+				"gateway", "data-storage", "aianalysis-controller",
+				"signalprocessing-controller", "remediationorchestrator-controller",
+				"workflowexecution-controller", "effectivenessmonitor-controller",
+				"notification-controller", "kubernaut-agent", "authwebhook",
+			} {
+				cmd := exec.Command("kubectl", "get", "deployment", dep, "-n", crNS, "-o", "yaml")
+				manifest, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Deployment %q should be readable", dep)
+				Expect(manifest).NotTo(ContainSubstring("name: SSL_CERT_FILE"), dep)
+				Expect(manifest).NotTo(ContainSubstring("name: SSL_CERT_DIR"), dep)
+				Expect(manifest).NotTo(ContainSubstring("name: TLS_CA_FILE"), dep)
+				Expect(manifest).NotTo(ContainSubstring("name: ambient-tmp"), dep)
+				Expect(manifest).NotTo(ContainSubstring("name: combined-ca"), dep)
+			}
+		})
+
+		It("E2E-NOT-SECRET-001 [IA-5, SC-28, CM-6; SOC2 CC6.1, CC6.6, CC8.1; "+
+			"ASVS v5.0.0-V8.2.1, v5.0.0-V16.5.2] projects the provider-neutral "+
+			"Notification credential and preserves its routing reference", func() {
+			By("checking the namespace-local Secret projection")
+			Eventually(func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "deployment", "notification-controller",
+					"-n", crNS,
+					"-o", "yaml")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(ContainSubstring("name: slack-webhook"))
+				g.Expect(output).To(ContainSubstring("name: notification-teams"))
+				g.Expect(output).To(ContainSubstring("name: notification-pagerduty"))
+				g.Expect(output).To(ContainSubstring("mountPath: /etc/notification/credentials"))
+				g.Expect(output).To(ContainSubstring("readOnly: true"))
+			}, 5*time.Minute, 2*time.Second).Should(Succeed())
+
+			By("checking the explicit routing credential reference")
+			cmd := exec.Command("kubectl", "get", "configmap", "notification-routing",
+				"-n", crNS, "-o", "jsonpath={.data.routing\\.yaml}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(ContainSubstring("credentialRef: slack-ops"))
+			Expect(output).To(ContainSubstring("credentialRef: teams-primary"))
+			Expect(output).To(ContainSubstring("credentialRef: pagerduty-critical"))
+			for _, name := range []string{"slack-webhook", "notification-teams", "notification-pagerduty"} {
+				expectApplicationFixtureOwnership("secret", name)
+			}
+			expectApplicationFixtureOwnership("configmap", "notification-routing")
 		})
 
 		It("should create Services for reachable components", func() {
@@ -269,20 +341,27 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			}
 			for _, svc := range []string{
 				"gateway-service", "data-storage-service", "aianalysis-service",
-				"signalprocessing-service", "remediationorchestrator-service",
-				"workflowexecution-service", "effectivenessmonitor-service",
-				"notification-service", "kubernaut-agent-service", "authwebhook-service",
+				"signalprocessing-controller-metrics", "remediationorchestrator-controller",
+				"workflowexecution-controller-metrics", "effectivenessmonitor-metrics",
+				"notification-metrics", "kubernaut-agent", "authwebhook-service",
 			} {
 				verifyService(svc)
 			}
 		})
 
-		It("should create the OCP Route for Gateway", func() {
-			cmd := exec.Command("kubectl", "get", "route", "gateway-route",
-				"-n", crNS, "-o", "jsonpath={.spec.to.name}")
-			output, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Gateway Route should exist")
-			Expect(output).To(Equal("gateway-service"))
+		It("E2E-EXP-565-001 [SC-7, SC-8, SI-4; SOC2 CC6.1, CC7.2; "+
+			"ASVS v5.0.0-V12.2.1, v5.0.0-V16.5.2] keeps Gateway internal unless "+
+			"an administrator creates external exposure", func() {
+			serviceCmd := exec.Command("kubectl", "get", "service", "gateway-service", "-n", crNS, "-o", "jsonpath={.spec.type}")
+			serviceType, err := utils.Run(serviceCmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(serviceType).To(Equal("ClusterIP"))
+
+			routeCmd := exec.Command("kubectl", "get", "route", "gateway-route", "-n", crNS,
+				"--ignore-not-found=true", "-o", "jsonpath={.metadata.name}")
+			routeName, err := utils.Run(routeCmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(routeName).To(BeEmpty(), "the operator must not create a Gateway Route")
 		})
 
 		It("should create ClusterRoles with kubernaut labels", func() {
@@ -356,15 +435,166 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			}
 		})
 
-		It("should NOT create default policy ConfigMaps (user-provided prerequisite)", func() {
+		It(
+			"E2E-MON-563-001 [SC-8, SC-13, SI-4; SOC2 CC7.2; "+
+				"ASVS V12.3.1, V12.3.2, V13.3.4] verifies monitoring HTTPS with the injected service CA",
+			func() {
+				const (
+					probeName                    = "effectivenessmonitor-monitoring-tls-probe"
+					probeServiceAccountName      = "monitoring-tls-probe"
+					probeMonitoringBindingName   = "monitoring-tls-probe-monitoring-view"
+					probeAlertmanagerBindingName = "monitoring-tls-probe-alertmanager-view"
+					probeImage                   = "docker.io/curlimages/curl@sha256:" +
+						"ce8e655b562cf387752de7d2076ec3f81a4383c908f386b6724ec3571ce08b4a"
+				)
+				Eventually(func(g Gomega) {
+					cmd := exec.Command(
+						"kubectl", "get", "kubernaut", "kubernaut", "-n", crNS,
+						"-o", `jsonpath={.status.conditions[?(@.type=="ServicesDeployed")].status}`,
+					)
+					status, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(status).To(Equal("True"))
+				}, 10*time.Minute, 5*time.Second).Should(Succeed())
+				Eventually(func(g Gomega) {
+					cmd := exec.Command(
+						"kubectl", "get", "serviceaccount", "effectivenessmonitor-controller",
+						"-n", crNS, "-o", "jsonpath={.metadata.name}",
+					)
+					name, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(name).To(Equal("effectivenessmonitor-controller"))
+				}, 5*time.Minute, 2*time.Second).Should(Succeed())
+				Eventually(func(g Gomega) {
+					cmd := exec.Command(
+						"kubectl", "get", "configmap", "effectivenessmonitor-service-ca",
+						"-n", crNS, "-o", "jsonpath={.metadata.name}",
+					)
+					name, err := utils.Run(cmd)
+					g.Expect(err).NotTo(HaveOccurred())
+					g.Expect(name).To(Equal("effectivenessmonitor-service-ca"))
+				}, 5*time.Minute, 2*time.Second).Should(Succeed())
+				cmd := exec.Command("kubectl", "create", "serviceaccount", probeServiceAccountName, "-n", crNS)
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() {
+					for _, resource := range []string{
+						"clusterrolebinding/" + probeMonitoringBindingName,
+						"clusterrolebinding/" + probeAlertmanagerBindingName,
+					} {
+						cmd := exec.Command("kubectl", "delete", resource, "--ignore-not-found=true")
+						_, cleanupErr := utils.Run(cmd)
+						Expect(cleanupErr).NotTo(HaveOccurred(), "failed to delete %s", resource)
+					}
+					cmd := exec.Command(
+						"kubectl", "delete", "serviceaccount", probeServiceAccountName,
+						"-n", crNS, "--ignore-not-found=true",
+					)
+					_, cleanupErr := utils.Run(cmd)
+					Expect(cleanupErr).NotTo(HaveOccurred(), "failed to delete probe ServiceAccount")
+				})
+				for _, args := range [][]string{
+					{
+						"create", "clusterrolebinding", probeMonitoringBindingName,
+						"--clusterrole=cluster-monitoring-view",
+						"--serviceaccount=" + crNS + ":" + probeServiceAccountName,
+					},
+					{
+						"create", "clusterrolebinding", probeAlertmanagerBindingName,
+						"--clusterrole=" + crNS + "-alertmanager-view",
+						"--serviceaccount=" + crNS + ":" + probeServiceAccountName,
+					},
+				} {
+					cmd := exec.Command("kubectl", args...)
+					_, err = utils.Run(cmd)
+					Expect(err).NotTo(HaveOccurred())
+				}
+				probeScript := `set -eu; token=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token); ` +
+					`curl -fsS --connect-timeout 10 --cacert /etc/monitoring-ca/service-ca.crt ` +
+					`-H \"Authorization: Bearer ${token}\" ` +
+					`https://thanos-querier.openshift-monitoring.svc:9091/api/v1/status/buildinfo ` +
+					`>/dev/null; curl -fsS --connect-timeout 10 --cacert /etc/monitoring-ca/service-ca.crt ` +
+					`-H \"Authorization: Bearer ${token}\" ` +
+					`https://alertmanager-main.openshift-monitoring.svc:9094/api/v2/status >/dev/null`
+				probeOverrides := `{
+				"spec": {
+					"serviceAccountName": "` + probeServiceAccountName + `",
+					"restartPolicy": "Never",
+					"containers": [{
+						"name": "probe",
+						"image": "` + probeImage + `",
+						"command": ["/bin/sh", "-c"],
+						"args": ["` + probeScript + `"],
+						"volumeMounts": [{
+							"name": "monitoring-ca",
+							"mountPath": "/etc/monitoring-ca",
+							"readOnly": true
+						}],
+						"securityContext": {
+							"allowPrivilegeEscalation": false,
+							"capabilities": {"drop": ["ALL"]},
+							"runAsNonRoot": true,
+							"runAsUser": 1000,
+							"seccompProfile": {"type": "RuntimeDefault"}
+						}
+					}],
+					"volumes": [{
+						"name": "monitoring-ca",
+						"configMap": {
+							"name": "effectivenessmonitor-service-ca",
+							"items": [{
+								"key": "service-ca.crt",
+								"path": "service-ca.crt"
+							}]
+						}
+					}]
+				}
+			}`
+				var probePayload struct {
+					Spec struct {
+						Containers []struct {
+							Args []string `json:"args"`
+						} `json:"containers"`
+					} `json:"spec"`
+				}
+				Expect(json.Unmarshal([]byte(probeOverrides), &probePayload)).To(Succeed())
+				Expect(probePayload.Spec.Containers).To(HaveLen(1))
+				Expect(probePayload.Spec.Containers[0].Args).To(HaveLen(1))
+				Expect(probePayload.Spec.Containers[0].Args[0]).To(
+					ContainSubstring(`-H "Authorization: Bearer ${token}"`),
+				)
+				cmd = exec.Command("kubectl", "run", probeName, "--restart=Never", "--namespace", crNS,
+					"--image="+probeImage, "--overrides", probeOverrides)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() {
+					cmd := exec.Command(
+						"kubectl", "delete", "pod", probeName, "-n", crNS,
+						"--ignore-not-found=true",
+					)
+					_, cleanupErr := utils.Run(cmd)
+					Expect(cleanupErr).NotTo(HaveOccurred(), "failed to delete monitoring TLS probe pod")
+				})
+
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", "pod", probeName, "-n", crNS, "-o", "jsonpath={.status.phase}")
+					phase, getErr := utils.Run(cmd)
+					g.Expect(getErr).NotTo(HaveOccurred())
+					if phase == "Failed" {
+						logs, logErr := utils.Run(exec.Command("kubectl", "logs", probeName, "-n", crNS))
+						g.Expect(logErr).NotTo(HaveOccurred(), logs)
+					}
+					g.Expect(phase).To(Equal("Succeeded"))
+				}, 5*time.Minute, 2*time.Second).Should(Succeed())
+			},
+		)
+
+		It("should preserve application-provided policy ConfigMaps without operator ownership", func() {
 			for _, name := range []string{
 				"aianalysis-policy",
 				"signalprocessing-policy",
 			} {
-				cmd := exec.Command("kubectl", "get", "configmap", name,
-					"-n", crNS)
-				_, err := utils.Run(cmd)
-				Expect(err).To(HaveOccurred(), "ConfigMap %q should not be created by the operator", name)
+				expectApplicationFixtureOwnership("configmap", name)
 			}
 		})
 
@@ -396,16 +626,33 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			verifyCleanedUp("clusterrolebindings")
 		})
 
-		It("should clean up the workflow namespace", func() {
-			verifyCleaned := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "namespace", workflowNS,
-					"--ignore-not-found=true", "-o", "jsonpath={.metadata.name}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(BeEmpty(),
-					"workflow namespace should be deleted")
+		It("should retain the workflow namespace and clean operator-owned contents", func() {
+			cmd := exec.Command("kubectl", "get", "namespace", workflowNS,
+				"-o", "jsonpath={.metadata.name}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "workflow namespace should be retained")
+			Expect(output).To(Equal(workflowNS))
+
+			cmd = exec.Command("kubectl", "get", "namespace", workflowNS,
+				"-o", "jsonpath={.metadata.labels.app\\.kubernetes\\.io/managed-by}")
+			output, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred(), "workflow namespace ownership should be readable")
+			Expect(output).To(Equal("kubernaut-operator"),
+				"retained workflow namespace should keep operator provenance")
+
+			for _, kind := range []string{"role", "rolebinding", "serviceaccount"} {
+				Eventually(func(g Gomega) {
+					cmd := exec.Command("kubectl", "get", kind,
+						"-n", workflowNS,
+						"-l", "app.kubernetes.io/managed-by=kubernaut-operator",
+						"-o", `go-template={{range .items}}{{.metadata.name}}{{"\n"}}{{end}}`)
+					output, getErr := utils.Run(cmd)
+					g.Expect(getErr).NotTo(HaveOccurred(),
+						"operator-owned workflow %s should be readable", kind)
+					g.Expect(utils.GetNonEmptyLines(output)).To(BeEmpty(),
+						"operator-owned workflow %s should be deleted", kind)
+				}, 2*time.Minute).Should(Succeed())
 			}
-			Eventually(verifyCleaned, 2*time.Minute).Should(Succeed())
 		})
 
 		It("should clean up webhook configurations", func() {
@@ -435,44 +682,143 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 	})
 })
 
-// createBYOSecrets creates the prerequisite Secrets the operator expects:
-// postgresql, valkey, and LLM credentials.
-func createBYOSecrets() {
-	secrets := []struct {
-		name string
-		data map[string]string
-	}{
-		{
-			name: "postgresql-secret",
-			data: map[string]string{
-				"POSTGRES_USER":     "kubernaut",
-				"POSTGRES_PASSWORD": "test-pg-password",
-				"POSTGRES_DB":       "kubernaut",
-			},
-		},
-		{
-			name: "valkey-secret",
-			data: map[string]string{
-				"valkey-secrets.yaml": "requirepass test-valkey-password",
-			},
-		},
-		{
-			name: "llm-credentials",
-			data: map[string]string{
-				"api-key": "sk-test-not-real-key-for-e2e",
-			},
-		},
-	}
+func installDevelopmentDependencies() {
+	ctx, cancel := context.WithTimeout(context.Background(), 11*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "helm", "upgrade", "--install", "kubernaut-development-dependencies",
+		"charts/kubernaut-development-dependencies",
+		"--namespace", crNS,
+		"--create-namespace",
+		"--wait", "--timeout", "10m")
+	_, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to install the development dependencies chart")
+}
 
-	for _, s := range secrets {
-		args := []string{"create", "secret", "generic", s.name, "-n", crNS}
-		for k, v := range s.data {
-			args = append(args, fmt.Sprintf("--from-literal=%s=%s", k, v))
-		}
-		cmd := exec.CommandContext(context.Background(), "kubectl", args...)
-		_, err := utils.Run(cmd)
-		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to create secret %q", s.name)
-	}
+func installApplicationFixtures() {
+	const fixtures = `apiVersion: v1
+kind: Secret
+metadata:
+  name: llm-credentials
+  namespace: kubernaut-system
+  labels:
+    app.kubernetes.io/managed-by: kubernaut-e2e
+    app.kubernetes.io/part-of: kubernaut-application-fixtures
+type: Opaque
+stringData:
+  api_key: &syntheticCredentials >-
+    {"type":"authorized_user","client_id":"dev-only-client","client_secret":"dev-only-secret",
+    "refresh_token":"dev-only-refresh-token"}
+  api-key: *syntheticCredentials
+  credentials.json: *syntheticCredentials
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aianalysis-policy
+  namespace: kubernaut-system
+  labels:
+    app.kubernetes.io/managed-by: kubernaut-e2e
+    app.kubernetes.io/part-of: kubernaut-application-fixtures
+data:
+  approval.rego: |
+    package approval
+    default allow = true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: signalprocessing-policy
+  namespace: kubernaut-system
+  labels:
+    app.kubernetes.io/managed-by: kubernaut-e2e
+    app.kubernetes.io/part-of: kubernaut-application-fixtures
+data:
+  policy.rego: |
+    package signalprocessing
+    default allow = true
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: slack-webhook
+  namespace: kubernaut-system
+  labels:
+    app.kubernetes.io/managed-by: kubernaut-e2e
+    app.kubernetes.io/part-of: kubernaut-application-fixtures
+type: Opaque
+stringData:
+  webhook-url: https://hooks.slack.example/e2e
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: notification-teams
+  namespace: kubernaut-system
+  labels:
+    app.kubernetes.io/managed-by: kubernaut-e2e
+    app.kubernetes.io/part-of: kubernaut-application-fixtures
+type: Opaque
+stringData:
+  webhook-url: https://teams.example.invalid/e2e
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: notification-pagerduty
+  namespace: kubernaut-system
+  labels:
+    app.kubernetes.io/managed-by: kubernaut-e2e
+    app.kubernetes.io/part-of: kubernaut-application-fixtures
+type: Opaque
+stringData:
+  routing-key: pagerduty-routing-key
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notification-routing
+  namespace: kubernaut-system
+  labels:
+    app.kubernetes.io/managed-by: kubernaut-e2e
+    app.kubernetes.io/part-of: kubernaut-application-fixtures
+data:
+  routing.yaml: |-
+    route:
+      receiver: slack-ops
+    receivers:
+      - name: slack-ops
+        slackConfigs:
+          - channel: "#kubernaut-alerts"
+            credentialRef: slack-ops
+      - name: teams-primary
+        teamsConfigs:
+          - credentialRef: teams-primary
+      - name: pagerduty-critical
+        pagerdutyConfigs:
+          - credentialRef: pagerduty-critical
+`
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "kubectl", "apply", "-f", "-")
+	cmd.Stdin = strings.NewReader(fixtures)
+	_, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to install application-owned test fixtures")
+}
+
+func expectApplicationFixtureOwnership(resource, name string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "kubectl", "get", resource, name,
+		"-n", crNS, "-o", "jsonpath={.metadata.labels.app\\.kubernetes\\.io/managed-by}")
+	output, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "%s %q should be application-owned", resource, name)
+	Expect(output).To(Equal("kubernaut-e2e"), "%s %q should remain application-owned", resource, name)
+
+	cmd = exec.CommandContext(ctx, "kubectl", "get", resource, name,
+		"-n", crNS, "-o", "jsonpath={.metadata.ownerReferences}")
+	output, err = utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "%s %q ownership should be readable", resource, name)
+	Expect(output).To(BeEmpty(), "%s %q should not be adopted by the operator", resource, name)
 }
 
 // serviceAccountToken returns a token for the operator service account.
@@ -557,5 +903,57 @@ func collectDiagnostic(args ...string) {
 		_, _ = fmt.Fprintf(GinkgoWriter, "=== kubectl %v ===\n%s\n", args, output)
 	} else {
 		_, _ = fmt.Fprintf(GinkgoWriter, "=== kubectl %v FAILED: %v ===\n", args, err)
+	}
+}
+
+var mustGatherOnce sync.Once
+
+func collectMustGather() {
+	mustGatherOnce.Do(func() {
+		destination := os.Getenv("KUBERNAUT_E2E_MUST_GATHER_DIR")
+		if destination == "" {
+			destination = filepath.Join("test-artifacts", "must-gather-"+time.Now().UTC().Format("20060102T150405Z"))
+		}
+		// E2E artifact path is explicitly supplied by the test runner.
+		//nolint:gosec
+		if err := os.MkdirAll(destination, 0o750); err != nil {
+			_, _ = fmt.Fprintf(GinkgoWriter, "=== must-gather FAILED creating %s: %v ===\n", destination, err)
+			return
+		}
+		image := os.Getenv("KUBERNAUT_MUST_GATHER_IMAGE")
+		if image == "" {
+			image = defaultMustGatherImage
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		// E2E image/path are explicit test-runner inputs.
+		//nolint:gosec
+		cmd := exec.CommandContext(ctx, "oc", "adm", "must-gather",
+			"--image="+image,
+			"--dest-dir="+destination,
+			"--since=24h",
+			"--",
+			"/usr/bin/gather",
+			"--namespace="+crNS,
+			"--operator-namespace="+operatorNS,
+			"--workflow-namespace="+workflowNS,
+		)
+		if _, err := utils.Run(cmd); err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				err = fmt.Errorf("must-gather timed out after 10m: %w", ctx.Err())
+			}
+			_, _ = fmt.Fprintf(GinkgoWriter, "=== must-gather FAILED: %v ===\n", err)
+			return
+		}
+		_, _ = fmt.Fprintf(GinkgoWriter, "=== must-gather saved to %s ===\n", destination)
+	})
+}
+
+func preserveE2ENamespaces() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("KUBERNAUT_E2E_PRESERVE_NAMESPACES"))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
 	}
 }

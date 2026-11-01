@@ -34,6 +34,38 @@ const testOpenAIEndpoint = "http://llm-gateway:8080"
 
 var _ = Describe("ConfigMaps", func() {
 	Describe("Gateway ConfigMap", func() {
+		It("UT-539-GW-AUTH-CM-001 [IA-2, AC-3; ASVS v5.0.0-V8.2.1, v5.0.0-V16.5.2]: disables Gateway authentication by default for minimal deployment", func() {
+			kn := testKubernaut()
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			var rendered struct {
+				Server struct {
+					AuthenticationEnabled *bool `yaml:"authenticationEnabled"`
+				} `yaml:"server"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &rendered)).To(Succeed())
+			Expect(rendered.Server.AuthenticationEnabled).NotTo(BeNil())
+			Expect(*rendered.Server.AuthenticationEnabled).To(BeFalse())
+		})
+
+		It("UT-539-GW-AUTH-CM-002 [CM-6]: renders an explicit authentication enablement", func() {
+			kn := testKubernaut()
+			enabled := true
+			kn.Spec.Gateway.Auth.Enabled = &enabled
+			cm, err := GatewayConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			var rendered struct {
+				Server struct {
+					AuthenticationEnabled *bool `yaml:"authenticationEnabled"`
+				} `yaml:"server"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &rendered)).To(Succeed())
+			Expect(rendered.Server.AuthenticationEnabled).NotTo(BeNil())
+			Expect(*rendered.Server.AuthenticationEnabled).To(BeTrue())
+		})
+
 		It("contains DataStorage URL and expected keys", func() {
 			kn := testKubernaut()
 			cm, err := GatewayConfigMap(kn, testKnV2(kn))
@@ -228,6 +260,34 @@ var _ = Describe("ConfigMaps", func() {
 			data := cm.Data["config.yaml"]
 			Expect(data).To(ContainSubstring("mcpGatewayEndpoint: https://mcp-gateway.example.com/sse"), "gateway config should render mcpGatewayEndpoint, got:\n%s", data)
 			Expect(data).To(ContainSubstring("mcpGatewayType: eaigw"), "gateway config should render mcpGatewayType, got:\n%s", data)
+		})
+
+		It("UT-FLEET-557-RENDER-001: renders MCP Gateway trust independently from scope-check and OAuth2 trust", func() {
+			kn := testKubernaut()
+			enabled := true
+			knV2 := testKnV2(kn)
+			knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+				Enabled:    &enabled,
+				ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
+				MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{
+					Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw",
+					TLS: &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceFile, CAFile: "/etc/fleet/mcp-gateway-ca.pem"},
+				},
+				OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
+					TokenURL: "https://keycloak.example.com/token", CredentialsSecretRef: "fleet-oauth2-creds",
+					TLS: &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSystem},
+				},
+			}
+			cm, err := GatewayConfigMap(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			var root gatewayConfigYAML
+			Expect(yaml.Unmarshal([]byte(data), &root)).To(Succeed())
+			Expect(root.Fleet).NotTo(BeNil())
+			Expect(root.Fleet.MCPGatewayTLSCAFile).To(Equal("/etc/fleet/mcp-gateway-ca.pem"))
+			Expect(root.Fleet.OAuth2).NotTo(BeNil())
+			Expect(root.Fleet.OAuth2.TLSCAFile).To(BeEmpty(),
+				"system OAuth2 trust must not inherit the MCP Gateway CA path")
 		})
 
 		It("omits the Fleet block when Fleet is disabled, regardless of pre-staged OAuth2 fields", func() {
@@ -473,10 +533,10 @@ var _ = Describe("ConfigMaps", func() {
 		It("UT-AUDIT-209-CM-002 [AC-6, IA-5, ASVS V13.3.1/V13.3.2] renders a configured audit key name", func() {
 			kn := testKubernaut()
 			knV2 := testKnV2(kn)
-			knV2.Spec.DataStorage.AuditHashKey = &kubernautv1alpha2.DataStorageAuditHashKeySpec{
+			knV2.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{HashKey: &kubernautv1alpha2.DataStorageAuditHashKeySpec{
 				ExistingSecret: "customer-audit-key",
 				SecretKey:      "customHMACKey",
-			}
+			}}
 			cm, err := DataStorageConfigMap(kn, knV2, "kubernautdb", "kubernautuser")
 			Expect(err).NotTo(HaveOccurred())
 			data := cm.Data["config.yaml"]
@@ -499,13 +559,24 @@ var _ = Describe("ConfigMaps", func() {
 			kn := testKubernaut()
 			cmDefault, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(cmDefault.Data["config.yaml"]).To(ContainSubstring("endpointPropagationDelay: 10s"), "unset endpointPropagationDelay should default to 10s")
+			var defaultRoot struct {
+				dataStorageConfigYAML    `yaml:",inline"`
+				EndpointPropagationDelay string `yaml:"endpointPropagationDelay"`
+			}
+			Expect(yaml.Unmarshal([]byte(cmDefault.Data["config.yaml"]), &defaultRoot)).To(Succeed())
+			Expect(defaultRoot.Server.EndpointPropagationDelay).To(Equal("10s"))
+			Expect(defaultRoot.EndpointPropagationDelay).To(BeEmpty())
 
 			kn.Spec.DataStorage.EndpointPropagationDelay = "25s"
 			cm, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
 			Expect(err).NotTo(HaveOccurred())
-			data := cm.Data["config.yaml"]
-			Expect(data).To(ContainSubstring("endpointPropagationDelay: 25s"), "spec.dataStorage.endpointPropagationDelay should propagate verbatim, got:\n%s", data)
+			var root struct {
+				dataStorageConfigYAML    `yaml:",inline"`
+				EndpointPropagationDelay string `yaml:"endpointPropagationDelay"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Server.EndpointPropagationDelay).To(Equal("25s"))
+			Expect(root.EndpointPropagationDelay).To(BeEmpty())
 		})
 
 		It("#399 [SC-8]: renders the configured PostgreSQL/Valkey hostnames verbatim, never pre-resolved to an IP", func() {
@@ -637,6 +708,89 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(root.Server.ReadTimeout).To(Equal("60s"))
 			Expect(root.Server.WriteTimeout).To(Equal("45s"))
 		})
+
+		It("UT-DS-550-CM-001 [SC-5, SI-10, AU-11] renders the semantic server, Redis, and audit contract", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			maxConcurrent := 42
+			rps := 12
+			burst := 24
+			dlqMaxLen := 1234
+			enabled := false
+			batchSize := 500
+			defaultDays := 365
+			knV2.Spec.DataStorage.Server = &kubernautv1alpha2.DataStorageServerSpec{
+				ReadTimeout:           "60s",
+				WriteTimeout:          "45s",
+				MaxBodySize:           "10485760",
+				MaxConcurrentRequests: &maxConcurrent,
+				CORSAllowedOrigins:    []string{"https://console.example.com"},
+				RateLimit: &kubernautv1alpha2.DataStorageRateLimitSpec{
+					RequestsPerSecond: &rps,
+					Burst:             &burst,
+				},
+			}
+			knV2.Spec.DataStorage.Redis = &kubernautv1alpha2.DataStorageRedisSpec{DLQMaxLen: &dlqMaxLen}
+			knV2.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{
+				Retention: &kubernautv1alpha2.RetentionSpec{
+					Enabled:     &enabled,
+					Interval:    "12h",
+					BatchSize:   &batchSize,
+					DefaultDays: &defaultDays,
+				},
+				SigningCertificate: &kubernautv1alpha2.SigningCertSpec{
+					SecretName: "customer-signing-cert",
+					MountPath:  "/custom/certs",
+				},
+				HashKey: &kubernautv1alpha2.DataStorageAuditHashKeySpec{
+					ExistingSecret: "customer-audit-key",
+					SecretKey:      "customHMACKey",
+				},
+			}
+
+			cm, err := DataStorageConfigMap(kn, knV2, "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("readTimeout: 60s"))
+			Expect(data).To(ContainSubstring("writeTimeout: 45s"))
+			Expect(data).To(ContainSubstring("maxBodySize: \"10485760\""))
+			Expect(data).To(ContainSubstring("maxConcurrentRequests: 42"))
+			Expect(data).To(ContainSubstring("https://console.example.com"))
+			Expect(data).To(ContainSubstring("requestsPerSecond: 12"))
+			Expect(data).To(ContainSubstring("burst: 24"))
+			Expect(data).To(ContainSubstring("dlqMaxLen: 1234"))
+			Expect(data).To(ContainSubstring("enabled: false"))
+			Expect(data).To(ContainSubstring("interval: 12h"))
+			Expect(data).To(ContainSubstring("batchSize: 500"))
+			Expect(data).To(ContainSubstring("defaultDays: 365"))
+			Expect(data).To(ContainSubstring("hashKeyKey: customHMACKey"))
+			Expect(data).To(ContainSubstring("signerCertDir: /custom/certs"))
+		})
+
+		It("UT-DS-550-CM-003 [SC-5, SI-10] preserves an explicit zero concurrency limit", func() {
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			maxConcurrent := 0
+			knV2.Spec.DataStorage.Server = &kubernautv1alpha2.DataStorageServerSpec{
+				MaxConcurrentRequests: &maxConcurrent,
+			}
+
+			cm, err := DataStorageConfigMap(kn, knV2, "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Data["config.yaml"]).To(ContainSubstring("maxConcurrentRequests: 0"))
+		})
+
+		It("UT-DS-550-CM-002 [AU-11, SOC2 CC8.1] enables retention with production defaults when audit configuration is omitted", func() {
+			kn := testKubernaut()
+			cm, err := DataStorageConfigMap(kn, testKnV2(kn), "kubernautdb", "kubernautuser")
+			Expect(err).NotTo(HaveOccurred())
+			data := cm.Data["config.yaml"]
+			Expect(data).To(ContainSubstring("retention:"))
+			Expect(data).To(ContainSubstring("enabled: true"))
+			Expect(data).To(ContainSubstring("interval: 24h"))
+			Expect(data).To(ContainSubstring("batchSize: 1000"))
+			Expect(data).To(ContainSubstring("defaultDays: 2555"))
+		})
 	})
 
 	Describe("AIAnalysis ConfigMap", func() {
@@ -649,6 +803,40 @@ var _ = Describe("ConfigMaps", func() {
 			data := cm.Data["config.yaml"]
 			Expect(strings.Contains(data, "confidenceThreshold") && strings.Contains(data, "0.85")).To(BeTrue(), "aianalysis config should contain confidence threshold, got:\n%s", data)
 		})
+
+		It("renders low confidence floor as a numeric Rego value", func() {
+			kn := testKubernaut()
+			kn.Spec.AIAnalysis.LowConfidenceFloor = "0.73"
+			cm, err := AIAnalysisConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			var rendered aiAnalysisConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &rendered)).To(Succeed())
+			Expect(rendered.Rego.LowConfidenceFloor).NotTo(BeNil())
+			Expect(*rendered.Rego.LowConfidenceFloor).To(Equal(float64(0.73)))
+		})
+
+		It("omits low confidence floor when unset", func() {
+			kn := testKubernaut()
+			cm, err := AIAnalysisConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			var rendered aiAnalysisConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &rendered)).To(Succeed())
+			Expect(rendered.Rego.LowConfidenceFloor).To(BeNil())
+		})
+
+		DescribeTable("rejects invalid low confidence floor values", func(value string) {
+			kn := testKubernaut()
+			kn.Spec.AIAnalysis.LowConfidenceFloor = value
+
+			_, err := AIAnalysisConfigMap(kn, testKnV2(kn))
+			Expect(err).To(MatchError(ContainSubstring("lowConfidenceFloor")))
+		},
+			Entry("malformed", "not-a-number"),
+			Entry("zero", "0"),
+			Entry("above one", "1.01"),
+		)
 
 		It("uses agent key and not legacy kubernautAgent key", func() {
 			kn := testKubernaut()
@@ -1128,6 +1316,21 @@ var _ = Describe("ConfigMaps", func() {
 	})
 
 	Describe("WorkflowExecution ConfigMap", func() {
+		It("renders the runtime ambient CA path", func() {
+			kn := testKubernaut()
+			cm, err := WorkflowExecutionConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Data["workflowexecution.yaml"]).To(ContainSubstring("tlsCaFile: " + InterServiceTLSCAFile))
+		})
+
+		It("renders the combined AAP CA path when an AAP CA Secret is configured", func() {
+			kn := testKubernaut()
+			kn.Spec.WorkflowExecution.Ansible.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "aap-ca-secret"}
+			cm, err := WorkflowExecutionConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Data["workflowexecution.yaml"]).To(ContainSubstring("tlsCaFile: /etc/combined-ca/ca-bundle.crt"))
+		})
+
 		It("uses default workflow namespace", func() {
 			kn := testKubernaut()
 			cm, err := WorkflowExecutionConfigMap(kn, testKnV2(kn))
@@ -1325,6 +1528,23 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("stabilizationWindow: 30s"), "EM config should have default stabilization window, got:\n%s", data)
 		})
 
+		// UT-EM-LOG-001 directly evidences the configuration baseline mapped to
+		// FedRAMP/NIST CM-6. AU-2/AU-3/AU-12, SOC 2 CC7.2/CC8.1, and OWASP
+		// ASVS 5.0.0 V16.1.1/V16.2.1 remain contextual boundaries, not claims
+		// proven by this serialization test or formal compliance.
+		It("UT-EM-LOG-001 renders canonical INFO when logging level is omitted", func() {
+			kn := testKubernaut()
+			Expect(kn.Spec.EffectivenessMonitor.Logging.Level).To(BeEmpty())
+			cm, err := EffectivenessMonitorConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			data := cm.Data["effectivenessmonitor.yaml"]
+			var rendered effectivenessMonitorConfigYAML
+			Expect(yaml.Unmarshal([]byte(data), &rendered)).To(Succeed())
+			Expect(rendered.Logging.Level).To(Equal("INFO"), "omitted EM logging level should render canonical INFO, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("level: info"), "EM config should not render the lowercase logging fallback, got:\n%s", data)
+		})
+
 		// #423 coverage backfill: assessment.stabilizationWindow/
 		// validityWindow non-default overrides had zero test references
 		// (only the stabilizationWindow default was covered above).
@@ -1356,16 +1576,20 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring(OCPPrometheusURL), "EM config should contain Prometheus URL when monitoring enabled, got:\n%s", data)
 			Expect(data).To(ContainSubstring(OCPAlertManagerURL), "EM config should contain AlertManager URL when monitoring enabled, got:\n%s", data)
 			Expect(data).To(ContainSubstring("external:"), "EM config should contain external section when monitoring enabled, got:\n%s", data)
-			Expect(data).To(ContainSubstring("tlsCaFile: /etc/monitoring-tls/ca.crt"), "EM config should contain external.tlsCaFile when monitoring enabled, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("tlsCaFile: /etc/monitoring-tls/ca.crt"), "EM config must use system trust when no monitoring Secret is configured, got:\n%s", data)
+			var root effectivenessMonitorConfigYAML
+			Expect(yaml.Unmarshal([]byte(data), &root)).To(Succeed())
+			Expect(root.TLSCAFile).To(Equal(InterServiceTLSCAFile), "EM ambient TLS trust must include the internal CA for internal clients")
+			Expect(root.External.TLSCaFile).To(BeEmpty(), "EM monitoring trust must remain on system trust without an administrator Secret")
 		})
 
-		It("uses the shared trust-bundle path for explicit generic TLS", func() {
-			kn := testKubernautWithDevelopmentTLS()
+		It("does not use the internal trust-bundle path for monitoring clients with generic TLS", func() {
+			kn := testKubernautWithCertManagerTLS()
 			cm, err := EffectivenessMonitorConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			data := cm.Data["effectivenessmonitor.yaml"]
-			Expect(data).To(ContainSubstring("tlsCaFile: " + MonitoringTLSCAFile))
+			Expect(data).NotTo(ContainSubstring("tlsCaFile: " + MonitoringTLSCAFile))
 		})
 
 		// #298: spec.monitoring.prometheus.url/spec.monitoring.alertManager.url
@@ -1391,10 +1615,14 @@ var _ = Describe("ConfigMaps", func() {
 		It("uses the shared monitoring TLS contract for every monitoring client (#424)", func() {
 			kn := testKubernaut()
 			knV2 := testKnV2(kn)
-			knV2.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceConfigMap, CACertConfigMapRef: &kubernautv1alpha2.CACertConfigMapRef{Name: "monitoring-ca", Key: "bundle.pem"}}
+			knV2.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca", Key: "bundle.pem"}}
 			cm, err := EffectivenessMonitorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(cm.Data["effectivenessmonitor.yaml"]).To(ContainSubstring("tlsCaFile: /etc/monitoring-tls/ca.crt"))
+			var emRoot effectivenessMonitorConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["effectivenessmonitor.yaml"]), &emRoot)).To(Succeed())
+			Expect(emRoot.TLSCAFile).To(Equal(InterServiceTLSCAFile))
+			Expect(emRoot.External.TLSCaFile).To(Equal(MonitoringTLSCAFile))
 			ka, err := KubernautAgentConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(ka.Data["config.yaml"]).To(ContainSubstring("tlsCaFile: /etc/monitoring-tls/ca.crt"))
@@ -1406,12 +1634,13 @@ var _ = Describe("ConfigMaps", func() {
 		It("omits the shared CA file when system trust is selected", func() {
 			kn := testKubernautWithAF()
 			knV2 := testKnV2(kn)
-			knV2.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSystem}
+			knV2.Spec.Monitoring.TLS = nil
 
 			em, err := EffectivenessMonitorConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			var emRoot effectivenessMonitorConfigYAML
 			Expect(yaml.Unmarshal([]byte(em.Data["effectivenessmonitor.yaml"]), &emRoot)).To(Succeed())
+			Expect(emRoot.TLSCAFile).To(Equal(InterServiceTLSCAFile))
 			Expect(emRoot.External.TLSCaFile).To(BeEmpty())
 
 			ka, err := KubernautAgentConfigMap(kn, knV2)
@@ -1450,6 +1679,9 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("alertManagerEnabled: false"), "EM config should reflect spec.monitoring.alertManager.enabled=false, got:\n%s", data)
 		})
 
+		// This direct builder test intentionally uses lowercase input to verify
+		// pass-through behavior; API admission enforces the uppercase LoggingSpec
+		// enum before a production CR reaches reconciliation.
 		It("renders v1.4 logging and datastorage buffer settings", func() {
 			kn := testKubernaut()
 			kn.Spec.EffectivenessMonitor.Logging.Level = "debug"
@@ -1576,16 +1808,19 @@ var _ = Describe("ConfigMaps", func() {
 	})
 
 	Describe("Notification ConfigMap", func() {
-		It("routing includes Slack when configured", func() {
+		It("routing remains provider-neutral when credentials are configured", func() {
 			kn := testKubernaut()
-			kn.Spec.Notification.Slack.SecretName = "slack-webhook"
-			kn.Spec.Notification.Slack.Channel = "#ops"
+			kn.Spec.Notification.Credentials = []kubernautv1alpha2.NotificationCredentialSpec{{
+				Name:      "slack-ops",
+				SecretRef: kubernautv1alpha2.NotificationSecretRef{Name: "slack-webhook", Key: "webhook-url"},
+			}}
 			cm, err := NotificationRoutingConfigMap(kn)
 			Expect(err).NotTo(HaveOccurred())
 
 			data := cm.Data["routing.yaml"]
-			Expect(data).To(ContainSubstring("slack"), "routing config should reference slack receiver, got:\n%s", data)
-			Expect(data).To(ContainSubstring("#ops"), "routing config should contain channel #ops, got:\n%s", data)
+			Expect(data).To(ContainSubstring("console"), "default routing should remain console-only, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("slackConfigs"))
+			Expect(data).NotTo(ContainSubstring("credentialsSecretName"))
 		})
 
 		It("routing falls back to console without Slack", func() {
@@ -1627,7 +1862,7 @@ var _ = Describe("ConfigMaps", func() {
 			data := cm.Data["config.yaml"]
 
 			Expect(data).To(ContainSubstring(OCPPrometheusURL), "KA config should contain Prometheus URL when monitoring enabled, got:\n%s", data)
-			Expect(data).To(ContainSubstring("tlsCaFile: /etc/monitoring-tls/ca.crt"), "KA config should contain Prometheus tlsCaFile for SA bearer auth, got:\n%s", data)
+			Expect(data).NotTo(ContainSubstring("tlsCaFile: /etc/monitoring-tls/ca.crt"), "KA config must use system trust when no monitoring Secret is configured, got:\n%s", data)
 			Expect(data).To(ContainSubstring("dataStorage:"), "KA config should contain dataStorage section, got:\n%s", data)
 			Expect(data).To(ContainSubstring("url: https://data-storage-service.kubernaut-system.svc.cluster.local:8443"), "KA config should contain HTTPS dataStorage.url, got:\n%s", data)
 			Expect(strings.Contains(data, "tools:") && strings.Contains(data, "prometheus:")).To(BeTrue(), "KA config should contain upstream tools.prometheus section when monitoring enabled, got:\n%s", data)
@@ -1672,16 +1907,16 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(root.Integrations.DataStorage.URL).To(Equal(wantDS), "integrations.dataStorage.url = %q, want %q", root.Integrations.DataStorage.URL, wantDS)
 			Expect(root.Integrations.Tools).NotTo(BeNil(), "integrations.tools should be present when monitoring is enabled by default")
 			Expect(root.Integrations.Tools.Prometheus.URL).To(Equal(OCPPrometheusURL), "integrations.tools.prometheus.url = %q, want %q", root.Integrations.Tools.Prometheus.URL, OCPPrometheusURL)
-			Expect(root.Integrations.Tools.Prometheus.TLSCaFile).To(Equal("/etc/monitoring-tls/ca.crt"), "integrations.tools.prometheus.tlsCaFile = %q, want /etc/monitoring-tls/ca.crt", root.Integrations.Tools.Prometheus.TLSCaFile)
+			Expect(root.Integrations.Tools.Prometheus.TLSCaFile).To(BeEmpty(), "integrations.tools.prometheus.tlsCaFile = %q, want system trust", root.Integrations.Tools.Prometheus.TLSCaFile)
 			Expect(root.Integrations.Tools.Alertmanager).NotTo(BeNil(), "integrations.tools.alertmanager should be present when monitoring is enabled by default (#205)")
 			Expect(root.Integrations.Tools.Alertmanager.URL).To(Equal(OCPAlertManagerURL), "integrations.tools.alertmanager.url = %q, want %q", root.Integrations.Tools.Alertmanager.URL, OCPAlertManagerURL)
-			Expect(root.Integrations.Tools.Alertmanager.TLSCaFile).To(Equal("/etc/monitoring-tls/ca.crt"), "integrations.tools.alertmanager.tlsCaFile = %q, want /etc/monitoring-tls/ca.crt", root.Integrations.Tools.Alertmanager.TLSCaFile)
+			Expect(root.Integrations.Tools.Alertmanager.TLSCaFile).To(BeEmpty(), "integrations.tools.alertmanager.tlsCaFile = %q, want system trust", root.Integrations.Tools.Alertmanager.TLSCaFile)
 		})
 
 		It("uses one shared monitoring CA path for Prometheus and AlertManager tools (#424)", func() {
 			kn := testKubernaut()
 			knV2 := testKnV2(kn)
-			knV2.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"}}
+			knV2.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"}}
 			cm, err := KubernautAgentConfigMap(kn, knV2)
 			Expect(err).NotTo(HaveOccurred())
 			var root kubernautAgentConfigYAML
@@ -1845,6 +2080,116 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).To(ContainSubstring("provider: anthropic"), "llmProfileRef-resolved provider should be rendered, got:\n%s", data)
 			Expect(data).To(ContainSubstring("model: claude-3-5-sonnet"), "llmProfileRef-resolved model should be rendered, got:\n%s", data)
 			Expect(data).To(ContainSubstring("endpoint: https://align-profile.example/v1"), "llmProfileRef-resolved endpoint should be propagated, got:\n%s", data)
+		})
+
+		It("UT-419-CM-001 [IA-5, SC-8, CM-6; SOC2 CC6.6, CC8.1; ASVS v5.0.0-V8.2.1, v5.0.0-V13.3.1] renders the complete independent alignment profile", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.AlignmentCheck = kubernautv1alpha2.AlignmentCheckSpec{
+				Enabled:       true,
+				LLMProfileRef: "alignment-profile",
+			}
+			kn.Spec.LLMProfiles["alignment-profile"] = kubernautv1alpha2.LLMProfileSpec{
+				Provider:              LLMProviderAnthropic,
+				Model:                 "claude-3-5-sonnet",
+				Endpoint:              "https://alignment.example/v1",
+				CredentialsSecretName: "alignment-llm-credentials",
+				Temperature:           "0.4",
+				MaxRetries:            ptr.To(5),
+				TimeoutSeconds:        ptr.To(45),
+				TLSCaFile:             "/etc/kubernaut-agent/alignment-tls/ca.crt",
+				TLSCertFile:           "/etc/kubernaut-agent/alignment-tls/tls.crt",
+				TLSKeyFile:            "/etc/kubernaut-agent/alignment-tls/tls.key",
+				TLSClientSecretRef:    "alignment-tls",
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
+					Enabled:              true,
+					TokenURL:             "https://idp.example/token",
+					Scopes:               []string{"llm.invoke"},
+					CredentialsSecretRef: "alignment-oauth",
+				},
+				Reasoning: &kubernautv1alpha2.LLMReasoningSpec{Enabled: true, Effort: "medium"},
+			}
+
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			var root kubernautAgentConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.AI.AlignmentCheck).NotTo(BeNil())
+			Expect(root.AI.AlignmentCheck.LLM).NotTo(BeNil())
+			llm := root.AI.AlignmentCheck.LLM
+			Expect(llm.Provider).To(Equal(LLMProviderAnthropic))
+			Expect(llm.Model).To(Equal("claude-3-5-sonnet"))
+			Expect(llm.Endpoint).To(Equal("https://alignment.example/v1"))
+			Expect(llm.APIKeyFile).To(Equal("/etc/kubernaut-agent/alignment-credentials/api_key"))
+			Expect(llm.Temperature).NotTo(BeNil())
+			Expect(*llm.Temperature).To(Equal(float64(0.4)))
+			Expect(llm.MaxRetries).To(Equal(5))
+			Expect(llm.TimeoutSeconds).To(Equal(45))
+			Expect(llm.TLSCaFile).To(Equal("/etc/kubernaut-agent/alignment-tls/ca.crt"))
+			Expect(llm.TLSCertFile).To(Equal("/etc/kubernaut-agent/alignment-tls/tls.crt"))
+			Expect(llm.TLSKeyFile).To(Equal("/etc/kubernaut-agent/alignment-tls/tls.key"))
+			Expect(llm.OAuth2).NotTo(BeNil())
+			Expect(llm.OAuth2.Enabled).To(BeTrue())
+			Expect(llm.OAuth2.TokenURL).To(Equal("https://idp.example/token"))
+			Expect(llm.OAuth2.CredentialsDir).To(Equal("/etc/kubernaut-agent/alignment-oauth2"))
+			Expect(llm.OAuth2.Scopes).To(Equal([]string{"llm.invoke"}))
+			Expect(llm.Reasoning).NotTo(BeNil())
+			Expect(llm.Reasoning.Effort).To(Equal("medium"))
+		})
+
+		It("UT-419-CM-002 [IA-5; SOC2 CC6.6; ASVS v5.0.0-V8.2.1] selects the Vertex credentials.json path for an independent alignment profile", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.AlignmentCheck = kubernautv1alpha2.AlignmentCheckSpec{
+				Enabled:       true,
+				LLMProfileRef: "alignment-vertex",
+			}
+			kn.Spec.LLMProfiles["alignment-vertex"] = kubernautv1alpha2.LLMProfileSpec{
+				Provider:              LLMProviderVertexAI,
+				Model:                 "gemini-2.5-flash",
+				CredentialsSecretName: "alignment-vertex-credentials",
+				VertexProject:         "alignment-project",
+				VertexLocation:        testVertexLocation,
+			}
+
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			var root kubernautAgentConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.AI.AlignmentCheck).NotTo(BeNil())
+			Expect(root.AI.AlignmentCheck.LLM).NotTo(BeNil())
+			Expect(root.AI.AlignmentCheck.LLM.APIKeyFile).To(Equal("/etc/kubernaut-agent/alignment-credentials/credentials.json")) // pre-commit:allow-sensitive -- mount-path convention, not credential material
+			Expect(root.AI.AlignmentCheck.LLM.VertexProject).To(Equal("alignment-project"))
+			Expect(root.AI.AlignmentCheck.LLM.VertexLocation).To(Equal(testVertexLocation))
+		})
+
+		It("UT-419-CM-003 [IA-5; SOC2 CC6.6; ASVS v5.0.0-V8.2.1] reuses the base OAuth2 credentials directory only when the Secret is shared", func() {
+			kn := testKubernaut()
+			primary := kn.Spec.LLMProfiles[testPrimaryProfile]
+			primary.OAuth2 = kubernautv1alpha2.OAuth2Spec{
+				Enabled:              true,
+				TokenURL:             "https://idp.example/token",
+				CredentialsSecretRef: "shared-oauth",
+			}
+			kn.Spec.LLMProfiles[testPrimaryProfile] = primary
+			kn.Spec.KubernautAgent.AlignmentCheck = kubernautv1alpha2.AlignmentCheckSpec{
+				Enabled:       true,
+				LLMProfileRef: "alignment-profile",
+			}
+			kn.Spec.LLMProfiles["alignment-profile"] = kubernautv1alpha2.LLMProfileSpec{
+				Provider:              LLMProviderAnthropic,
+				Model:                 "claude-3-5-sonnet",
+				CredentialsSecretName: "alignment-llm-credentials",
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
+					Enabled:              true,
+					TokenURL:             "https://idp.example/token",
+					CredentialsSecretRef: "shared-oauth",
+				},
+			}
+
+			cm, err := KubernautAgentConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			var root kubernautAgentConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.AI.AlignmentCheck.LLM.OAuth2.CredentialsDir).To(Equal("/etc/kubernaut-agent/oauth2"))
 		})
 
 		It("[CM-6] omits the alignment LLM when llmProfileRef is unset", func() {
@@ -2269,7 +2614,73 @@ var _ = Describe("ConfigMaps", func() {
 				Expect(phase.VertexLocation).To(Equal("us-central1"))
 			})
 
-			It("LR-025 [IA-5]: does not emit apiKeyFile when a phase shares KA's credentialsSecretName (regression guard, #233)", func() {
+			It("UT-419-CM-004 [IA-5, SC-8]: renders a workflow-discovery profile's complete independent credentials and transport fields", func() {
+				kn := testKubernaut()
+				kn.Spec.LLMProfiles["workflow-full"] = kubernautv1alpha2.LLMProfileSpec{
+					Provider:              LLMProviderAnthropic,
+					Model:                 "claude-sonnet-4-6",
+					CredentialsSecretName: "workflow-credentials",
+					Temperature:           "0.2",
+					MaxRetries:            ptr.To(4),
+					TimeoutSeconds:        ptr.To(60),
+					TLSCaFile:             "/etc/kubernaut-agent/workflow-tls/ca.crt",
+					TLSCertFile:           "/etc/kubernaut-agent/workflow-tls/client.crt",
+					TLSKeyFile:            "/etc/kubernaut-agent/workflow-tls/client.key",
+					TLSClientSecretRef:    "workflow-tls",
+					OAuth2: kubernautv1alpha2.OAuth2Spec{
+						Enabled:              true,
+						TokenURL:             "https://idp.example/token",
+						CredentialsSecretRef: "workflow-oauth",
+					},
+				}
+				kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "workflow-full"
+				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				var root struct {
+					PhaseModels map[string]llmPhaseOverrideYAML `yaml:"phaseModels"`
+				}
+				Expect(yaml.Unmarshal([]byte(cm.Data["llm-runtime.yaml"]), &root)).To(Succeed())
+				phase := root.PhaseModels["workflow_discovery"]
+				Expect(phase.APIKeyFile).To(Equal("/etc/kubernaut-agent/phase-credentials/workflow_discovery/api_key"))
+				Expect(phase.TLSCaFile).To(Equal("/etc/kubernaut-agent/workflow-tls/ca.crt"))
+				Expect(phase.TLSCertFile).To(Equal("/etc/kubernaut-agent/workflow-tls/client.crt"))
+				Expect(phase.TLSKeyFile).To(Equal("/etc/kubernaut-agent/workflow-tls/client.key"))
+				Expect(phase.OAuth2).NotTo(BeNil())
+				Expect(phase.OAuth2.CredentialsDir).To(Equal(workflowOAuth2MountPath))
+				Expect(phase.MaxRetries).To(Equal(4))
+				Expect(phase.TimeoutSeconds).To(Equal(60))
+			})
+
+			It("UT-419-CM-005 [IA-5]: reuses the base OAuth2 credentials directory for workflow discovery when its Secret is shared", func() {
+				kn := testKubernaut()
+				primary := kn.Spec.LLMProfiles[testPrimaryProfile]
+				primary.OAuth2 = kubernautv1alpha2.OAuth2Spec{
+					Enabled:              true,
+					TokenURL:             "https://idp.example/token",
+					CredentialsSecretRef: "shared-oauth",
+				}
+				kn.Spec.LLMProfiles[testPrimaryProfile] = primary
+				kn.Spec.LLMProfiles["workflow-shared-oauth"] = kubernautv1alpha2.LLMProfileSpec{
+					Provider:              LLMProviderAnthropic,
+					Model:                 "claude-sonnet-4-6",
+					CredentialsSecretName: "workflow-credentials",
+					OAuth2: kubernautv1alpha2.OAuth2Spec{
+						Enabled:              true,
+						TokenURL:             "https://idp.example/token",
+						CredentialsSecretRef: "shared-oauth",
+					},
+				}
+				kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "workflow-shared-oauth"
+				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
+				Expect(err).NotTo(HaveOccurred())
+				var root struct {
+					PhaseModels map[string]llmPhaseOverrideYAML `yaml:"phaseModels"`
+				}
+				Expect(yaml.Unmarshal([]byte(cm.Data["llm-runtime.yaml"]), &root)).To(Succeed())
+				Expect(root.PhaseModels["workflow_discovery"].OAuth2.CredentialsDir).To(Equal("/etc/kubernaut-agent/oauth2"))
+			})
+
+			It("LR-025 [IA-5]: renders an explicit base apiKeyFile when a phase shares KA's credentialsSecretName", func() {
 				kn := testKubernaut()
 				kn.Spec.LLMProfiles[testWorkflowLiteProfile] = kubernautv1alpha2.LLMProfileSpec{
 					Provider:              "openai",
@@ -2280,9 +2691,12 @@ var _ = Describe("ConfigMaps", func() {
 				kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = testWorkflowLiteProfile
 				cm, err := KubernautAgentLLMRuntimeConfigMap(kn)
 				Expect(err).NotTo(HaveOccurred())
-				data := cm.Data["llm-runtime.yaml"]
-				Expect(data).NotTo(ContainSubstring("apiKeyFile"),
-					"#233: a phase sharing KA's credentialsSecretName must keep inheriting the base's already-mounted credentials, not get a redundant apiKeyFile")
+				var root struct {
+					PhaseModels map[string]llmPhaseOverrideYAML `yaml:"phaseModels"`
+				}
+				Expect(yaml.Unmarshal([]byte(cm.Data["llm-runtime.yaml"]), &root)).To(Succeed())
+				Expect(root.PhaseModels["workflow_discovery"].APIKeyFile).To(Equal("/etc/kubernaut-agent/credentials/api_key"),
+					"a sibling agent must render its selected profile's complete credential path even when the Secret is shared")
 			})
 
 			It("LR-020 [CM-6]: the base profile's reasoning policy is static-only and does not leak into the hot-reloadable runtime config", func() {
@@ -2551,12 +2965,12 @@ var _ = Describe("ConfigMaps", func() {
 	})
 
 	Describe("ProactiveSignalMappings", func() {
-		It("default mappings are generated when no user override", func() {
+		It("built-in default mappings are generated", func() {
 			kn := testKubernaut()
 
 			cm := ProactiveSignalMappingsConfigMap(kn)
-			Expect(cm).NotTo(BeNil(), "ProactiveSignalMappingsConfigMap should return non-nil when no user override")
-			Expect(cm.Name).To(Equal("signalprocessing-proactive-signal-mappings"), "Name = %q, want %q", cm.Name, "signalprocessing-proactive-signal-mappings")
+			Expect(cm).NotTo(BeNil(), "ProactiveSignalMappingsConfigMap should return the built-in default")
+			Expect(cm.Name).To(Equal(SignalProcessingProactiveSignalMappingsConfigMapName), "Name = %q, want %q", cm.Name, SignalProcessingProactiveSignalMappingsConfigMapName)
 			data, ok := cm.Data["proactive-signal-mappings.yaml"]
 			Expect(ok).To(BeTrue(), "ConfigMap should contain proactive-signal-mappings.yaml key")
 			for _, mapping := range []string{
@@ -2569,14 +2983,11 @@ var _ = Describe("ConfigMaps", func() {
 			}
 		})
 
-		It("returns nil when user provides ConfigMapName", func() {
+		It("always returns the built-in default mappings", func() {
 			kn := testKubernaut()
-			kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha2.ConfigMapRef{
-				ConfigMapName: "user-proactive-mappings",
-			}
 
 			cm := ProactiveSignalMappingsConfigMap(kn)
-			Expect(cm).To(BeNil(), "ProactiveSignalMappingsConfigMap should return nil when user provides ConfigMapName")
+			Expect(cm).NotTo(BeNil(), "ProactiveSignalMappingsConfigMap should always return the built-in default")
 		})
 	})
 
@@ -3065,12 +3476,12 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).To(ContainSubstring("toolCallsPerMinute: 60"), "unset rateLimit.toolCallsPerMinute should default to 60, got:\n%s", data)
 	})
 
-	It("uses OCP service-ca for severity triage when monitoring is enabled", func() {
+	It("UT-MON-563-RES-002 [SC-8, SC-13, SC-17; SOC2 CC6.1, CC7.2; ASVS V12.3.1, V12.3.2, V13.3.4] omits severity-triage CA when no monitoring Secret is configured", func() {
 		kn := testKubernautWithAF()
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn))
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
-		Expect(data).To(ContainSubstring("prometheusTlsCaFile: /etc/monitoring-tls/ca.crt"))
+		Expect(data).NotTo(ContainSubstring("prometheusTlsCaFile: /etc/monitoring-tls/ca.crt"))
 	})
 
 	It("renders auth issuerURL and audience from spec", func() {
@@ -3493,7 +3904,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	It("uses the shared monitoring CA path for severity triage (#424)", func() {
 		kn := testKubernautWithAF()
 		knV2 := testKnV2(kn)
-		knV2.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"}}
+		knV2.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"}}
 		cm, err := APIFrontendConfigMap(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		var root struct {
@@ -4218,9 +4629,9 @@ var _ = Describe("APIFrontendRBACRolesConfigMap", func() {
 var _ = Describe("DataStorage SignerCertDir Config", func() {
 	It("[SC-12] renders signerCertDir when signing cert is configured", func() {
 		kn := testKubernaut()
-		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha2.SigningCertSpec{
+		setDataStorageSigningCertificate(kn, &kubernautv1alpha2.SigningCertSpec{
 			SecretName: "datastorage-signing-cert",
-		}
+		})
 		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
@@ -4262,9 +4673,9 @@ var _ = Describe("DataStorage Retention Config", func() {
 	It("renders retention block with defaults when spec is provided", func() {
 		kn := testKubernaut()
 		enabled := true
-		kn.Spec.DataStorage.Retention = &kubernautv1alpha2.RetentionSpec{
+		setDataStorageRetention(kn, &kubernautv1alpha2.RetentionSpec{
 			Enabled: &enabled,
-		}
+		})
 		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
@@ -4275,20 +4686,21 @@ var _ = Describe("DataStorage Retention Config", func() {
 		Expect(data).To(ContainSubstring("defaultDays: 2555"))
 	})
 
-	It("omits retention block when spec is nil", func() {
+	It("renders retention production defaults when spec is nil", func() {
 		kn := testKubernaut()
 		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
-		Expect(data).NotTo(ContainSubstring("retention:"))
+		Expect(data).To(ContainSubstring("retention:"))
+		Expect(data).To(ContainSubstring("enabled: true"))
 	})
 
 	It("clamps defaultDays to 2555", func() {
 		kn := testKubernaut()
 		days := 5000
-		kn.Spec.DataStorage.Retention = &kubernautv1alpha2.RetentionSpec{
+		setDataStorageRetention(kn, &kubernautv1alpha2.RetentionSpec{
 			DefaultDays: &days,
-		}
+		})
 		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]
@@ -4301,12 +4713,12 @@ var _ = Describe("DataStorage Retention Config", func() {
 		enabled := false
 		batch := 500
 		days := 365
-		kn.Spec.DataStorage.Retention = &kubernautv1alpha2.RetentionSpec{
+		setDataStorageRetention(kn, &kubernautv1alpha2.RetentionSpec{
 			Enabled:     &enabled,
 			Interval:    "12h",
 			BatchSize:   &batch,
 			DefaultDays: &days,
-		}
+		})
 		cm, err := DataStorageConfigMap(kn, testKnV2(kn), "testdb", "testuser")
 		Expect(err).NotTo(HaveOccurred())
 		data := cm.Data["config.yaml"]

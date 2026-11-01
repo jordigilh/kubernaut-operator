@@ -33,7 +33,7 @@ var _ = Describe("independent resource-generation boundary outcomes", func() {
 		Expect(InterServiceTLSCAFileFor(kn)).To(Equal("/etc/tls-ca/ca.crt"))
 		Expect(isHelmTLSMode(nil)).To(BeFalse())
 		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
-		kn.Spec.TLS.AdministratorManaged = &kubernautv1alpha2.AdministratorManagedTLSConfig{
+		kn.Spec.TLS.Manual = &kubernautv1alpha2.ManualTLSConfig{
 			InternalCASecretName: "administrator-ca", ServiceTLSSecretNames: map[string]string{TLSServiceGateway: "custom-gateway"},
 		}
 		Expect(InterServiceTLSCAVolume(kn).Secret.SecretName).To(Equal("administrator-ca"))
@@ -55,16 +55,19 @@ var _ = Describe("independent resource-generation boundary outcomes", func() {
 
 	It("UT-AUDIT-515-RESOURCES-002: honors signing overrides and emits bounded IP and DNS certificate SANs", func() {
 		kn := testKubernaut()
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHelmCertManager
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeCertManager
 		Expect(CertManagerTLSProvisioningEnabled(nil)).To(BeFalse())
 		Expect(DataStorageSigningSecretName(nil)).To(BeEmpty())
 		_, err := CertManagerTLSResources(nil)
 		Expect(err).To(HaveOccurred())
+		kn.Spec.TLS.CertManager = &kubernautv1alpha2.CertManagerTLSConfig{
+			Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{},
+		}
 		material, err := ResolveTLSMaterial(kn)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(material.InternalCASecretName).To(Equal("kubernaut-interservice-ca-secret"))
 		Expect(DataStorageSigningSecretName(kn)).To(Equal("datastorage-signing-cert"))
-		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha2.SigningCertSpec{SecretName: "custom-signing", MountPath: "/custom"}
+		setDataStorageSigningCertificate(kn, &kubernautv1alpha2.SigningCertSpec{SecretName: "custom-signing", MountPath: "/custom"})
 		kn.Spec.TLS.CertManager = &kubernautv1alpha2.CertManagerTLSConfig{
 			Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{ExtraSANs: []string{" ", "127.0.0.1", "10.0.0.1", "extra.example"}},
 		}
@@ -79,7 +82,7 @@ var _ = Describe("independent resource-generation boundary outcomes", func() {
 			Expect(getErr).NotTo(HaveOccurred())
 			Expect(addresses).To(ConsistOf("127.0.0.1", "10.0.0.1"))
 		}
-		Expect(dataStorageServerConfig(kn, kn).SignerCertDir).To(Equal("/custom"))
+		Expect(dataStorageServerConfig(kn).SignerCertDir).To(Equal("/custom"))
 		Expect(firstNonEmpty("", "")).To(BeEmpty())
 	})
 
@@ -90,8 +93,6 @@ var _ = Describe("independent resource-generation boundary outcomes", func() {
 		for _, build := range []func() error{
 			func() error { _, err := WorkflowExecutionDeployment(kn, kn); return err },
 			func() error { _, err := EffectivenessMonitorDeployment(kn, kn); return err },
-			func() error { _, err := KubernautAgentDeployment(kn, kn); return err },
-			func() error { _, err := APIFrontendDeployment(kn, kn); return err },
 		} {
 			Expect(build()).To(MatchError(ContainSubstring("no image found")))
 		}
@@ -101,7 +102,7 @@ var _ = Describe("independent resource-generation boundary outcomes", func() {
 		_, err = DataStorageDeployment(kn)
 		Expect(err).To(HaveOccurred())
 		withoutImage("RELATED_IMAGE_CONSOLE")
-		_, err = ConsoleDeployment(kn, "")
+		_, err = ConsoleDeployment(kn)
 		Expect(err).To(HaveOccurred())
 		withoutImage("RELATED_IMAGE_API_FRONTEND")
 		_, err = APIFrontendDeployment(kn, kn)
@@ -153,7 +154,7 @@ var _ = Describe("independent resource-generation boundary outcomes", func() {
 		_, err := APIFrontendDeployment(kn, kn)
 		Expect(err).To(MatchError(ContainSubstring("apifrontend")))
 		withoutImage("RELATED_IMAGE_OAUTH2_PROXY")
-		_, err = ConsoleDeployment(testKubernautWithConsole(), "apps.example.com")
+		_, err = ConsoleDeployment(testKubernautWithConsole())
 		Expect(err).To(MatchError(ContainSubstring("oauth2-proxy")))
 		kn.Spec.TLS.Mode = "unsupported"
 		for _, service := range Services(kn, kn) {
@@ -395,13 +396,13 @@ var _ = Describe("embedded CRD publication over a simulated external API", func(
 		config, err := yamlConfigMap(metadata, "config.yaml", "service config", math.NaN())
 		Expect(config).To(BeNil())
 		Expect(err).To(MatchError(ContainSubstring("service config: resources: yaml marshal")))
-		secret, err := yamlSecret(metadata, "db-secrets.yaml", math.NaN())
-		Expect(secret).To(BeNil())
-		Expect(err).To(MatchError(ContainSubstring("marshalling db-secrets.yaml")))
 		Expect(CertManagerBootstrapIssuerNames(nil)).To(BeEmpty())
 		kn := testKubernaut()
 		Expect(CertManagerBootstrapIssuerNames(kn)).To(BeEmpty())
-		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHelmCertManager
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeCertManager
+		kn.Spec.TLS.CertManager = &kubernautv1alpha2.CertManagerTLSConfig{
+			Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{},
+		}
 		Expect(CertManagerBootstrapIssuerNames(kn)).To(Equal([]string{defaultCertManagerBootstrapIssuerName, defaultCertManagerCAIssuerName}))
 		kn.Spec.TLS.CertManager = &kubernautv1alpha2.CertManagerTLSConfig{Provisioning: &kubernautv1alpha2.CertManagerTLSProvisioning{
 			BootstrapIssuerName: "custom-bootstrap", InternalCAIssuerName: "custom-ca",

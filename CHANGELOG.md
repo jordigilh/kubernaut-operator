@@ -8,9 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Console UX release and raw-thinking policy** ([#476](https://github.com/jordigilh/kubernaut-operator/issues/476)) now pins the
+  `kubernaut-console` `1.6.0-rc23` multi-architecture image
+  (`sha256:68cf5aebbca09c079fccda92b4c86f4a019a8f6878cf30e5b6724f4e2e48657b`)
+  and hides raw thinking by default. Set `spec.console.enableRawThinking: true`
+  for an explicit diagnostic override.
+- **Console provider logout configuration** ([#483](https://github.com/jordigilh/kubernaut-operator/issues/483)) adds the optional v1alpha2 `spec.console.auth.providerLogoutURL`. The operator renders OAuth2 Proxy's server-side logout argument, rejects non-HTTPS or mismatched-provider endpoints, and supports public or self-signed provider certificates without exposing tokens to the SPA.
 - **Fleet v1alpha2 contract** ([#522](https://github.com/jordigilh/kubernaut-operator/pull/522)) uses nested `spec.fleet.mcpGateway`, provider-scoped `spec.fleet.scopeCheck`, Fleet OAuth2 without an `enabled` field, and `spec.fleet.mcpClient` retry/timeouts. FMC endpoint and trust are derived; ACM endpoint, TLS, and token Secret references are nested under `scopeCheck.acm`.
-- **Monitoring client TLS trust** ([#424](https://github.com/jordigilh/kubernaut-operator/issues/424)) now uses one shared `spec.monitoring.tls` source contract (`interService`, `system`, `secret`, or `configMap`) and deterministic `/etc/monitoring-tls/ca.crt` materialization for EM, KA, and API Frontend consumers. The unpublished v1alpha2-only `monitoring.prometheus.tlsCaFile` and `monitoring.alertManager.tlsCaFile` fields were removed; see [the migration decision](docs/design/ISSUE-424-IMPLEMENTATION.md).
-- Monitoring trust now follows administrator-managed runtime TLS in manual mode, rejects plaintext monitoring endpoints, and validates complete, current CA certificate chains before dependent workloads proceed.
+- **Monitoring client TLS trust** ([#563](https://github.com/jordigilh/kubernaut-operator/issues/563)) now uses one optional administrator-owned `spec.monitoring.tls.caCertSecretRef`. An omitted reference uses system trust; a populated reference is materialized read-only at `/etc/monitoring-tls/ca.crt` for EM, KA, and API Frontend consumers. The unpublished source selector and ConfigMap reference are removed.
+- Monitoring trust remains separate from serving and inter-service TLS, rejects plaintext monitoring endpoints, and validates complete, current CA certificate chains before dependent workloads proceed.
 - Pinned the upstream `github.com/jordigilh/kubernaut` dependency and operand
   image set to `v1.6.0-rc20`, which provides fail-closed server-side TLS for
   the Fleet Metadata Cache API.
@@ -43,11 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   precedence over the legacy `alignmentCheck.llm` literal for backward
   compatibility.
 - Backfilled test coverage and/or FedRAMP control-tag traceability for
-  ~100 fields across 17 components; closed 7 cross-consumer consistency
+  ~100 fields across 17 components; closed 6 cross-consumer consistency
   gaps (a field tested in `internal/resources` but its `internal/controller`
   consumer had zero sibling coverage): `image.pullSecrets`,
   `postgresql.sslMode`, `notification.routing.configMapName`,
-  `signalProcessing.proactiveSignalMappings.configMapName`,
   `gateway.resources`, `additionalClusterRoles`.
 - **`workflowexecution-controller` RBAC missing `get`/`list`/`watch` on core
   `events`** ([#411](https://github.com/jordigilh/kubernaut-operator/issues/411),

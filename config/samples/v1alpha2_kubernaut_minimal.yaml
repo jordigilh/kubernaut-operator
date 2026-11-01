@@ -16,7 +16,7 @@ spec:
   # docs/installation/01-infrastructure.md to provision it).
   postgresql:
     host: postgresql.kubernaut-system.svc.cluster.local
-    secretName: postgresql-secret   # keys: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
+    secretName: postgresql-secret   # keys: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, db-secrets.yaml
 
   # BYO Valkey/Redis (schema-required parent object + host/secretName).
   valkey:
@@ -37,7 +37,8 @@ spec:
 
   # kubernautAgent is a schema-required parent key. Its logical-agent profile
   # references can stay unset here: exactly one profile is defined above, so
-  # the operator infers it automatically (v1alpha2/F10).
+  # the operator infers it automatically (v1alpha2/F10). Investigation
+  # concurrency defaults to 50 per Agent replica.
   kubernautAgent: {}
 
   # Both Rego policy ConfigMaps are schema-required (no operator-bundled
@@ -51,10 +52,11 @@ spec:
     policy:
       configMapName: signalprocessing-policy
 
-  # apiFrontend is enabled by default and requires a complete issuer URL for
-  # your IdP. Replace this example with your real issuer, or set
-  # apiFrontend.enabled: false if you do not need API/Console access yet.
+  # Gateway is the only external API enabled by this minimum sample.
+  gateway:
+    enabled: true
+
+  # API Frontend and Console are optional. Enable AF separately when an OIDC
+  # provider and external MCP/A2A access are required.
   apiFrontend:
-    auth:
-      issuerURL: "https://idp.example.com/realms/kubernaut"
-      audience: "kubernaut-apifrontend"
+    enabled: false

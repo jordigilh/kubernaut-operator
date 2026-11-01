@@ -49,6 +49,10 @@ const (
 	ComponentAPIFrontend             = "apifrontend"
 	ComponentConsole                 = "kubernaut-console"
 	ComponentFleetMetadataCache      = "fleetmetadatacache"
+	// SignalProcessingProactiveSignalMappingsConfigMapName is the operator-owned
+	// built-in mappings ConfigMap. The distinct name avoids colliding with
+	// legacy user-created ConfigMaps from the removed CRD override.
+	SignalProcessingProactiveSignalMappingsConfigMapName = "signalprocessing-default-proactive-signal-mappings"
 )
 
 // MonitoringTLSCADir is the deterministic mount directory for administrator-
@@ -62,21 +66,20 @@ const (
 	MonitoringTLSCAFile = MonitoringTLSCADir + "/ca.crt"
 )
 
-// EffectiveMonitoringTLSCAFile returns the shared monitoring CA path. The
-// system source deliberately returns an empty path so clients use their OS
-// trust store.
+// EffectiveMonitoringTLSCAFile returns the shared monitoring CA path only when
+// an administrator-provided Secret is configured. An omitted reference uses
+// the application/container system trust store.
 func EffectiveMonitoringTLSCAFile(kn *kubernautv1alpha2.Kubernaut) string {
-	if kn != nil && kn.Spec.Monitoring.TLS != nil && kn.Spec.Monitoring.TLS.Source == kubernautv1alpha2.MonitoringTLSSourceSystem {
+	if kn == nil || kn.Spec.Monitoring.TLS == nil || kn.Spec.Monitoring.TLS.CACertSecretRef == nil || kn.Spec.Monitoring.TLS.CACertSecretRef.Name == "" {
 		return ""
 	}
 	return MonitoringTLSCAFile
 }
 
-// MonitoringTLSVolume returns the source-aware, read-only volume for the
-// shared monitoring CA path. Secret and ConfigMap sources are administrator
-// owned and are never copied or mutated by the operator.
+// MonitoringTLSVolume returns the read-only volume for an administrator-owned
+// monitoring CA Secret. An omitted reference intentionally renders no volume.
 func MonitoringTLSVolume(kn *kubernautv1alpha2.Kubernaut) *corev1.Volume {
-	if kn == nil || kn.Spec.Monitoring.TLS != nil && kn.Spec.Monitoring.TLS.Source == kubernautv1alpha2.MonitoringTLSSourceSystem {
+	if kn == nil {
 		return nil
 	}
 
@@ -87,53 +90,20 @@ func MonitoringTLSVolume(kn *kubernautv1alpha2.Kubernaut) *corev1.Volume {
 	return &corev1.Volume{Name: MonitoringTLSCAVolumeName, VolumeSource: *source}
 }
 
+// monitoringTLSVolumeSource builds the Secret projection for the selected
+// administrator-owned monitoring CA, or nil when system trust is selected.
 func monitoringTLSVolumeSource(kn *kubernautv1alpha2.Kubernaut) *corev1.VolumeSource {
-	tls := kn.Spec.Monitoring.TLS
-	switch {
-	case tls == nil || tls.Source == "" || tls.Source == kubernautv1alpha2.MonitoringTLSSourceInterService:
-		volumeSource := monitoringTLSInterServiceVolumeSource(kn)
-		return &volumeSource
-	case tls.Source == kubernautv1alpha2.MonitoringTLSSourceSecret:
-		if tls.CACertSecretRef == nil {
-			return nil
-		}
-		key := tlsCACertificateKey
-		if tls.CACertSecretRef.Key != "" {
-			key = tls.CACertSecretRef.Key
-		}
-		return &corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: tls.CACertSecretRef.Name, Items: []corev1.KeyToPath{{Key: key, Path: tlsCACertificateKey}}}}
-	case tls.Source == kubernautv1alpha2.MonitoringTLSSourceConfigMap:
-		if tls.CACertConfigMapRef == nil {
-			return nil
-		}
-		key := tlsCACertificateKey
-		if tls.CACertConfigMapRef.Key != "" {
-			key = tls.CACertConfigMapRef.Key
-		}
-		return &corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: tls.CACertConfigMapRef.Name}, Items: []corev1.KeyToPath{{Key: key, Path: tlsCACertificateKey}}}}
-	default:
-		// ValidateKubernaut rejects unknown sources before resource rendering.
-		// Keep this helper fail-closed when called directly with an invalid CR.
+	if kn == nil || kn.Spec.Monitoring.TLS == nil || kn.Spec.Monitoring.TLS.CACertSecretRef == nil || kn.Spec.Monitoring.TLS.CACertSecretRef.Name == "" {
 		return nil
 	}
-}
-
-func monitoringTLSInterServiceVolumeSource(kn *kubernautv1alpha2.Kubernaut) corev1.VolumeSource {
-	if kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeManual {
-		if cfg := kn.Spec.TLS.AdministratorManaged; cfg != nil && cfg.InternalCASecretName != "" {
-			return corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
-				SecretName: cfg.InternalCASecretName,
-				Items:      []corev1.KeyToPath{{Key: tlsCACertificateKey, Path: tlsCACertificateKey}},
-			}}
-		}
-		return corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-			LocalObjectReference: corev1.LocalObjectReference{Name: InterServiceCAConfigMapName},
-			Items:                []corev1.KeyToPath{{Key: tlsCACertificateKey, Path: tlsCACertificateKey}},
-		}}
+	tls := kn.Spec.Monitoring.TLS
+	key := tlsCACertificateKey
+	if tls.CACertSecretRef.Key != "" {
+		key = tls.CACertSecretRef.Key
 	}
-	return corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
-		LocalObjectReference: corev1.LocalObjectReference{Name: TrustBundleConfigMapName},
-		Items:                []corev1.KeyToPath{{Key: trustBundleServiceCAKey, Path: tlsCACertificateKey}},
+	return &corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
+		SecretName: tls.CACertSecretRef.Name,
+		Items:      []corev1.KeyToPath{{Key: key, Path: tlsCACertificateKey}},
 	}}
 }
 
@@ -207,7 +177,6 @@ const DefaultValkeyPort int32 = 6379
 // succeeds or reaches the backoff limit.
 const (
 	MigrationBackoffLimit int32 = 3
-	MigrationTTLSeconds   int32 = 300
 )
 
 // PDB constant.
@@ -321,10 +290,10 @@ func InterServiceTLSCADirFor(kn *kubernautv1alpha2.Kubernaut) string {
 // runtime TLS contract. OpenShift's injected ConfigMaps use service-ca.crt;
 // the generic/Helm-compatible contract publishes ca.crt.
 func InterServiceTLSCAKeyFor(kn *kubernautv1alpha2.Kubernaut) string {
-	if kn == nil || kn.Spec.TLS.Mode == "" {
+	if kn == nil || kn.Spec.TLS.Mode == "" || kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeServiceCA {
 		return "service-ca.crt"
 	}
-	return "ca.crt"
+	return tlsCACertificateKey
 }
 
 // InterServiceTLSCAVolume returns the selected trust-material volume and maps
@@ -334,7 +303,7 @@ func InterServiceTLSCAKeyFor(kn *kubernautv1alpha2.Kubernaut) string {
 func InterServiceTLSCAVolume(kn *kubernautv1alpha2.Kubernaut) corev1.Volume {
 	caPath := path.Base(InterServiceTLSCAFileFor(kn))
 	if kn != nil && kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeManual {
-		if cfg := kn.Spec.TLS.AdministratorManaged; cfg != nil && cfg.InternalCASecretName != "" {
+		if cfg := kn.Spec.TLS.Manual; cfg != nil && cfg.InternalCASecretName != "" {
 			return corev1.Volume{
 				Name: "tls-ca",
 				VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
@@ -382,7 +351,7 @@ func isHelmTLSMode(kn *kubernautv1alpha2.Kubernaut) bool {
 		return false
 	}
 	switch kn.Spec.TLS.Mode {
-	case kubernautv1alpha2.TLSModeHook, kubernautv1alpha2.TLSModeHelmCertManager, kubernautv1alpha2.TLSModeManual:
+	case kubernautv1alpha2.TLSModeCertManager, kubernautv1alpha2.TLSModeManual:
 		return true
 	default:
 		return false
@@ -430,7 +399,7 @@ func effectivePrometheusURL(knV2 *kubernautv1alpha2.Kubernaut) string {
 }
 
 // EffectivePrometheusURL exposes the same capability-aware endpoint used by
-// Agent configuration to the native policy resolver.
+// workload configuration and monitoring resources.
 func EffectivePrometheusURL(knV2 *kubernautv1alpha2.Kubernaut) string {
 	return effectivePrometheusURL(knV2)
 }
@@ -448,7 +417,7 @@ func effectiveAlertManagerURL(knV2 *kubernautv1alpha2.Kubernaut) string {
 }
 
 // EffectiveAlertManagerURL exposes the same capability-aware endpoint used by
-// Agent configuration to the native policy resolver.
+// workload configuration and monitoring resources.
 func EffectiveAlertManagerURL(knV2 *kubernautv1alpha2.Kubernaut) string {
 	return effectiveAlertManagerURL(knV2)
 }
@@ -511,12 +480,10 @@ func ActiveComponents(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.K
 	return active
 }
 
-// usesOpenShiftServiceCA reports whether the legacy empty TLS mode is in use.
-// The controller admits that mode only after discovering the OpenShift
-// service-CA capability; every explicit TLS mode is portable and must not
-// render OpenShift-only CA volumes or init containers.
+// usesOpenShiftServiceCA reports whether the implicit or explicit service-CA
+// source is selected. The controller admits it only after capability discovery.
 func usesOpenShiftServiceCA(kn *kubernautv1alpha2.Kubernaut) bool {
-	return kn != nil && kn.Spec.TLS.Mode == ""
+	return kn != nil && (kn.Spec.TLS.Mode == "" || kn.Spec.TLS.Mode == kubernautv1alpha2.TLSModeServiceCA)
 }
 
 // CommonLabels returns the base label set applied to every managed resource.
@@ -629,8 +596,25 @@ func ContainerSecurityContext() *corev1.SecurityContext {
 	}
 }
 
-// DefaultResources returns sensible defaults when the user hasn't specified limits/requests.
+// DefaultResources returns shared defaults for stateless application
+// containers when the user hasn't specified limits or requests.
 func DefaultResources() corev1.ResourceRequirements {
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("100m"),
+			corev1.ResourceMemory: resource.MustParse("128Mi"),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse("500m"),
+			corev1.ResourceMemory: resource.MustParse("256Mi"),
+		},
+	}
+}
+
+// DefaultBootstrapResources returns the established resources for init and
+// migration containers. These workloads are not stateless application
+// containers and retain their previous resource profile.
+func DefaultBootstrapResources() corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
 			corev1.ResourceCPU:    resource.MustParse("500m"),
@@ -643,7 +627,8 @@ func DefaultResources() corev1.ResourceRequirements {
 	}
 }
 
-// MergeResources returns the user-specified resources if non-zero, otherwise defaults.
+// MergeResources preserves a non-empty user override, otherwise returning the
+// shared stateless application-container defaults.
 func MergeResources(userSpec corev1.ResourceRequirements) corev1.ResourceRequirements {
 	if len(userSpec.Requests) > 0 || len(userSpec.Limits) > 0 {
 		return userSpec
@@ -816,6 +801,15 @@ func EffectiveWorkflowDiscoveryLLMProfileRef(kn *kubernautv1alpha2.Kubernaut) st
 	return effectiveLLMProfileRef(kn, kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef)
 }
 
+// EffectiveAlignmentCheckLLMProfileRef returns the profile used by KA's
+// independent alignment-check sibling agent. Alignment is intentionally
+// resolved from its own reference rather than inheriting the investigation
+// profile; an empty reference is inferred only when the shared profile map
+// contains exactly one unambiguous profile.
+func EffectiveAlignmentCheckLLMProfileRef(kn *kubernautv1alpha2.Kubernaut) string {
+	return effectiveLLMProfileRef(kn, kn.Spec.KubernautAgent.AlignmentCheck.LLMProfileRef)
+}
+
 // phaseCredentialsVolumeName returns the Volume/VolumeMount name for the
 // dedicated Secret mount of the workflowDiscovery profile when it has a
 // different credentialsSecretName than the investigation profile (#233).
@@ -830,6 +824,19 @@ func phaseCredentialsVolumeName(phase string) string {
 func phaseCredentialsMountPath(phase string) string {
 	return "/etc/kubernaut-agent/phase-credentials/" + phase
 }
+
+const (
+	alignmentCredentialsVolumeName = "alignment-credentials"
+	alignmentCredentialsMountPath  = "/etc/kubernaut-agent/alignment-credentials" //nolint:gosec // mount-path convention, not credential material
+	alignmentOAuth2VolumeName      = "alignment-oauth2-credentials"
+	alignmentOAuth2MountPath       = "/etc/kubernaut-agent/alignment-oauth2"
+	alignmentTLSClientVolumeName   = "alignment-llm-tls-client"
+	alignmentTLSClientMountPath    = "/etc/kubernaut-agent/alignment-tls"
+	workflowOAuth2VolumeName       = "workflow-discovery-oauth2"
+	workflowOAuth2MountPath        = "/etc/kubernaut-agent/oauth2/workflow-discovery"
+	workflowTLSClientVolumeName    = "workflow-discovery-llm-tls-client"
+	workflowTLSClientMountPath     = "/etc/kubernaut-agent/workflow-tls"
+)
 
 // AFLLMProfileRef returns the name of the profile API Frontend's own LLM
 // connection resolves to. API Frontend is an independent LLM consumer and

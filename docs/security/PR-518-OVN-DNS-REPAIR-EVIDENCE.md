@@ -1,5 +1,7 @@
 # PR #518: scoped OVN isolation and DNS verification
 
+> **Historical / superseded by issue #555.** OVN-native enforcement evidence is retained for history only.
+
 ## Outcome and boundary
 
 The approved repository repairs are implemented: common OVN ANP/BANP allowances
@@ -35,7 +37,7 @@ subsequent source-bound evidence record.
 | RED: `IT-AUDIT-518-DNS-001` | Actual envtest `Reconcile` persisted `app=dns`, failing the Service-derived selector assertion. |
 | GREEN: unit policy tests and envtest regression | Passed. The persisted common policy has distinct UDP/TCP backend ports; dependency selector/port changes are reconciled; loss of DNS retains the native policy and sets existing policy readiness false with `DNSUnavailable`. |
 | `UT-AUDIT-518-DNS-001`-`006` | Numeric/default/named ports, metrics exclusion, valid identity, nonempty selector, missing or ambiguous DNS Service/ready backend evidence, protocol mismatches and API errors. Unsafe resolution returns no authorization. |
-| `UT-AUDIT-518-DNS-WATCH-001` | Exact DNS Service/EndpointSlice events requeue Required OVN/Auto instances; wrong names/namespaces, unlabeled slices, Inherited and other providers do not qualify as DNS dependency events. |
+| `UT-AUDIT-518-DNS-WATCH-001` | Exact DNS Service/EndpointSlice events requeue fail-closed OVN/Auto instances; wrong names/namespaces, unlabeled slices, unsupported providers and other providers do not qualify as DNS dependency events. |
 | CHECKPOINT W | Live-checkout `gopls references` resolves `ResolveDNSDestination` to `reconcileProviderPolicies` at controller line 2076. Existing registered Service/EndpointSlice watches call the extended mapper. The envtest case drives production `Reconcile`, not a render-only test. |
 | Build/lint/compilation | `go build ./...`, pinned `bin/golangci-lint run` (zero issues), and `go test ./... -run='^$' -timeout=30s` pass. |
 | Generation | `make manifests generate` produces no tracked diff in `api/`, `config/`, `charts/` or `bundle/`. This is not independent fresh RBAC regeneration proof and does not close F8. |

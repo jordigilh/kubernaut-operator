@@ -38,6 +38,7 @@ const (
 	testMTLSKeyFile        = "/etc/tls/tls.key"
 	testVolumeFleetOAuth2  = "fleet-oauth2"
 	testVolumeSecrets      = "secrets"
+	testVolumeSigningCert  = "signing-cert"
 )
 
 func getAllDeployments(kn *kubernautv1alpha2.Kubernaut) []*appsv1.Deployment {
@@ -220,12 +221,15 @@ var _ = Describe("Deployments", func() {
 			expectNoVolume(dep, "telemetry-client")
 		})
 
-		It("provides writable tmp for ambient trust bootstrap", func() {
+		It("does not mount an ambient-only writable tmp volume", func() {
 			kn := testKubernaut()
 			dep, err := GatewayDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
-			expectHasVolume(dep, "tmp")
-			expectHasVolumeMount(dep, "tmp", "/tmp")
+			expectNoVolume(dep, "tmp")
+			for _, mount := range dep.Spec.Template.Spec.Containers[0].VolumeMounts {
+				Expect(mount.Name).NotTo(Equal("tmp"))
+				Expect(mount.MountPath).NotTo(Equal("/tmp"))
+			}
 		})
 
 		// CONS-005 (#423): gateway.resources was flagged as a cross-consumer
@@ -417,13 +421,60 @@ var _ = Describe("Deployments", func() {
 			}),
 		)
 
+		It("applies shared stateless defaults to every buildDeployment service", func() {
+			want := DefaultResources()
+			cases := []struct {
+				name  string
+				build func(*kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error)
+				kn    *kubernautv1alpha2.Kubernaut
+			}{
+				{name: "gateway", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return GatewayDeployment(kn, testKnV2(kn))
+				}, kn: testKubernaut()},
+				{name: "dataStorage", build: DataStorageDeployment, kn: testKubernaut()},
+				{name: "aiAnalysis", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return AIAnalysisDeployment(kn, testKnV2(kn))
+				}, kn: testKubernaut()},
+				{name: "signalProcessing", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return SignalProcessingDeployment(kn, testKnV2(kn))
+				}, kn: testKubernaut()},
+				{name: "remediationOrchestrator", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return RemediationOrchestratorDeployment(kn, testKnV2(kn))
+				}, kn: testKubernaut()},
+				{name: "workflowExecution", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return WorkflowExecutionDeployment(kn, testKnV2(kn))
+				}, kn: testKubernaut()},
+				{name: "effectivenessMonitor", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return EffectivenessMonitorDeployment(kn, testKnV2(kn))
+				}, kn: testKubernaut()},
+				{name: "notification", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return NotificationDeployment(kn, testKnV2(kn))
+				}, kn: testKubernaut()},
+				{name: "kubernautAgent", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return KubernautAgentDeployment(kn, testKnV2(kn))
+				}, kn: testKubernaut()},
+				{name: "authWebhook", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return AuthWebhookDeployment(kn, testKnV2(kn))
+				}, kn: testKubernaut()},
+				{name: "apiFrontend", build: func(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
+					return APIFrontendDeployment(kn, testKnV2(kn))
+				}, kn: testKubernautWithAF()},
+			}
+
+			for _, tc := range cases {
+				dep, err := tc.build(tc.kn)
+				Expect(err).NotTo(HaveOccurred(), tc.name)
+				Expect(dep.Spec.Template.Spec.Containers[0].Resources).To(Equal(want), tc.name)
+			}
+		})
+
 		// kaResources (KubernautAgentDeployment's resources resolver) has a
 		// distinct, non-obvious merge rule worth its own regression test:
 		// it is all-or-nothing on the *pair* (Requests, Limits), not a
 		// per-field deep merge -- setting only one of the two still counts
 		// as "user specified" and the other stays at its zero value rather
 		// than falling back to the default for that half.
-		DescribeTable("UT-RES-KA [CM-6]: kaResources() default-merge behavior",
+		DescribeTable("UT-RES-KA [CM-6]: shared resource default-merge behavior",
 			func(userSpec corev1.ResourceRequirements, expectRequestsCPU, expectLimitsCPU string) {
 				kn := testKubernaut()
 				kn.Spec.KubernautAgent.Resources = userSpec
@@ -433,8 +484,8 @@ var _ = Describe("Deployments", func() {
 				Expect(got.Requests.Cpu().String()).To(Equal(expectRequestsCPU))
 				Expect(got.Limits.Cpu().String()).To(Equal(expectLimitsCPU))
 			},
-			Entry("unset -> documented defaults (200m request / 1000m limit)",
-				corev1.ResourceRequirements{}, "200m", "1"),
+			Entry("unset -> shared defaults (100m request / 500m limit)",
+				corev1.ResourceRequirements{}, "100m", "500m"),
 			Entry("fully specified -> verbatim passthrough",
 				corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("300m")},
@@ -458,6 +509,10 @@ var _ = Describe("Deployments", func() {
 			init := dep.Spec.Template.Spec.InitContainers[0]
 			Expect(init.Name).To(Equal("wait-for-postgres"))
 			Expect(init.Resources.Requests).NotTo(BeNil())
+			Expect(init.Resources.Requests.Cpu().String()).To(Equal("500m"))
+			Expect(init.Resources.Requests.Memory().String()).To(Equal("256Mi"))
+			Expect(init.Resources.Limits.Cpu().String()).To(Equal("500m"))
+			Expect(init.Resources.Limits.Memory().String()).To(Equal("256Mi"))
 		})
 
 		It("has projected secrets volume", func() {
@@ -505,10 +560,10 @@ var _ = Describe("Deployments", func() {
 
 		It("UT-AUDIT-209-DEP-002 [AC-6, IA-5, ASVS V13.3.1/V13.3.2] projects an administrator-managed audit Secret", func() {
 			kn := testKubernaut()
-			kn.Spec.DataStorage.AuditHashKey = &kubernautv1alpha2.DataStorageAuditHashKeySpec{
+			setDataStorageAuditHashKey(kn, &kubernautv1alpha2.DataStorageAuditHashKeySpec{
 				ExistingSecret: "customer-audit-key",
 				SecretKey:      "customHMACKey",
-			}
+			})
 			dep, err := DataStorageDeployment(kn)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -524,6 +579,27 @@ var _ = Describe("Deployments", func() {
 				}
 			}
 			Expect(names).To(ContainElement("customer-audit-key"))
+		})
+
+		It("UT-DS-550-DEP-001 [AC-6, IA-5, SC-12] mounts nested audit credentials read-only", func() {
+			kn := testKubernaut()
+			kn.Spec.DataStorage.Audit = &kubernautv1alpha2.DataStorageAuditSpec{
+				SigningCertificate: &kubernautv1alpha2.SigningCertSpec{
+					SecretName: "customer-signing-cert",
+					MountPath:  "/custom/certs",
+				},
+				HashKey: &kubernautv1alpha2.DataStorageAuditHashKeySpec{
+					ExistingSecret: "customer-audit-key",
+				},
+			}
+			dep, err := DataStorageDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+			expectHasVolumeMount(dep, "signing-cert", "/custom/certs")
+			for _, mount := range dep.Spec.Template.Spec.Containers[0].VolumeMounts {
+				if mount.Name == testVolumeSigningCert || mount.Name == testVolumeSecrets {
+					Expect(mount.ReadOnly).To(BeTrue())
+				}
+			}
 		})
 
 		// #423 coverage backfill: valkey.secretName had no test asserting
@@ -592,57 +668,51 @@ var _ = Describe("Deployments", func() {
 			expectHasVolumeMount(dep, "policy", "/etc/signalprocessing/policies")
 		})
 
-		It("uses custom proactive signal mappings", func() {
-			kn := testKubernaut()
-			kn.Spec.SignalProcessing.ProactiveSignalMappings = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: "my-mappings"}
-			dep, err := SignalProcessingDeployment(kn, testKnV2(kn))
-			Expect(err).NotTo(HaveOccurred())
-
-			expectHasVolume(dep, "proactive-mappings")
-			expectHasVolumeMount(dep, "proactive-mappings", "/etc/signalprocessing/proactive-signal-mappings.yaml")
-		})
-
 		It("uses default proactive signal mappings", func() {
 			kn := testKubernaut()
 			dep, err := SignalProcessingDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			expectHasVolume(dep, "proactive-mappings")
-			expectVolumeSourceConfigMap(dep, "proactive-mappings", "signalprocessing-proactive-signal-mappings")
+			expectVolumeSourceConfigMap(dep, "proactive-mappings", SignalProcessingProactiveSignalMappingsConfigMapName)
 			expectHasVolumeMount(dep, "proactive-mappings", "/etc/signalprocessing/proactive-signal-mappings.yaml")
 		})
 	})
 
 	Context("Notification", func() {
-		It("[IA-5, SC-28] mounts Slack credentials when configured", func() {
+		It("[IA-5, SC-28] mounts provider-neutral credentials when configured", func() {
 			kn := testKubernaut()
-			kn.Spec.Notification.Slack.SecretName = "slack-secret"
+			kn.Spec.Notification.Credentials = []kubernautv1alpha2.NotificationCredentialSpec{{
+				Name:      "slack-ops",
+				SecretRef: kubernautv1alpha2.NotificationSecretRef{Name: "slack-secret", Key: "webhook-url"},
+			}}
 			dep, err := NotificationDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
-			expectHasVolume(dep, "credentials")
-			expectHasVolumeMount(dep, "credentials", "/etc/notification/credentials")
+			expectHasVolume(dep, notificationCredentialsVolumeName)
+			expectHasVolumeMount(dep, notificationCredentialsVolumeName, notificationCredentialsMountPath)
 
 			for _, v := range dep.Spec.Template.Spec.Volumes {
-				if v.Name == "credentials" {
+				if v.Name == notificationCredentialsVolumeName {
 					Expect(v.Projected).NotTo(BeNil())
 					src := v.Projected.Sources[0].Secret
-					Expect(src.Optional).NotTo(BeNil())
-					Expect(*src.Optional).To(BeTrue(), "slack secret projection should be optional")
+					Expect(src.Optional).To(BeNil(), "provider-neutral Secret projections must be required")
+					Expect(src.Items[0].Key).To(Equal("webhook-url"))
+					Expect(src.Items[0].Path).To(Equal("slack-ops"))
 				}
 			}
 		})
 
-		It("uses emptyDir credentials when Slack is not configured", func() {
+		It("uses emptyDir credentials when no provider credentials are configured", func() {
 			kn := testKubernaut()
 			dep, err := NotificationDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
 			found := false
 			for _, v := range dep.Spec.Template.Spec.Volumes {
-				if v.Name == "credentials" {
+				if v.Name == notificationCredentialsVolumeName {
 					found = true
-					Expect(v.EmptyDir).NotTo(BeNil(), "credentials volume should be an emptyDir without Slack")
+					Expect(v.EmptyDir).NotTo(BeNil(), "credentials volume should be an emptyDir without provider credentials")
 				}
 			}
 			Expect(found).To(BeTrue(), "Notification should have a credentials volume even without Slack")
@@ -744,64 +814,8 @@ var _ = Describe("Deployments", func() {
 			Expect(found).To(BeTrue(), "llm-credentials volume not found")
 		})
 
-		It("#404 [SC-8]: declares SSL_CERT_FILE exactly once, pointing at KA's own merged (system+service-ca+router) bundle -- not the narrower inter-service-only bundle", func() {
-			kn := testKubernaut()
-			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
-			Expect(err).NotTo(HaveOccurred())
-			container := dep.Spec.Template.Spec.Containers[0]
-
-			var sslCertValues []string
-			for _, e := range container.Env {
-				if e.Name == testEnvSSLCertFile {
-					sslCertValues = append(sslCertValues, e.Value)
-				}
-			}
-			Expect(sslCertValues).To(HaveLen(1),
-				"#404: SSL_CERT_FILE must be declared exactly once -- a second declaration silently shadows the first at runtime (confirmed via the API server's own admission warning), and Go's SSL_CERT_FILE replaces rather than extends the system trust store, so whichever value wins must be a superset of everything KA needs (system/public CAs for LLM providers + service-ca/router-CA for the fleet MCP client)")
-			Expect(sslCertValues[0]).To(Equal("/etc/ssl/combined/ca-bundle.crt"),
-				"#404: KA's own merged bundle (built by the build-ca-bundle init container) must win, not the narrower inter-service-only bundle")
-
-			// TLS_CA_FILE keeps its narrower, intentionally-scoped value --
-			// unaffected by this fix, unlike SSL_CERT_FILE above.
-			hasTLSCAFile := false
-			for _, e := range container.Env {
-				if e.Name == testEnvTLSCAFile && e.Value == InterServiceTLSCAFile {
-					hasTLSCAFile = true
-				}
-			}
-			Expect(hasTLSCAFile).To(BeTrue(), "TLS_CA_FILE must remain set to the narrower inter-service bundle")
-		})
-
-		It("#404 [SC-8]: build-ca-bundle init container merges system CA with the router-inclusive trust bundle (tls-ca), not the narrower service-ca-only bundle", func() {
-			kn := testKubernaut()
-			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
-			Expect(err).NotTo(HaveOccurred())
-
-			var initContainer *corev1.Container
-			for i := range dep.Spec.Template.Spec.InitContainers {
-				if dep.Spec.Template.Spec.InitContainers[i].Name == "build-ca-bundle" {
-					initContainer = &dep.Spec.Template.Spec.InitContainers[i]
-				}
-			}
-			Expect(initContainer).NotTo(BeNil(), "build-ca-bundle init container not found")
-
-			Expect(initContainer.Command).To(ContainElement(ContainSubstring("/etc/tls-ca/service-ca.crt")),
-				"#404: init container must read the router-inclusive trust bundle (mounted from tls-ca/TrustBundleConfigMapName), not the narrower kubernaut-agent-service-ca-only bundle")
-			Expect(initContainer.Command).NotTo(ContainElement(ContainSubstring("/service-ca/service-ca.crt")),
-				"#404: must no longer read the narrower service-ca-only bundle -- it's a strict subset of the tls-ca bundle now used")
-
-			const tlsCAMountPath = "/etc/tls-ca"
-			foundMount := false
-			for _, vm := range initContainer.VolumeMounts {
-				if vm.Name == testVolumeTLSCA && vm.MountPath == tlsCAMountPath {
-					foundMount = true
-				}
-			}
-			Expect(foundMount).To(BeTrue(), "build-ca-bundle init container must mount the tls-ca volume at %s", tlsCAMountPath)
-		})
-
 		It("uses a generic TLS security context and does not advertise OpenShift", func() {
-			kn := testKubernautWithDevelopmentTLS()
+			kn := testKubernautWithCertManagerTLS()
 			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
@@ -861,6 +875,158 @@ var _ = Describe("Deployments", func() {
 			}
 		})
 
+		It("UT-419-DEP-005 [IA-5, SC-8, SC-12] mounts workflow-discovery OAuth2 and custom-named mTLS credentials for an independent profile", func() {
+			kn := testKubernaut()
+			kn.Spec.LLMProfiles["workflow-full"] = kubernautv1alpha2.LLMProfileSpec{
+				Provider:              LLMProviderAnthropic,
+				Model:                 "claude-sonnet-4-6",
+				CredentialsSecretName: "workflow-credentials",
+				TLSCertFile:           "/etc/kubernaut-agent/workflow-tls/client.crt",
+				TLSKeyFile:            "/etc/kubernaut-agent/workflow-tls/client.key",
+				TLSClientSecretRef:    "workflow-tls",
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
+					Enabled:              true,
+					CredentialsSecretRef: "workflow-oauth",
+				},
+			}
+			kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "workflow-full"
+
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			expectHasVolume(dep, workflowOAuth2VolumeName)
+			expectHasVolumeMount(dep, workflowOAuth2VolumeName, workflowOAuth2MountPath)
+			expectHasVolume(dep, workflowTLSClientVolumeName)
+			expectHasVolumeMount(dep, workflowTLSClientVolumeName, "/etc/kubernaut-agent/workflow-tls")
+			for _, volume := range dep.Spec.Template.Spec.Volumes {
+				if volume.Name != workflowTLSClientVolumeName {
+					continue
+				}
+				Expect(volume.Secret).NotTo(BeNil())
+				Expect(volume.Secret.SecretName).To(Equal("workflow-tls"))
+				Expect(volume.Secret.Items).To(ConsistOf(
+					corev1.KeyToPath{Key: corev1.TLSCertKey, Path: "client.crt"},
+					corev1.KeyToPath{Key: corev1.TLSPrivateKeyKey, Path: "client.key"},
+				))
+			}
+		})
+
+		It("UT-419-DEP-006 [SC-8, SI-10] projects canonical mTLS Secret keys when an invalid profile omits paths", func() {
+			kn := testKubernaut()
+			kn.Spec.LLMProfiles["workflow-invalid-mtls"] = kubernautv1alpha2.LLMProfileSpec{
+				Provider:              LLMProviderAnthropic,
+				Model:                 "claude-sonnet-4-6",
+				CredentialsSecretName: "workflow-credentials",
+				TLSClientSecretRef:    "workflow-tls",
+			}
+			kn.Spec.KubernautAgent.WorkflowDiscovery.LLMProfileRef = "workflow-invalid-mtls"
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			for _, volume := range dep.Spec.Template.Spec.Volumes {
+				if volume.Name != workflowTLSClientVolumeName {
+					continue
+				}
+				Expect(volume.Secret).NotTo(BeNil())
+				Expect(volume.Secret.Items).To(ConsistOf(
+					corev1.KeyToPath{Key: corev1.TLSCertKey, Path: corev1.TLSCertKey},
+					corev1.KeyToPath{Key: corev1.TLSPrivateKeyKey, Path: corev1.TLSPrivateKeyKey},
+				))
+				return
+			}
+			Fail("workflow TLS volume was not rendered")
+		})
+
+		It("UT-419-DEP-001 [IA-5, SC-8, SC-12; SOC2 CC6.1, CC6.6; ASVS v5.0.0-V8.2.1, v5.0.0-V13.3.1] mounts independent alignment credentials, OAuth2, and mTLS Secrets read-only", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.AlignmentCheck = kubernautv1alpha2.AlignmentCheckSpec{
+				Enabled:       true,
+				LLMProfileRef: "alignment-profile",
+			}
+			kn.Spec.LLMProfiles["alignment-profile"] = kubernautv1alpha2.LLMProfileSpec{
+				Provider:              LLMProviderAnthropic,
+				Model:                 "claude-3-5-sonnet",
+				CredentialsSecretName: "alignment-llm-credentials",
+				TLSCertFile:           "/etc/kubernaut-agent/alignment-tls/tls.crt",
+				TLSKeyFile:            "/etc/kubernaut-agent/alignment-tls/tls.key",
+				TLSClientSecretRef:    "alignment-tls",
+				OAuth2: kubernautv1alpha2.OAuth2Spec{
+					Enabled:              true,
+					TokenURL:             "https://idp.example/token",
+					CredentialsSecretRef: "alignment-oauth",
+				},
+			}
+
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			expectHasVolume(dep, alignmentCredentialsVolumeName)
+			expectHasVolumeMount(dep, alignmentCredentialsVolumeName, alignmentCredentialsMountPath)
+			expectHasVolume(dep, alignmentOAuth2VolumeName)
+			expectHasVolumeMount(dep, alignmentOAuth2VolumeName, alignmentOAuth2MountPath)
+			expectHasVolume(dep, alignmentTLSClientVolumeName)
+			expectHasVolumeMount(dep, alignmentTLSClientVolumeName, alignmentTLSClientMountPath)
+			for _, volume := range dep.Spec.Template.Spec.Volumes {
+				switch volume.Name {
+				case alignmentCredentialsVolumeName:
+					Expect(volume.Secret).NotTo(BeNil())
+					Expect(volume.Secret.SecretName).To(Equal("alignment-llm-credentials"))
+				case alignmentOAuth2VolumeName:
+					Expect(volume.Secret).NotTo(BeNil())
+					Expect(volume.Secret.SecretName).To(Equal("alignment-oauth"))
+				case alignmentTLSClientVolumeName:
+					Expect(volume.Secret).NotTo(BeNil())
+					Expect(volume.Secret.SecretName).To(Equal("alignment-tls"))
+				}
+			}
+			for _, mount := range dep.Spec.Template.Spec.Containers[0].VolumeMounts {
+				if mount.Name == alignmentCredentialsVolumeName || mount.Name == alignmentOAuth2VolumeName || mount.Name == alignmentTLSClientVolumeName {
+					Expect(mount.ReadOnly).To(BeTrue(), "alignment Secret mount %q must be read-only", mount.Name)
+				}
+			}
+		})
+
+		It("UT-419-DEP-002 [IA-5; SOC2 CC6.6; ASVS v5.0.0-V8.2.1] reuses the base credentials mount when alignment selects the same Secret", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.AlignmentCheck = kubernautv1alpha2.AlignmentCheckSpec{
+				Enabled:       true,
+				LLMProfileRef: "alignment-profile",
+			}
+			kn.Spec.LLMProfiles["alignment-profile"] = kubernautv1alpha2.LLMProfileSpec{
+				Provider:              LLMProviderAnthropic,
+				Model:                 "claude-3-5-sonnet",
+				CredentialsSecretName: "llm-creds",
+			}
+
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			expectHasVolume(dep, "llm-credentials")
+			expectNoVolume(dep, alignmentCredentialsVolumeName)
+		})
+
+		It("UT-419-DEP-003 [CM-6, IA-5; SOC2 CC6.6; ASVS v5.0.0-V2.2.1] does not guess an alignment Secret when profile inference is ambiguous", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.AlignmentCheck.Enabled = true
+			kn.Spec.LLMProfiles["second-profile"] = kubernautv1alpha2.LLMProfileSpec{
+				Provider:              LLMProviderAnthropic,
+				Model:                 "claude-3-5-sonnet",
+				CredentialsSecretName: "second-credentials",
+			}
+
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			expectNoVolume(dep, alignmentCredentialsVolumeName)
+		})
+
+		It("UT-419-DEP-004 [CM-6, IA-5; SOC2 CC6.6; ASVS v5.0.0-V2.2.1] does not mount a Secret for an unresolved alignment profile", func() {
+			kn := testKubernaut()
+			kn.Spec.KubernautAgent.AlignmentCheck = kubernautv1alpha2.AlignmentCheckSpec{
+				Enabled:       true,
+				LLMProfileRef: testMissingProfile,
+			}
+
+			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+			expectNoVolume(dep, alignmentCredentialsVolumeName)
+		})
+
 		It("passes config args", func() {
 			kn := testKubernaut()
 			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
@@ -917,15 +1083,6 @@ var _ = Describe("Deployments", func() {
 			Expect(found).To(BeTrue(), "oauth2-credentials volume not found")
 		})
 
-		It("has service-ca volume when monitoring enabled", func() {
-			kn := testKubernaut()
-			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
-			Expect(err).NotTo(HaveOccurred())
-
-			expectHasVolume(dep, "service-ca")
-			expectHasVolumeMount(dep, "service-ca", "/etc/ssl/ka")
-		})
-
 		It("sets IS_OPENSHIFT env when monitoring enabled", func() {
 			kn := testKubernaut()
 			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
@@ -947,19 +1104,6 @@ var _ = Describe("Deployments", func() {
 			Expect(err).NotTo(HaveOccurred())
 			expectHasVolume(dep, "tls-certs")
 			expectHasVolumeMount(dep, "tls-certs", InterServiceTLSCertDir)
-		})
-
-		It("mounts emptyDir /tmp for readOnlyRootFilesystem", func() {
-			kn := testKubernaut()
-			dep, err := KubernautAgentDeployment(kn, testKnV2(kn))
-			Expect(err).NotTo(HaveOccurred())
-			expectHasVolume(dep, "tmp")
-			expectHasVolumeMount(dep, "tmp", "/tmp")
-			for _, v := range dep.Spec.Template.Spec.Volumes {
-				if v.Name == "tmp" {
-					Expect(v.EmptyDir).NotTo(BeNil())
-				}
-			}
 		})
 
 		It("sets terminationGracePeriodSeconds to drainSeconds + 5 (default 30)", func() {
@@ -1046,6 +1190,30 @@ var _ = Describe("Deployments", func() {
 					}
 				}
 			})
+
+			It("UT-FLEET-557-MOUNT-001 [AC-6, SC-8, SC-12]: mounts the MCP Gateway CA Secret read-only at its independent trust path", func() {
+				kn, knV2 := testKubernautWithFleetMCP()
+				knV2.Spec.Fleet.MCPGateway.TLS = &kubernautv1alpha2.FleetTrustSpec{
+					Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+					CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fleet-mcp-gateway-ca"},
+				}
+				dep, err := GatewayDeployment(kn, knV2)
+				Expect(err).NotTo(HaveOccurred())
+				expectHasVolume(dep, fleetMCPGatewayCAVolumeName)
+				expectHasVolumeMount(dep, fleetMCPGatewayCAVolumeName, fleetMCPGatewayCAMountDir)
+				for _, volume := range dep.Spec.Template.Spec.Volumes {
+					if volume.Name == fleetMCPGatewayCAVolumeName {
+						Expect(volume.Secret).NotTo(BeNil())
+						Expect(volume.Secret.SecretName).To(Equal("fleet-mcp-gateway-ca"))
+						Expect(volume.Secret.Items).To(ConsistOf(corev1.KeyToPath{Key: "ca.crt", Path: "ca.crt"}))
+					}
+				}
+				for _, mount := range dep.Spec.Template.Spec.Containers[0].VolumeMounts {
+					if mount.Name == "fleet-mcp-gateway-ca" {
+						Expect(mount.ReadOnly).To(BeTrue())
+					}
+				}
+			})
 		})
 	})
 
@@ -1077,7 +1245,7 @@ var _ = Describe("Deployments", func() {
 		})
 
 		It("does not wait for an OpenShift service CA with generic TLS", func() {
-			kn := testKubernautWithDevelopmentTLS()
+			kn := testKubernautWithCertManagerTLS()
 			dep, err := EffectivenessMonitorDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dep.Spec.Template.Spec.InitContainers).To(BeEmpty())
@@ -1087,7 +1255,6 @@ var _ = Describe("Deployments", func() {
 		It("TLS-CONSUMER-001 [AC-6, SC-8, SC-12, SI-4; ASVS V13.3.1, V13.3.2] mounts the shared monitoring CA source in EM, KA, and AF", func() {
 			kn := testKubernautWithAF()
 			kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{
-				Source:          kubernautv1alpha2.MonitoringTLSSourceSecret,
 				CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "monitoring-ca"},
 			}
 			knV2 := testKnV2(kn)
@@ -1118,7 +1285,7 @@ var _ = Describe("Deployments", func() {
 
 		It("TLS-CONSUMER-002 [SC-8, SC-12; ASVS V12.3.1, V13.3.1] does not mount monitoring CA material when system trust is selected", func() {
 			kn := testKubernautWithAF()
-			kn.Spec.Monitoring.TLS = &kubernautv1alpha2.MonitoringTLSSpec{Source: kubernautv1alpha2.MonitoringTLSSourceSystem}
+			kn.Spec.Monitoring.TLS = nil
 			knV2 := testKnV2(kn)
 
 			for _, builder := range []func(*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error){
@@ -1176,33 +1343,20 @@ var _ = Describe("Deployments", func() {
 				Expect(v.Name).NotTo(Equal(testVolumeCombinedCA))
 			}
 
-			container := dep.Spec.Template.Spec.Containers[0]
-			for _, e := range container.Env {
-				if e.Name == testEnvTLSCAFile {
-					Expect(e.Value).To(Equal(InterServiceTLSCAFile))
-				}
+			for _, e := range dep.Spec.Template.Spec.Containers[0].Env {
+				Expect([]string{testEnvTLSCAFile, testEnvSSLCertFile}).NotTo(ContainElement(e.Name))
 			}
 		})
 
-		It("overrides SSL_CERT_FILE to the combined-CA path alongside TLS_CA_FILE", func() {
-			// overrideTLSCAFile keeps SSL_CERT_FILE in sync with
-			// TLS_CA_FILE (both must point at the AAP+inter-service
-			// combined bundle, not just the inter-service one) so the Go
-			// runtime's system cert pool also trusts the AAP CA.
+		It("does not declare static ambient env vars when AAP trust is configured", func() {
 			kn := testKubernaut()
 			kn.Spec.WorkflowExecution.Ansible.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "aap-ca-secret"}
 			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
-			container := dep.Spec.Template.Spec.Containers[0]
-			found := false
-			for _, e := range container.Env {
-				if e.Name == testEnvSSLCertFile {
-					found = true
-					Expect(e.Value).To(Equal("/etc/combined-ca/ca-bundle.crt"))
-				}
+			for _, e := range dep.Spec.Template.Spec.Containers[0].Env {
+				Expect([]string{testEnvTLSCAFile, testEnvSSLCertFile}).NotTo(ContainElement(e.Name))
 			}
-			Expect(found).To(BeTrue(), "WFE must set SSL_CERT_FILE env var")
 		})
 
 		It("has init container with caCertSecretRef", func() {
@@ -1266,22 +1420,6 @@ var _ = Describe("Deployments", func() {
 				}
 			}
 			Fail("combined-ca volume not found")
-		})
-
-		It("overrides TLS_CA_FILE", func() {
-			kn := testKubernaut()
-			kn.Spec.WorkflowExecution.Ansible.CACertSecretRef = &kubernautv1alpha2.CACertSecretRef{Name: "aap-ca-secret"}
-			dep, err := WorkflowExecutionDeployment(kn, testKnV2(kn))
-			Expect(err).NotTo(HaveOccurred())
-
-			container := dep.Spec.Template.Spec.Containers[0]
-			for _, e := range container.Env {
-				if e.Name == testEnvTLSCAFile {
-					Expect(e.Value).To(Equal("/etc/combined-ca/ca-bundle.crt"))
-					return
-				}
-			}
-			Fail("TLS_CA_FILE env var not found")
 		})
 
 		It("init container concatenates correct sources", func() {
@@ -1424,41 +1562,18 @@ var _ = Describe("Deployments", func() {
 			expectHasVolume(dep, "fleet-oauth2-ca")
 			expectHasVolumeMount(dep, "fleet-oauth2-ca", "/etc/fleet-tls/oauth2")
 		})
-	})
 
-	Context("overrideTLSCAFile helper", func() {
-		It("replaces existing TLS_CA_FILE and SSL_CERT_FILE", func() {
-			env := []corev1.EnvVar{
-				{Name: "OTHER", Value: "foo"},
-				{Name: testEnvTLSCAFile, Value: "/old/path"},
-				{Name: testEnvSSLCertFile, Value: "/old/path"},
+		It("UT-FLEET-557-MOUNT-002 [AC-6, SC-8, SC-12]: mounts the MCP Gateway CA independently from WE's OAuth2 CA", func() {
+			kn, knV2 := testKubernautWithFleetMCP()
+			knV2.Spec.Fleet.MCPGateway.TLS = &kubernautv1alpha2.FleetTrustSpec{
+				Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+				CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fleet-mcp-gateway-ca"},
 			}
-			result := overrideTLSCAFile(env, "/new/path")
-			for _, name := range []string{testEnvTLSCAFile, testEnvSSLCertFile} {
-				found := false
-				for _, e := range result {
-					if e.Name == name {
-						found = true
-						Expect(e.Value).To(Equal("/new/path"))
-					}
-				}
-				Expect(found).To(BeTrue(), "%s not found after override", name)
-			}
-		})
-
-		It("appends both TLS_CA_FILE and SSL_CERT_FILE when missing", func() {
-			env := []corev1.EnvVar{{Name: "OTHER", Value: "foo"}}
-			result := overrideTLSCAFile(env, "/new/path")
-			Expect(result).To(HaveLen(3))
-			for _, name := range []string{testEnvTLSCAFile, testEnvSSLCertFile} {
-				found := false
-				for _, e := range result {
-					if e.Name == name && e.Value == "/new/path" {
-						found = true
-					}
-				}
-				Expect(found).To(BeTrue(), "%s should be appended when missing", name)
-			}
+			knV2.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+			dep, err := WorkflowExecutionDeployment(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			expectHasVolume(dep, fleetMCPGatewayCAVolumeName)
+			expectHasVolumeMount(dep, fleetMCPGatewayCAVolumeName, fleetMCPGatewayCAMountDir)
 		})
 	})
 
@@ -1684,7 +1799,7 @@ var _ = Describe("Deployments", func() {
 			}
 		})
 
-		It("have inter-service TLS CA volume, mount, and env var", func() {
+		It("have inter-service TLS CA volume and mount while runtime owns ambient env", func() {
 			kn := testKubernaut()
 			for _, dep := range getAllDeployments(kn) {
 				container := dep.Spec.Template.Spec.Containers[0]
@@ -1705,32 +1820,8 @@ var _ = Describe("Deployments", func() {
 				}
 				Expect(hasCAMount).To(BeTrue(), "Deployment %q missing %s volume mount", dep.Name, testVolumeTLSCA)
 
-				// #478: Gateway and DataStorage must not set SSL_CERT_FILE to
-				// the narrow inter-service bundle because Go treats it as a
-				// replacement for the image's public system roots. KA retains
-				// its existing merged system+inter-service bundle on OpenShift.
-				component := dep.Spec.Template.Labels["app"]
-				expectsProcessTrustEnv := component != ComponentGateway && component != ComponentDataStorage
-				wantSSLCertFile := InterServiceTLSCAFile
-				if component == ComponentKubernautAgent {
-					wantSSLCertFile = "/etc/ssl/combined/ca-bundle.crt"
-				}
-
-				hasCAEnv := false
-				hasSSLCertEnv := false
 				for _, env := range container.Env {
-					if env.Name == "TLS_CA_FILE" && env.Value == InterServiceTLSCAFile {
-						hasCAEnv = true
-					}
-					if env.Name == testEnvSSLCertFile && env.Value == wantSSLCertFile {
-						hasSSLCertEnv = true
-					}
-				}
-				Expect(hasCAEnv).To(BeTrue(), "Deployment %q missing TLS_CA_FILE env var", dep.Name)
-				if expectsProcessTrustEnv {
-					Expect(hasSSLCertEnv).To(BeTrue(), "Deployment %q missing SSL_CERT_FILE=%s env var", dep.Name, wantSSLCertFile)
-				} else {
-					Expect(hasSSLCertEnv).To(BeFalse(), "Deployment %q must leave SSL_CERT_FILE unset so public system roots remain available", dep.Name)
+					Expect([]string{"SSL_CERT_FILE", "SSL_CERT_DIR", "TLS_CA_FILE"}).NotTo(ContainElement(env.Name), dep.Name)
 				}
 			}
 		})
@@ -1787,36 +1878,6 @@ var _ = Describe("Deployments", func() {
 	})
 })
 
-var _ = Describe("overrideTLSCAFile standalone", func() {
-	It("replaces existing entry", func() {
-		env := []corev1.EnvVar{
-			{Name: "OTHER", Value: "foo"},
-			{Name: testEnvTLSCAFile, Value: "/old/path"},
-		}
-		result := overrideTLSCAFile(env, "/new/path")
-		for _, e := range result {
-			if e.Name == testEnvTLSCAFile {
-				Expect(e.Value).To(Equal("/new/path"))
-				return
-			}
-		}
-		Fail("TLS_CA_FILE not found after override")
-	})
-
-	It("appends when missing", func() {
-		env := []corev1.EnvVar{{Name: "OTHER", Value: "foo"}}
-		result := overrideTLSCAFile(env, "/new/path")
-		Expect(result).To(HaveLen(3))
-		found := false
-		for _, e := range result {
-			if e.Name == testEnvTLSCAFile && e.Value == "/new/path" {
-				found = true
-			}
-		}
-		Expect(found).To(BeTrue())
-	})
-})
-
 var _ = Describe("APIFrontendDeployment", func() {
 	It("builds successfully with AF enabled", func() {
 		kn := testKubernautWithAF()
@@ -1857,25 +1918,23 @@ var _ = Describe("APIFrontendDeployment", func() {
 		}
 	})
 
-	It("mounts config, tls-server, tls-ca, and tmp volumes", func() {
+	It("mounts config, tls-server, and the read-only tls-ca volume", func() {
 		kn := testKubernautWithAF()
 		dep, err := APIFrontendDeployment(kn, testKnV2(kn))
 		Expect(err).NotTo(HaveOccurred())
 		expectHasVolume(dep, "config")
 		expectHasVolume(dep, "tls-server")
 		expectHasVolume(dep, testVolumeTLSCA)
-		expectHasVolume(dep, "tmp")
 		expectHasVolumeMount(dep, "config", "/etc/apifrontend")
 		expectHasVolumeMount(dep, "tls-server", "/etc/apifrontend/tls")
 		expectHasVolumeMount(dep, testVolumeTLSCA, "/etc/apifrontend/tls-ca")
-		expectHasVolumeMount(dep, "tmp", "/tmp")
+		expectNoVolume(dep, "tmp")
 	})
 
 	It("does not render OpenShift CA wiring for explicit generic TLS", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
-			Mode:                  kubernautv1alpha2.TLSModeDevelopmentSelfSigned,
-			DevelopmentSelfSigned: &kubernautv1alpha2.DevelopmentSelfSignedTLSConfig{},
+			Mode: kubernautv1alpha2.TLSModeManual,
 		}
 		dep, err := APIFrontendDeployment(kn, testKnV2(kn))
 		Expect(err).NotTo(HaveOccurred())
@@ -1888,42 +1947,17 @@ var _ = Describe("APIFrontendDeployment", func() {
 		}
 	})
 
-	It("#404 [SC-8]: SSL_CERT_FILE points at a merged system+inter-service bundle built by a build-ca-bundle init container, not the narrower router/service-ca-only bundle", func() {
+	It("does not declare legacy ambient trust env vars or a generated CA bundle", func() {
 		kn := testKubernautWithAF()
 		dep, err := APIFrontendDeployment(kn, testKnV2(kn))
 		Expect(err).NotTo(HaveOccurred())
 		container := dep.Spec.Template.Spec.Containers[0]
 
-		var sslCertValues []string
-		var tlsCAValue string
 		for _, e := range container.Env {
-			if e.Name == testEnvSSLCertFile {
-				sslCertValues = append(sslCertValues, e.Value)
-			}
-			if e.Name == testEnvTLSCAFile {
-				tlsCAValue = e.Value
-			}
+			Expect([]string{testEnvSSLCertFile, testEnvTLSCAFile}).NotTo(ContainElement(e.Name))
 		}
-		Expect(sslCertValues).To(HaveLen(1), "SSL_CERT_FILE must be declared exactly once")
-		Expect(sslCertValues[0]).To(Equal("/etc/ssl/combined/ca-bundle.crt"),
-			"#404: AF's severityTriage/LLM calls to public-CA providers need system CAs, which the narrower /etc/apifrontend/tls-ca/ca.crt bundle (service-ca+router only) lacks")
-		Expect(tlsCAValue).To(Equal("/etc/apifrontend/tls-ca/ca.crt"),
-			"TLS_CA_FILE keeps its narrower, intentionally-scoped inter-service value -- unaffected by this fix")
-
-		expectHasVolume(dep, testVolumeCombinedCA)
-		expectHasVolumeMount(dep, testVolumeCombinedCA, "/etc/ssl/combined")
-
-		var initContainer *corev1.Container
-		for i := range dep.Spec.Template.Spec.InitContainers {
-			if dep.Spec.Template.Spec.InitContainers[i].Name == "build-ca-bundle" {
-				initContainer = &dep.Spec.Template.Spec.InitContainers[i]
-			}
-		}
-		Expect(initContainer).NotTo(BeNil(), "AF must have a build-ca-bundle init container, mirroring KA's pattern")
-		Expect(initContainer.Command).To(ContainElement(ContainSubstring("/etc/apifrontend/tls-ca/ca.crt")),
-			"init container must merge the inter-service trust bundle (mounted at AF's existing tls-ca path) into the combined bundle")
-		Expect(initContainer.Command).To(ContainElement(ContainSubstring("/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem")),
-			"init container must also merge the base image's system CA bundle")
+		expectNoVolume(dep, testVolumeCombinedCA)
+		Expect(dep.Spec.Template.Spec.InitContainers).To(BeEmpty())
 	})
 
 	It("mounts llm-credentials volume from AF's own resolved profile", func() {
@@ -2240,9 +2274,9 @@ var _ = Describe("DataStorageDeployment with Valkey TLS", func() {
 var _ = Describe("DataStorage Signing Cert", func() {
 	It("[IA-5, SC-12] mounts signing cert when configured", func() {
 		kn := testKubernaut()
-		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha2.SigningCertSpec{
+		setDataStorageSigningCertificate(kn, &kubernautv1alpha2.SigningCertSpec{
 			SecretName: "datastorage-signing-cert",
-		}
+		})
 		dep, err := DataStorageDeployment(kn)
 		Expect(err).NotTo(HaveOccurred())
 		expectHasVolume(dep, "signing-cert")
@@ -2251,13 +2285,29 @@ var _ = Describe("DataStorage Signing Cert", func() {
 
 	It("[SC-12] uses custom mount path when specified", func() {
 		kn := testKubernaut()
-		kn.Spec.DataStorage.SigningCert = &kubernautv1alpha2.SigningCertSpec{
+		setDataStorageSigningCertificate(kn, &kubernautv1alpha2.SigningCertSpec{
 			SecretName: "datastorage-signing-cert",
 			MountPath:  "/custom/certs",
-		}
+		})
 		dep, err := DataStorageDeployment(kn)
 		Expect(err).NotTo(HaveOccurred())
 		expectHasVolumeMount(dep, "signing-cert", "/custom/certs")
+	})
+
+	It("uses the effective fallback Secret when signingCertificate.secretName is empty", func() {
+		kn := testKubernaut()
+		kn.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
+		setDataStorageSigningCertificate(kn, &kubernautv1alpha2.SigningCertSpec{MountPath: "/custom/certs"})
+
+		dep, err := DataStorageDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolumeMount(dep, testVolumeSigningCert, "/custom/certs")
+		for _, volume := range dep.Spec.Template.Spec.Volumes {
+			if volume.Name == testVolumeSigningCert {
+				Expect(volume.Secret).NotTo(BeNil())
+				Expect(volume.Secret.SecretName).To(Equal(defaultCertManagerSigningSecretName))
+			}
+		}
 	})
 
 	It("falls back to service-ca TLS cert when signing cert is not configured", func() {

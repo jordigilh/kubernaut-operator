@@ -82,7 +82,8 @@ func DataStorageAuditHashKeyReferenceFor(kn *kubernautv1alpha2.Kubernaut) DataSt
 		SecretKey:  DataStorageAuditHashKeyDefault,
 		Generated:  true,
 	}
-	if spec := kn.Spec.DataStorage.AuditHashKey; spec != nil {
+	if kn.Spec.DataStorage.Audit != nil && kn.Spec.DataStorage.Audit.HashKey != nil {
+		spec := kn.Spec.DataStorage.Audit.HashKey
 		if spec.ExistingSecret != "" {
 			ref.SecretName = spec.ExistingSecret
 			ref.Generated = false

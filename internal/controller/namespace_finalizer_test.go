@@ -64,7 +64,7 @@ var _ = Describe("envtest workflow namespace retention and reuse (#514)", func()
 		}, "10s", "100ms").Should(BeTrue(), "leftover workflow namespace from a prior spec never finished finalizing")
 
 		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		r := reconcileToRunning(ctx)
 
 		ns := &corev1.Namespace{}
@@ -96,7 +96,7 @@ var _ = Describe("envtest workflow namespace retention and reuse (#514)", func()
 		cleanupNamespacedResources(ctx)
 
 		By("recreating the CR and reusing the retained namespace")
-		Expect(k8sClient.Create(ctx, newCRWithRouteDisabled())).To(Succeed())
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		reconcileToRunning(ctx)
 
 		recreated := &corev1.Namespace{}

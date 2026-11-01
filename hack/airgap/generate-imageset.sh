@@ -19,7 +19,7 @@ resolve_digest() {
     | python3 -c 'import sys,hashlib; data=sys.stdin.buffer.read(); print("sha256:" + hashlib.sha256(data).hexdigest())' 2>/dev/null
 }
 
-OP_TAG="quay.io/kubernaut-ai/kubernaut-operator:${VERSION}"
+OP_TAG="quay.io/kubernaut-ai/kubernaut-operator-image:${VERSION}"
 BUNDLE_TAG="quay.io/kubernaut-ai/kubernaut-operator-bundle:v${VERSION}"
 
 echo "Resolving operator digest for ${OP_TAG}..."
@@ -56,7 +56,7 @@ apiVersion: mirror.openshift.io/v2alpha1
 mirror:
   additionalImages:
     # Operator
-    - name: quay.io/kubernaut-ai/kubernaut-operator@${OP_DIGEST}
+    - name: quay.io/kubernaut-ai/kubernaut-operator-image@${OP_DIGEST}
     # Operator bundle
     - name: quay.io/kubernaut-ai/kubernaut-operator-bundle@${BUNDLE_DIGEST}
     # Operand and infrastructure images

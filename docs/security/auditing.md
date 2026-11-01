@@ -32,7 +32,7 @@ The Gateway logs receipt and processing of AlertManager webhook traffic (signal 
 
 ### Component logging levels and format
 
-All platform components support a per-component `logging.level` (default `info`), configurable through the Kubernaut CR. Log format is JSON across the stack: DataStorage uses JSON by configuration default, and other components default to JSON for consistency with centralized collection.
+All platform components support a per-component `logging.level` (default semantic level `INFO`), configurable through the Kubernaut CR. The Effectiveness Monitor's operator-rendered default uses the canonical uppercase level name. Log format is JSON across the stack: DataStorage uses JSON by configuration default, and other components default to JSON for consistency with centralized collection.
 
 ## Log collection
 

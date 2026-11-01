@@ -121,7 +121,7 @@ var _ = Describe("FleetMetadataCacheConfigMap", func() {
 
 	It("UT-TLS-491-009 [SC-8; SOC2 CC6, CC7; ASVS v5.0.0-V12.1.3, v5.0.0-V13.2.1] renders chart-compatible server TLS and OAuth2 CA paths", func() {
 		kn, knV2 := testKubernautWithFMC()
-		knV2.Spec.TLS.Mode = kubernautv1alpha2.TLSModeHook
+		knV2.Spec.TLS.Mode = kubernautv1alpha2.TLSModeManual
 		knV2.Spec.TLS.InterService = &kubernautv1alpha2.InterServiceTLSConfig{
 			CertDir: "/custom/tls",
 			CAFile:  "/custom/ca/ca.pem",
@@ -203,6 +203,13 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 		expectDeploymentBasics(dep, "fleetmetadatacache")
 	})
 
+	It("uses shared stateless defaults when resources are unset", func() {
+		kn, knV2 := testKubernautWithFMC()
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(dep.Spec.Template.Spec.Containers[0].Resources).To(Equal(DefaultResources()))
+	})
+
 	It("exposes api (8080), health (8081), and metrics (9090) ports", func() {
 		kn, knV2 := testKubernautWithFMC()
 		dep, err := FleetMetadataCacheDeployment(kn, knV2)
@@ -250,6 +257,24 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 				Expect(volume.Secret).NotTo(BeNil())
 				Expect(volume.Secret.SecretName).To(Equal(FleetMetadataCacheTLSSecretName))
 				break
+			}
+		}
+	})
+
+	It("UT-FLEET-557-MOUNT-003 [AC-6, SC-8, SC-12]: mounts FMC's MCP Gateway CA Secret read-only", func() {
+		kn, knV2 := testKubernautWithFMC()
+		knV2.Spec.Fleet.MCPGateway.TLS = &kubernautv1alpha2.FleetTrustSpec{
+			Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "fleet-mcp-gateway-ca"},
+		}
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		expectHasVolume(dep, fleetMCPGatewayCAVolumeName)
+		expectHasVolumeMount(dep, fleetMCPGatewayCAVolumeName, fleetMCPGatewayCAMountDir)
+		for _, volume := range dep.Spec.Template.Spec.Volumes {
+			if volume.Name == fleetMCPGatewayCAVolumeName {
+				Expect(volume.Secret).NotTo(BeNil())
+				Expect(volume.Secret.SecretName).To(Equal("fleet-mcp-gateway-ca"))
 			}
 		}
 	})

@@ -62,6 +62,22 @@ var _ = Describe("operator bootstrap chart", func() {
 			"kubernaut-operator-cert-patch"))
 	})
 
+	It("does not install operand NetworkPolicies before a Kubernaut CR exists", func() {
+		Expect(renderChart().ofKind("NetworkPolicy")).To(BeEmpty())
+	})
+
+	It("ships the OLM manager policy with metrics and webhook ingress and no egress", func() {
+		matches, err := filepath.Glob(filepath.Join(repositoryRoot(), "bundle", "manifests", "*networkpolicy.yaml"))
+		Expect(err).NotTo(HaveOccurred())
+		Expect(matches).To(HaveLen(1))
+		manifest, err := os.ReadFile(matches[0]) //nolint:gosec // repository fixture path
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(manifest)).To(ContainSubstring("name: allow-metrics-traffic"))
+		Expect(string(manifest)).To(ContainSubstring("port: 8443"))
+		Expect(string(manifest)).To(ContainSubstring("port: 9443"))
+		Expect(string(manifest)).NotTo(ContainSubstring("egress:"))
+	})
+
 	It("renders a fail-closed namespaced singleton webhook with deterministic names", func() {
 		webhooks := renderChart().ofKind("ValidatingWebhookConfiguration")
 		Expect(webhooks).To(HaveLen(1))

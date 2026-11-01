@@ -29,14 +29,12 @@ const (
 )
 
 // GenericTLSConfigMaps builds the trust ConfigMaps used when the selected TLS
-// source is administrator-managed, cert-manager, or explicit development
-// self-signed. It deliberately has no OpenShift injection annotations. The
-// controller supplies the validated CA PEM after reading or generating the
+// source is manual or cert-manager. It deliberately has no OpenShift injection
+// annotations. The controller supplies the validated CA PEM after reading the
 // selected source.
 func GenericTLSConfigMaps(kn *kubernautv1alpha2.Kubernaut, caPEM []byte) []*corev1.ConfigMap {
-	// Keep the historical service-ca.crt key for title-case operator modes and
-	// publish the Helm-compatible ca.crt alias for lower-case TLS modes. This
-	// lets the same operator-managed trust bundle serve both migration paths.
+	// Publish both keys so workloads using either trust-file convention can
+	// consume the same externally sourced CA bundle.
 	data := map[string]string{
 		"service-ca.crt": string(caPEM),
 		"ca.crt":         string(caPEM),

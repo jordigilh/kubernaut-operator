@@ -18,26 +18,27 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/go-logr/zapr"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	routev1 "github.com/openshift/api/route/v1"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 	corev1 "k8s.io/api/core/v1"
-	discoveryv1 "k8s.io/api/discovery/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/yaml"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
@@ -48,36 +49,11 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 		Expect(monitoringResourceSupported(nil, "ServiceMonitor")).To(BeFalse())
 	})
 
-	It("maps external monitoring Services and EndpointSlices to the configured Kubernaut", Label("unit"), func() {
-		scheme := runtime.NewScheme()
-		Expect(corev1.AddToScheme(scheme)).To(Succeed())
-		Expect(discoveryv1.AddToScheme(scheme)).To(Succeed())
-		Expect(kubernautv1alpha2.AddToScheme(scheme)).To(Succeed())
-		kn := newMinimalCR()
-		kn.Spec.Monitoring.Prometheus.URL = "https://prometheus.external-monitoring.svc:9090"
-		kn.Spec.Monitoring.AlertManager.Enabled = ptr.To(false)
-		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(kn).Build()
-		reconciler := &KubernautReconciler{Client: fakeClient, Scheme: scheme}
-		service := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "prometheus", Namespace: "external-monitoring"}}
-		endpointSlice := &discoveryv1.EndpointSlice{ObjectMeta: metav1.ObjectMeta{
-			Name: "prometheus-1", Namespace: "external-monitoring",
-			Labels: map[string]string{discoveryv1.LabelServiceName: "prometheus"},
-		}}
-
-		serviceRequests := reconciler.monitoringObjectToKubernaut(ctx, service)
-		endpointRequests := reconciler.monitoringObjectToKubernaut(ctx, endpointSlice)
-		Expect(serviceRequests).To(Equal([]reconcile.Request{{NamespacedName: client.ObjectKeyFromObject(kn)}}))
-		Expect(endpointRequests).To(Equal(serviceRequests))
-	})
-
-	It("removes a stale optional route when no route is desired", func() {
-		reconciler := newReconciler()
-		kn := newMinimalCR()
-		stale := &routev1.Route{ObjectMeta: metav1.ObjectMeta{Name: "stale-route", Namespace: kn.Namespace}}
-
-		hasRoute, err := reconciler.reconcileOptionalRoute(ctx, kn, "Gateway", nil, stale)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(hasRoute).To(BeFalse())
+	It("does not depend on external monitoring Services or EndpointSlices", Label("unit"), func() {
+		reconciler := &KubernautReconciler{}
+		Expect(reconciler.monitoringObjectToKubernaut(ctx, &corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "prometheus", Namespace: "external-monitoring"},
+		})).To(BeEmpty())
 	})
 
 	It("UT-MON-513-CTRL-001 [CM-3, CM-6, CM-8, SI-4]: creates rules and service monitors when their APIs are available", Label("unit"), func() {
@@ -235,6 +211,7 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 			installMonitoringCRDs(ctx)
 		})
 		AfterEach(func() {
+			deleteAnsibleSecret(ctx, "alertmanager-gateway-token")
 			cleanupMonitoringObjects(ctx)
 			cleanupNamespacedResources(ctx)
 			deleteCRIfExists(ctx)
@@ -296,11 +273,20 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 		It("IT-MON-513-010 [CM-6, CM-8, SI-4; ASVS v5.0.0-V16.5.2]: reaches Running through real reconciliation when monitoring CRDs are unavailable", func() {
 			deleteMonitoringCRDs(ctx)
 			createBYOSecrets(ctx)
+			monitoringService := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: "prometheus", Namespace: testNamespace},
+				Spec: corev1.ServiceSpec{
+					Selector: map[string]string{"app": "prometheus"},
+					Ports:    []corev1.ServicePort{{Name: "web", Protocol: corev1.ProtocolTCP, Port: 9090, TargetPort: intstr.FromInt(9090)}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, monitoringService)).To(Succeed())
+			DeferCleanup(func() { Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, monitoringService))).To(Succeed()) })
 
 			kn := newMinimalCR()
 			kn.Spec.Gateway.Enabled = ptr.To(false)
 			kn.Spec.APIFrontend.Enabled = ptr.To(false)
-			kn.Spec.Monitoring.Prometheus.URL = "https://prometheus.example.com:9090"
+			kn.Spec.Monitoring.Prometheus.URL = "https://prometheus.default.svc:9090"
 			kn.Spec.Monitoring.AlertManager.Enabled = ptr.To(false)
 			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 
@@ -309,6 +295,52 @@ var _ = Describe("monitoring reconciliation wiring", func() {
 			updated := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), updated)).To(Succeed())
 			Expect(updated.Status.Phase).To(Equal(kubernautv1alpha2.PhaseRunning))
+		})
+
+		It("IT-539-GW-AUTH-RECONCILE [IA-2, AC-3, AC-6, IA-5, CM-6; ASVS v5.0.0-V8.2.1, v5.0.0-V8.3.1, v5.0.0-V13.3.1, v5.0.0-V16.5.2]: reconciles nested Gateway auth into runtime config, AlertmanagerConfig, and status", func() {
+			createBYOSecrets(ctx)
+			createAnsibleSecret(ctx, "alertmanager-gateway-token", "token", "opaque-token-value")
+
+			kn := newMinimalCR()
+			kn.Spec.Monitoring.Prometheus.Enabled = ptr.To(false)
+			kn.Spec.Monitoring.AlertManager.URL = "https://alertmanager.example.com:9093"
+			enabled := true
+			kn.Spec.Gateway.Auth.Enabled = &enabled
+			kn.Spec.Gateway.Auth.AlertManager.TokenSecretName = "alertmanager-gateway-token"
+			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
+
+			reconcileToRunning(ctx)
+
+			configMap := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: "gateway-config"}, configMap)).To(Succeed())
+			var rendered struct {
+				Server struct {
+					AuthenticationEnabled *bool `yaml:"authenticationEnabled"`
+				} `yaml:"server"`
+			}
+			Expect(yaml.Unmarshal([]byte(configMap.Data["config.yaml"]), &rendered)).To(Succeed())
+			Expect(rendered.Server.AuthenticationEnabled).NotTo(BeNil())
+			Expect(*rendered.Server.AuthenticationEnabled).To(BeTrue())
+
+			alertManagerConfig := &monitoringv1alpha1.AlertmanagerConfig{}
+			Expect(k8sClient.Get(ctx, client.ObjectKey{Namespace: kn.Namespace, Name: "kubernaut-gateway-alerts"}, alertManagerConfig)).To(Succeed())
+			webhook := alertManagerConfig.Spec.Receivers[0].WebhookConfigs[0]
+			Expect(webhook.HTTPConfig).NotTo(BeNil())
+			Expect(webhook.HTTPConfig.Authorization).NotTo(BeNil())
+			Expect(webhook.HTTPConfig.Authorization.Type).To(Equal("Bearer"))
+			Expect(webhook.HTTPConfig.Authorization.Credentials.Name).To(Equal("alertmanager-gateway-token"))
+			Expect(webhook.HTTPConfig.Authorization.Credentials.Key).To(Equal("token"))
+			renderedAlertManagerConfig, err := json.Marshal(alertManagerConfig)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(renderedAlertManagerConfig)).NotTo(ContainSubstring("opaque-token-value"),
+				"the AlertmanagerConfig must contain only a SecretKeySelector, never token bytes")
+
+			updated := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), updated)).To(Succeed())
+			condition := findCondition(updated.Status.Conditions, kubernautv1alpha2.ConditionAlertManagerAuthConfigured)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
+			Expect(condition.Reason).To(Equal(ReasonAlertManagerAuthReady))
 		})
 	})
 })
@@ -369,6 +401,23 @@ func monitoringTestCRDs() []*apiextensionsv1.CustomResourceDefinition {
 				}},
 			},
 		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "alertmanagerconfigs.monitoring.coreos.com"},
+			Spec: apiextensionsv1.CustomResourceDefinitionSpec{
+				Group: "monitoring.coreos.com",
+				Names: apiextensionsv1.CustomResourceDefinitionNames{
+					Plural: "alertmanagerconfigs", Singular: "alertmanagerconfig", Kind: "AlertmanagerConfig",
+				},
+				Scope: apiextensionsv1.NamespaceScoped,
+				Versions: []apiextensionsv1.CustomResourceDefinitionVersion{{
+					Name: "v1alpha1", Served: true, Storage: true,
+					Schema: &apiextensionsv1.CustomResourceValidation{OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
+						Type:                   "object",
+						XPreserveUnknownFields: &preserveUnknownFields,
+					}},
+				}},
+			},
+		},
 	}
 }
 
@@ -398,6 +447,12 @@ func cleanupMonitoringObjects(ctx context.Context) {
 	if err := k8sClient.List(ctx, rules, client.InNamespace(testNamespace)); err == nil {
 		for index := range rules.Items {
 			_ = k8sClient.Delete(ctx, &rules.Items[index])
+		}
+	}
+	alertManagerConfigs := &monitoringv1alpha1.AlertmanagerConfigList{}
+	if err := k8sClient.List(ctx, alertManagerConfigs, client.InNamespace(testNamespace)); err == nil {
+		for index := range alertManagerConfigs.Items {
+			_ = k8sClient.Delete(ctx, &alertManagerConfigs.Items[index])
 		}
 	}
 }

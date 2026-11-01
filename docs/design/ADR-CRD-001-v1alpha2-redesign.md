@@ -18,6 +18,12 @@
 **Deciders**: Kubernaut Operator Team
 **Historical Scope**: `api/v1alpha1` -> `api/v1alpha2` CRD migration, proposed conversion webhook, all `internal/resources/*.go` builders, `internal/controller/`, OLM bundle
 
+> **Signal Processing follow-up:** The earlier Axis 3 decision to retain
+> `spec.signalProcessing.proactiveSignalMappings` is superseded by
+> [ADR-CRD-002](ADR-CRD-002-signalprocessing-proactive-mappings.md). The
+> operator now keeps only the built-in default mapping ConfigMap and does not
+> expose this legacy override in the v1alpha2 CRD.
+
 **Related Business Requirements**:
 - BR-API-001: CRD API surface alignment with the upstream Helm chart's `values.schema.json`
 - BR-UX-001: Lower the barrier to a first successful `Kubernaut` CR by minimizing required fields
