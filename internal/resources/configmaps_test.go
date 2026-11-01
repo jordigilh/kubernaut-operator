@@ -3421,6 +3421,32 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).To(ContainSubstring("issuerURL"))
 	})
 
+	It("renders the effective policy ConfigMap references for policy reads", func() {
+		kn := testKubernautWithAF()
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn))
+		Expect(err).NotTo(HaveOccurred())
+
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("policyRead:"))
+		Expect(data).To(ContainSubstring("configMapName: aianalysis-policy"))
+		Expect(data).To(ContainSubstring("configMapName: signalprocessing-policy"))
+	})
+
+	It("renders custom policy ConfigMap references for policy reads", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.AIAnalysis.Policy.ConfigMapName = "custom-ai-policy"
+		kn.Spec.SignalProcessing.Policy.ConfigMapName = "custom-signal-policy"
+
+		cm, err := APIFrontendConfigMap(kn, testKnV2(kn))
+		Expect(err).NotTo(HaveOccurred())
+
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("configMapName: custom-ai-policy"))
+		Expect(data).To(ContainSubstring("configMapName: custom-signal-policy"))
+		Expect(data).NotTo(ContainSubstring("configMapName: aianalysis-policy"))
+		Expect(data).NotTo(ContainSubstring("configMapName: signalprocessing-policy"))
+	})
+
 	It("does not invent an issuer when auth issuerURL is omitted", func() {
 		kn := testKubernaut()
 		kn.Spec.APIFrontend.Auth.IssuerURL = ""
