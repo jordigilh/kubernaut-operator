@@ -1047,6 +1047,9 @@ func aianalysisControllerClusterRole(kn *kubernautv1alpha2.Kubernaut, labels map
 		Rules: []rbacv1.PolicyRule{
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses/status"}, Verbs: []string{"get", "update", "patch"}},
+			// DD-2582: AIA performs a fresh RemediationRequest parent gate read
+			// and watches the parent for authorization/cancellation changes.
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"get", "list", "watch"}},
 			// #400: AgentSessionCreator.GetOrCreate sets an ownerReference from
 			// AgentSession back to this AIAnalysis CR via
 			// controllerutil.SetControllerReference, which defaults
@@ -1236,12 +1239,9 @@ func fleetCallerWorkflowExecutionClusterRole(kn *kubernautv1alpha2.Kubernaut, la
 
 func signalprocessingClusterRole(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
 	rules := []rbacv1.PolicyRule{
-		// kubernaut#2243 (BR-RBAC-020, FedRAMP AC-6): remediationrequests was
-		// previously granted here alongside signalprocessings, but SP never
-		// performs CRUD against the RemediationRequest CRD -- it only reads
-		// Spec.RemediationRequestRef.Name (a plain string field on its own
-		// CRD) for audit correlation. Removed as an unused,
-		// least-privilege-violating grant, matching upstream v1.6.0-rc5.
+		// DD-2582: SP performs a fresh RemediationRequest parent gate read and
+		// watches the parent for authorization/cancellation changes.
+		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings/status", "signalprocessings/finalizers"}, Verbs: []string{"get", "update", "patch"}},
 		{APIGroups: []string{""}, Resources: []string{"pods", "services", "namespaces", "nodes"}, Verbs: []string{"get", "list", "watch"}},
@@ -1271,6 +1271,9 @@ func remediationOrchestratorClusterRole(kn *kubernautv1alpha2.Kubernaut, labels 
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests", "remediationapprovalrequests"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/status", "remediationapprovalrequests/status"}, Verbs: []string{"get", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/finalizers"}, Verbs: []string{"update"}},
+			// DD-2582: RO watches InvestigationSession and reads failures to map
+			// them to the owning RemediationRequest.
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"investigationsessions"}, Verbs: []string{"get", "list", "watch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"signalprocessings/status"}, Verbs: []string{"get"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"aianalyses"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch"}},
@@ -1296,6 +1299,9 @@ func workflowExecutionControllerClusterRole(kn *kubernautv1alpha2.Kubernaut, lab
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions/status"}, Verbs: []string{"get", "update", "patch"}},
 			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"workflowexecutions/finalizers"}, Verbs: []string{"update"}},
+			// DD-2582: WFE performs a fresh RemediationRequest parent gate read
+			// and watches the parent for authorization/cancellation changes.
+			{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"get", "list", "watch"}},
 			{APIGroups: []string{"tekton.dev"}, Resources: []string{"pipelineruns"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},
 			{APIGroups: []string{"tekton.dev"}, Resources: []string{"taskruns"}, Verbs: []string{"get", "list", "watch"}},
 			{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"get", "list", "watch", "create", "update", "patch", "delete"}},

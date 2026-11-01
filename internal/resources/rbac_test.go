@@ -1908,6 +1908,13 @@ var _ = Describe("AIAnalysis controller ClusterRole", func() {
 		Expect(ruleMap).NotTo(HaveKey("kubernaut.ai/investigationsessions/status"))
 	})
 
+	It("grants read-only RemediationRequest access for the DD-2582 parent gate", func() {
+		role := aaRole()
+		Expect(role).NotTo(BeNil())
+		ruleMap := ruleMapFor(role)
+		Expect(ruleMap["kubernaut.ai/remediationrequests"]).To(ConsistOf("get", "list", "watch"))
+	})
+
 	It("grants update on agentsessions for finalizer removal (kubernaut#2214, CI run 32525130330)", func() {
 		role := aaRole()
 		Expect(role).NotTo(BeNil())
@@ -1977,20 +1984,23 @@ var _ = Describe("mcpGatewayCRDPolicyRules", func() {
 	})
 })
 
-var _ = Describe("SignalProcessing least-privilege RBAC", func() {
-	It("grants no verbs on remediationrequests (kubernaut#2243, FedRAMP AC-6)", func() {
+var _ = Describe("SignalProcessing parent-gate RBAC", func() {
+	It("grants read-only RemediationRequest access for DD-2582", func() {
 		kn := testKubernaut()
 		cr := signalprocessingClusterRole(kn, testKnV2(kn), CommonLabels(kn))
+		found := false
 		for _, r := range cr.Rules {
 			for _, apiGroup := range r.APIGroups {
 				if apiGroup != "kubernaut.ai" {
 					continue
 				}
-				Expect(r.Resources).NotTo(ContainElement("remediationrequests"),
-					"SP never performs CRUD against RemediationRequest -- it only reads "+
-						"Spec.RemediationRequestRef.Name (a plain string field on its own CRD)")
+				if slices.Contains(r.Resources, "remediationrequests") {
+					found = true
+					Expect(r.Verbs).To(ConsistOf("get", "list", "watch"))
+				}
 			}
 		}
+		Expect(found).To(BeTrue())
 	})
 
 	It("retains full CRUD on signalprocessings (regression guard)", func() {
