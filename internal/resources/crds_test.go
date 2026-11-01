@@ -105,6 +105,7 @@ var _ = Describe("EnsureCRDs embedded assets", func() {
 		agentSessionRef := schemaProperty(&aianalysis, "status", "investigationSession", "agentSessionRef")
 		Expect(agentSessionRef.Properties).To(HaveKey("namespace"))
 		Expect(agentSessionRef.Properties).To(HaveKey("uid"))
+		Expect(agentSessionRef.Properties).To(HaveKey("name"))
 		Expect(schemaEnumValues(schemaProperty(&aianalysis, "status", "phase"))).To(ContainElement("Cancelled"))
 
 		Expect(schemaEnumValues(schemaProperty(embeddedCRDSchemaPointer("kubernaut.ai_effectivenessassessments.yaml"), "status", "phase"))).
@@ -113,11 +114,13 @@ var _ = Describe("EnsureCRDs embedded assets", func() {
 			To(ContainElement("Cancelled"))
 
 		failurePhase := schemaProperty(embeddedCRDSchemaPointer("kubernaut.ai_remediationrequests.yaml"), "status", "completionStatus", "failurePhase")
-		failurePhaseEnums := make([]string, 0, len(failurePhase.AllOf))
+		Expect(failurePhase.AllOf).NotTo(BeEmpty())
 		for _, branch := range failurePhase.AllOf {
-			failurePhaseEnums = append(failurePhaseEnums, schemaEnumValues(branch)...)
+			if len(branch.Enum) == 0 {
+				continue
+			}
+			Expect(schemaEnumValues(branch)).To(ContainElement("EffectivenessAssessment"))
 		}
-		Expect(failurePhaseEnums).To(ContainElement("EffectivenessAssessment"))
 
 		Expect(schemaEnumValues(schemaProperty(embeddedCRDSchemaPointer("kubernaut.ai_signalprocessings.yaml"), "status", "phase"))).
 			To(ContainElement("Cancelled"))
@@ -126,10 +129,12 @@ var _ = Describe("EnsureCRDs embedded assets", func() {
 	})
 })
 
+// embeddedCRDSchema loads the OpenAPI schema from an embedded CRD asset.
 func embeddedCRDSchema(filename string) apiextensionsv1.JSONSchemaProps {
 	return *embeddedCRDSchemaPointer(filename)
 }
 
+// embeddedCRDSchemaPointer loads the OpenAPI schema while preserving its nested property tree.
 func embeddedCRDSchemaPointer(filename string) *apiextensionsv1.JSONSchemaProps {
 	data, err := fs.ReadFile(assets.CRDsFS, "crds/"+filename)
 	Expect(err).NotTo(HaveOccurred(), "reading %s", filename)
@@ -141,6 +146,7 @@ func embeddedCRDSchemaPointer(filename string) *apiextensionsv1.JSONSchemaProps 
 	return crd.Spec.Versions[0].Schema.OpenAPIV3Schema
 }
 
+// schemaProperty returns the nested schema property at path.
 func schemaProperty(schema *apiextensionsv1.JSONSchemaProps, path ...string) apiextensionsv1.JSONSchemaProps {
 	current := schema
 	for _, name := range path {
@@ -151,6 +157,7 @@ func schemaProperty(schema *apiextensionsv1.JSONSchemaProps, path ...string) api
 	return *current
 }
 
+// schemaEnumValues decodes the string values in an OpenAPI enum.
 func schemaEnumValues(schema apiextensionsv1.JSONSchemaProps) []string {
 	values := make([]string, 0, len(schema.Enum))
 	for _, enum := range schema.Enum {
