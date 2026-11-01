@@ -6,7 +6,7 @@
 | Operator branch | `fix/599-workflowexecution-pod-rbac` |
 | Spike scope | Upstream cancellation semantics and Fleet authorization boundary |
 | Date | 2026-11-01 |
-| Status | Upstream behavior confirmed; existing Fleet E2E evidence accepted |
+| Status | RBAC gap confirmed; upstream release boundary documented |
 
 ## Question
 
@@ -81,13 +81,29 @@ boundary. The upstream E2E uses its environment-specific identity subject;
 DD-457's fixed `oidc:` group names remain covered by the operator's exact RBAC
 unit contract.
 
+## Release boundary
+
+The operator currently pins kubernaut `v1.6.0-rc29` and its matching
+WorkflowExecution image digest. That release does not contain
+`VerifyCancellation`, `Cancelling`, or `Cancelled`; those changes are in
+kubernaut PR #2583, which remains open without a merge commit at the time of
+this spike. The embedded WorkflowExecution CRD therefore also remains on the
+pre-cancellation phase schema.
+
+This operator issue supplies the least-privilege RBAC prerequisite without
+pinning an unreleased application image or dependency revision. The compatible
+operand image, shared CRD assets, and upstream Fleet cancellation client fixes
+must be synchronized when #2583 is released. The remote Tekton GVK behavior is
+upstream application scope, not an operator ClusterRole or Fleet-group change.
+
 ## Spike decision
 
-**YES — the operator-side fix is confirmed.** Add only core Pod `get`, `list`,
-and `watch` to the managed `workflowexecution-controller` ClusterRole. This
-matches the upstream marker and the exact cancellation implementation. No Pod
-write verbs, Pod subresources, parent-gate changes, CRD changes, or Fleet
-execution-role changes are justified.
+**YES — the operator-side RBAC prerequisite is confirmed.** Add only core Pod
+`get`, `list`, and `watch` to the managed `workflowexecution-controller`
+ClusterRole. This matches the upstream marker and the exact cancellation
+implementation under review. No Pod write verbs, Pod subresources, parent-gate
+changes, CRD changes, unreleased operand pin, or Fleet execution-role changes
+are justified in this operator issue.
 
 **No new live Fleet run is required for #599.** The existing upstream Fleet E2E
 already proves the exchanged-identity/spoke authorization architecture. A new

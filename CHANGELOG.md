@@ -22,11 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the Fleet Metadata Cache API.
 
 ### Fixed
-- **WorkflowExecution verified cancellation Pod access** ([#599](https://github.com/jordigilh/kubernaut-operator/issues/599)) now grants the
-  `workflowexecution-controller` ClusterRole read-only `get`/`list`/`watch`
-  access to core Pods. The controller must observe owned Job/Tekton Pods before
-  persisting a terminal `Cancelled` phase; no Pod write access or Fleet
-  execution-RBAC change is included.
+- **WorkflowExecution verified cancellation Pod access** ([#599](https://github.com/jordigilh/kubernaut-operator/issues/599)) prepares the managed
+  `workflowexecution-controller` ClusterRole for upstream fail-closed
+  cancellation by granting read-only `get`/`list`/`watch` access to core Pods.
+  No Pod write access or Fleet execution-RBAC change is included; the compatible
+  upstream operand release remains a separate dependency on kubernaut PR #2583.
 - **Kubernaut Agent Fleet OAuth2 credentials mount** ([#413](https://github.com/jordigilh/kubernaut-operator/issues/413)) now uses KA's current `/etc/kubernaut-agent/<credentialsSecretRef>` path, preventing silent fallback to local-only tools.
 - **Fresh-install migration trust bundle ordering** ([#452](https://github.com/jordigilh/kubernaut-operator/issues/452)) now creates `inter-service-trust-bundle` before the database migration Job when PostgreSQL uses the default `verify-full` TLS mode.
 
