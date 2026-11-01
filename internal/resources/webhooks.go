@@ -226,7 +226,7 @@ func remediationWorkflowValidatingWebhook(kn *kubernautv1alpha2.Kubernaut) admis
 			},
 			Rule: admissionregistrationv1.Rule{
 				APIGroups:   []string{"kubernaut.ai"},
-				APIVersions: []string{"v1alpha2"},
+				APIVersions: []string{"v1alpha1"},
 				Resources:   []string{"remediationworkflows"},
 				Scope:       &namespacedScope,
 			},
@@ -257,7 +257,7 @@ func actionTypeValidatingWebhook(kn *kubernautv1alpha2.Kubernaut) admissionregis
 			},
 			Rule: admissionregistrationv1.Rule{
 				APIGroups:   []string{"kubernaut.ai"},
-				APIVersions: []string{"v1alpha2"},
+				APIVersions: []string{"v1alpha1"},
 				Resources:   []string{"actiontypes"},
 				Scope:       &namespacedScope,
 			},
