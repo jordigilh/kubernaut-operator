@@ -99,4 +99,71 @@ var _ = Describe("EnsureCRDs embedded assets", func() {
 		}
 		Expect(count).To(BeNumerically(">=", 9))
 	})
+
+	It("contains the merged schema foundation contract", func() {
+		aianalysis := embeddedCRDSchema("kubernaut.ai_aianalyses.yaml")
+		agentSessionRef := schemaProperty(&aianalysis, "status", "investigationSession", "agentSessionRef")
+		Expect(agentSessionRef.Properties).To(HaveKey("namespace"))
+		Expect(agentSessionRef.Properties).To(HaveKey("uid"))
+		Expect(agentSessionRef.Properties).To(HaveKey("name"))
+		Expect(schemaEnumValues(schemaProperty(&aianalysis, "status", "phase"))).To(ContainElement("Cancelled"))
+
+		Expect(schemaEnumValues(schemaProperty(embeddedCRDSchemaPointer("kubernaut.ai_effectivenessassessments.yaml"), "status", "phase"))).
+			To(ContainElement("Cancelled"))
+		Expect(schemaEnumValues(schemaProperty(embeddedCRDSchemaPointer("kubernaut.ai_remediationapprovalrequests.yaml"), "status", "decision"))).
+			To(ContainElement("Cancelled"))
+
+		failurePhase := schemaProperty(embeddedCRDSchemaPointer("kubernaut.ai_remediationrequests.yaml"), "status", "completionStatus", "failurePhase")
+		Expect(failurePhase.AllOf).NotTo(BeEmpty())
+		for _, branch := range failurePhase.AllOf {
+			if len(branch.Enum) == 0 {
+				continue
+			}
+			Expect(schemaEnumValues(branch)).To(ContainElement("EffectivenessAssessment"))
+		}
+
+		Expect(schemaEnumValues(schemaProperty(embeddedCRDSchemaPointer("kubernaut.ai_signalprocessings.yaml"), "status", "phase"))).
+			To(ContainElement("Cancelled"))
+		Expect(schemaEnumValues(schemaProperty(embeddedCRDSchemaPointer("kubernaut.ai_workflowexecutions.yaml"), "status", "phase"))).
+			To(ContainElements("Cancelling", "Cancelled"))
+	})
 })
+
+// embeddedCRDSchema loads the OpenAPI schema from an embedded CRD asset.
+func embeddedCRDSchema(filename string) apiextensionsv1.JSONSchemaProps {
+	return *embeddedCRDSchemaPointer(filename)
+}
+
+// embeddedCRDSchemaPointer loads the OpenAPI schema while preserving its nested property tree.
+func embeddedCRDSchemaPointer(filename string) *apiextensionsv1.JSONSchemaProps {
+	data, err := fs.ReadFile(assets.CRDsFS, "crds/"+filename)
+	Expect(err).NotTo(HaveOccurred(), "reading %s", filename)
+
+	crd := &apiextensionsv1.CustomResourceDefinition{}
+	Expect(sigsyaml.Unmarshal(data, crd)).NotTo(HaveOccurred(), "unmarshalling %s", filename)
+	Expect(crd.Spec.Versions).NotTo(BeEmpty(), "%s has no versions", filename)
+	Expect(crd.Spec.Versions[0].Schema).NotTo(BeNil(), "%s has no OpenAPI schema", filename)
+	return crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+}
+
+// schemaProperty returns the nested schema property at path.
+func schemaProperty(schema *apiextensionsv1.JSONSchemaProps, path ...string) apiextensionsv1.JSONSchemaProps {
+	current := schema
+	for _, name := range path {
+		next, ok := current.Properties[name]
+		Expect(ok).To(BeTrue(), "missing schema property %q in %q", name, strings.Join(path, "."))
+		current = &next
+	}
+	return *current
+}
+
+// schemaEnumValues decodes the string values in an OpenAPI enum.
+func schemaEnumValues(schema apiextensionsv1.JSONSchemaProps) []string {
+	values := make([]string, 0, len(schema.Enum))
+	for _, enum := range schema.Enum {
+		var value string
+		Expect(sigsyaml.Unmarshal(enum.Raw, &value)).NotTo(HaveOccurred())
+		values = append(values, value)
+	}
+	return values
+}
