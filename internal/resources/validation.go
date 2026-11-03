@@ -48,6 +48,9 @@ func ValidateKubernaut(kn *kubernautv1alpha2.Kubernaut) []error {
 	errs = append(errs, validateMonitoringEndpoints(kn)...)
 	errs = append(errs, validateMonitoringTLS(kn)...)
 	errs = append(errs, validateAPIFrontend(kn)...)
+	if err := validateConsoleEffectiveIssuer(kn); err != nil {
+		errs = append(errs, err)
+	}
 	if err := validateConsoleRedirectURL(kn); err != nil {
 		errs = append(errs, err)
 	}

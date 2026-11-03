@@ -408,6 +408,17 @@ var _ = Describe("Console Resources", func() {
 			}
 		})
 
+		It("rejects an empty effective issuer before writing the alpha ConfigMap", func() {
+			kn := testKubernautWithConsole()
+			kn.Spec.APIFrontend.Enabled = ptr.To(false)
+			kn.Spec.APIFrontend.Auth.IssuerURL = ""
+			kn.Spec.APIFrontend.Auth.JWTProviders = nil
+
+			cm, err := ConsoleOAuth2ProxyConfigMap(kn)
+			Expect(cm).To(BeNil())
+			Expect(err).To(MatchError(ContainSubstring("effective OIDC issuer")))
+		})
+
 		It("UT-CM-606-002 [AC-6, AC-12]: omits the optional backend logout field when it is not configured", func() {
 			cm, err := ConsoleOAuth2ProxyConfigMap(testKubernautWithConsole())
 			Expect(err).NotTo(HaveOccurred())

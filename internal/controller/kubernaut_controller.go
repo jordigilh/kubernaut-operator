@@ -3098,12 +3098,13 @@ const (
 )
 
 type precreatedReference struct {
-	kind         precreatedReferenceKind
-	path         string
-	name         string
-	requiredKeys []string
-	pemKeys      []string
-	jsonKeys     []string
+	kind          precreatedReferenceKind
+	path          string
+	name          string
+	requiredKeys  []string
+	pemKeys       []string
+	jsonKeys      []string
+	noNewlineKeys []string
 }
 
 // validatePrecreatedConfiguration verifies administrator/GitOps-owned inputs
@@ -3212,6 +3213,11 @@ func validatePrecreatedSecretKeys(secret *corev1.Secret, reference precreatedRef
 		}
 		values[key] = value
 	}
+	for _, key := range reference.noNewlineKeys {
+		if strings.ContainsAny(string(values[key]), "\r\n") {
+			return fmt.Errorf("%s: secret %q key %q must not contain newlines", reference.path, reference.name, key)
+		}
+	}
 	if err := validatePrecreatedSecretPEMKeys(values, reference); err != nil {
 		return err
 	}
@@ -3293,6 +3299,23 @@ func (c *precreatedReferenceCollector) addPEMSecretReference(path, name, key str
 	}
 }
 
+// addNoNewlineSecretKeys marks Secret values that must remain single-line
+// before they are substituted into a YAML scalar.
+func (c *precreatedReferenceCollector) addNoNewlineSecretKeys(path, name string, keys ...string) {
+	for i := range c.references {
+		reference := &c.references[i]
+		if reference.kind != precreatedSecretReference || reference.path != path || reference.name != name {
+			continue
+		}
+		for _, key := range keys {
+			if !slices.Contains(reference.noNewlineKeys, key) {
+				reference.noNewlineKeys = append(reference.noNewlineKeys, key)
+			}
+		}
+		return
+	}
+}
+
 // addJSONSecretReference registers a Secret key whose content must be valid JSON.
 func (c *precreatedReferenceCollector) addJSONSecretReference(path, name, key string) {
 	c.add(precreatedSecretReference, path, name, key)
@@ -3342,6 +3365,8 @@ func appendPrecreatedConsoleSecret(c *precreatedReferenceCollector, kn *kubernau
 	}
 	c.add(precreatedSecretReference, "spec.console.auth.secretName", kn.Spec.Console.Auth.SecretName,
 		"client-id", "client-secret", "cookie-secret")
+	c.addNoNewlineSecretKeys("spec.console.auth.secretName", kn.Spec.Console.Auth.SecretName,
+		"client-id", "client-secret")
 }
 
 func appendPrecreatedValkeyTLSSecrets(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {

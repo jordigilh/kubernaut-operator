@@ -50,9 +50,8 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, err
 		return nil, err
 	}
 
-	issuerURL := kn.Spec.ConsoleIssuerURL()
-	if issuerURL == "" {
-		return nil, fmt.Errorf("console requires a valid effective OIDC issuer")
+	if err := validateConsoleEffectiveIssuer(kn); err != nil {
+		return nil, err
 	}
 
 	secretName := kn.Spec.Console.Auth.SecretName
@@ -111,6 +110,15 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, err
 	}
 
 	return dep, nil
+}
+
+// validateConsoleEffectiveIssuer rejects an enabled Console without the
+// effective OIDC issuer required by oauth2-proxy.
+func validateConsoleEffectiveIssuer(kn *kubernautv1alpha2.Kubernaut) error {
+	if kn.Spec.ConsoleEnabled() && kn.Spec.ConsoleIssuerURL() == "" {
+		return fmt.Errorf("console requires a valid effective OIDC issuer")
+	}
+	return nil
 }
 
 func consoleOAuthArgs(redirectURL string) []string {
@@ -399,9 +407,13 @@ var marshalConsoleOAuth2ProxyYAML = func(config consoleOAuth2ProxyConfigYAML) ([
 // rendered as YAML literal scalars because OAuth2 Proxy substitutes them before
 // parsing the alpha configuration.
 func ConsoleOAuth2ProxyConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+	if err := validateConsoleEffectiveIssuer(kn); err != nil {
+		return nil, err
+	}
 	if err := validateConsoleProviderLogoutURL(kn); err != nil {
 		return nil, err
 	}
+	issuerURL := kn.Spec.ConsoleIssuerURL()
 
 	config := consoleOAuth2ProxyConfigYAML{
 		Server: consoleOAuth2ProxyServerYAML{BindAddress: "0.0.0.0:4180"},
@@ -423,7 +435,7 @@ func ConsoleOAuth2ProxyConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.Confi
 			ClientSecret:             consoleOAuth2ProxyEnvPlaceholder("${OAUTH2_PROXY_CLIENT_SECRET}"),
 			CAFiles:                  []string{InterServiceTLSCAFileFor(kn)},
 			UseSystemTrustStore:      true,
-			OIDCConfig:               consoleOAuth2ProxyOIDCYAML{IssuerURL: kn.Spec.ConsoleIssuerURL()},
+			OIDCConfig:               consoleOAuth2ProxyOIDCYAML{IssuerURL: issuerURL},
 			Scope:                    "openid email profile",
 			AdditionalClaims:         []string{"iss", "sub", "sid"},
 			SkipClaimsFromProfileURL: true,

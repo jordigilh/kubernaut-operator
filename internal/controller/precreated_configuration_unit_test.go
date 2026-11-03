@@ -222,6 +222,38 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		Expect(meta.IsStatusConditionTrue(kn.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)).To(BeTrue())
 	})
 
+	It("rejects multiline Console OAuth2 client credentials before workload creation", func() {
+		for _, key := range []string{"client-id", "client-secret"} {
+			kn := newMinimalCR()
+			kn.Spec.Console.Enabled = ptr.To(true)
+			kn.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+			kn.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
+			r := businessUnitReconciler(kn, clientInterceptorNone())
+			secretData := map[string][]byte{
+				"client-id":     []byte("client-id"),
+				"client-secret": []byte("client-secret"),
+				"cookie-secret": []byte("cookie-secret"),
+			}
+			secretData[key] = []byte("credential\nwith-newline")
+			seedPrecreatedObject(r, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: kn.Namespace},
+				Data:       secretData,
+			})
+
+			result, err := r.phaseValidate(ctx, kn, kn)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(requeueError))
+			refreshBusinessUnitCR(r, kn)
+
+			condition := meta.FindStatusCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
+			Expect(condition).NotTo(BeNil())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal("PrecreatedConfigurationInvalid"))
+			Expect(condition.Message).To(ContainSubstring(key))
+			Expect(condition.Message).To(ContainSubstring("must not contain newlines"))
+		}
+	})
+
 	It("UT-CONFIG-512-006 covers invalid and conditional reference branches", func() {
 		kn := newMinimalCR()
 		r := businessUnitReconciler(kn, clientInterceptorNone())
