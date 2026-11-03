@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -31,6 +32,8 @@ import (
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 	"github.com/jordigilh/kubernaut/pkg/shared/assets"
 )
+
+const externalConsoleOIDCSecretName = "external-console-oidc"
 
 var _ = Describe("independent Kubernetes API boundary decisions", Label("unit"), func() {
 	It("UT-AUDIT-515-API-001: reuses prepared administrator namespaces read-only and converges only owned namespace security", func() {
@@ -636,7 +639,7 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 	It("UT-AUDIT-515-API-018: wires optional Console/Fleet workloads, skips external routing and surfaces build and cleanup errors", func() {
 		kn := newMinimalCR()
 		kn.Spec.Console.Enabled = ptr.To(true)
-		kn.Spec.Console.Auth.SecretName = "external-console-oidc"
+		kn.Spec.Console.Auth.SecretName = externalConsoleOIDCSecretName
 		kn.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
 		kn.Spec.Fleet = defaultFMCFleetSpec()
 		kn.Spec.Notification.Routing = &kubernautv1alpha2.ConfigMapRef{ConfigMapName: "external-routing"}
@@ -711,7 +714,7 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 	It("UT-AUDIT-515-API-020: reports OAuth2 Proxy ConfigMap revision read failures", func() {
 		kn := newMinimalCR()
 		kn.Spec.Console.Enabled = ptr.To(true)
-		kn.Spec.Console.Auth.SecretName = "external-console-oidc"
+		kn.Spec.Console.Auth.SecretName = externalConsoleOIDCSecretName
 		kn.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
 		oauth2ConfigMapName := resources.ComponentConsole + "-oauth2-proxy"
 		oauth2ConfigMapGets := 0
@@ -728,6 +731,25 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 
 		_, err := r.deployConfigMaps(ctx, kn, kn, "kubernaut", "kubernaut", "")
 		Expect(err).To(MatchError(ContainSubstring("reading Console OAuth2 Proxy ConfigMap revision")))
+	})
+
+	It("uses the uncached API reader for the Console ConfigMap revision", func() {
+		kn := newMinimalCR()
+		kn.Spec.Console.Enabled = ptr.To(true)
+		kn.Spec.Console.Auth.SecretName = externalConsoleOIDCSecretName
+		kn.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
+		r := businessUnitReconciler(kn, interceptor.Funcs{})
+		r.APIReader = fake.NewClientBuilder().WithScheme(r.Scheme).WithObjects(&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            string(resources.ComponentConsole) + "-oauth2-proxy",
+				Namespace:       kn.Namespace,
+				ResourceVersion: "fresh-resource-version",
+			},
+		}).Build()
+
+		hashes, err := r.deployConfigMaps(ctx, kn, kn, "kubernaut", "kubernaut", "")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(hashes["console"]).To(ContainSubstring("+resourceVersion:fresh-resource-version"))
 	})
 
 	It("UT-AUDIT-515-API-019: rejects unreadable readiness, roles, cleanup resources and migration images", func() {

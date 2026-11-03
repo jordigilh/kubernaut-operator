@@ -1753,12 +1753,12 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 		}
 		if cm.Name == string(resources.ComponentConsole)+"-oauth2-proxy" {
 			live := &corev1.ConfigMap{}
-			if err := r.Get(ctx, client.ObjectKeyFromObject(cm), live); err != nil {
+			if err := r.ownershipReader().Get(ctx, client.ObjectKeyFromObject(cm), live); err != nil {
 				return nil, fmt.Errorf("reading Console OAuth2 Proxy ConfigMap revision: %w", err)
 			}
 			// The alpha config is mounted with subPath, so a repaired ConfigMap
 			// is not reflected in an already-running oauth2-proxy container. The
-			// live resourceVersion changes after a drift repair and forces the
+			// uncached resourceVersion changes after a drift repair and forces the
 			// Console Deployment pod template to roll.
 			cmHashes["console"] += "+resourceVersion:" + live.ResourceVersion
 		}
