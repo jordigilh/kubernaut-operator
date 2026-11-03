@@ -19,6 +19,7 @@ package resources
 import (
 	"fmt"
 
+	yamlv3 "go.yaml.in/yaml/v3"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -355,26 +356,48 @@ type consoleOAuth2ProxyClaimSourceYAML struct {
 	Claim string `json:"claim" yaml:"claim"`
 }
 
+// consoleOAuth2ProxyEnvPlaceholder renders an environment placeholder as a
+// YAML literal scalar. OAuth2 Proxy substitutes environment references before
+// decoding its alpha YAML, so a block scalar keeps YAML-significant credential
+// characters such as ':', '#', and '[' inside the scalar value.
+type consoleOAuth2ProxyEnvPlaceholder string
+
+func (v consoleOAuth2ProxyEnvPlaceholder) MarshalYAML() (any, error) {
+	return &yamlv3.Node{
+		Kind:  yamlv3.ScalarNode,
+		Tag:   "!!str",
+		Value: string(v),
+		Style: yamlv3.LiteralStyle,
+	}, nil
+}
+
 type consoleOAuth2ProxyProviderYAML struct {
-	ID                  string                     `json:"id" yaml:"id"`
-	Type                string                     `json:"provider" yaml:"provider"`
-	ClientID            string                     `json:"clientID" yaml:"clientID"`
-	ClientSecret        string                     `json:"clientSecret" yaml:"clientSecret"`
-	CAFiles             []string                   `json:"caFiles" yaml:"caFiles"`
-	UseSystemTrustStore bool                       `json:"useSystemTrustStore" yaml:"useSystemTrustStore"`
-	OIDCConfig          consoleOAuth2ProxyOIDCYAML `json:"oidcConfig" yaml:"oidcConfig"`
-	Scope               string                     `json:"scope" yaml:"scope"`
-	AdditionalClaims    []string                   `json:"additionalClaims" yaml:"additionalClaims"`
-	BackendLogoutURL    string                     `json:"backendLogoutURL,omitempty" yaml:"backendLogoutURL,omitempty"`
+	ID                       string                           `json:"id" yaml:"id"`
+	Type                     string                           `json:"provider" yaml:"provider"`
+	ClientID                 consoleOAuth2ProxyEnvPlaceholder `json:"clientID" yaml:"clientID"`
+	ClientSecret             consoleOAuth2ProxyEnvPlaceholder `json:"clientSecret" yaml:"clientSecret"`
+	CAFiles                  []string                         `json:"caFiles" yaml:"caFiles"`
+	UseSystemTrustStore      bool                             `json:"useSystemTrustStore" yaml:"useSystemTrustStore"`
+	OIDCConfig               consoleOAuth2ProxyOIDCYAML       `json:"oidcConfig" yaml:"oidcConfig"`
+	Scope                    string                           `json:"scope" yaml:"scope"`
+	AdditionalClaims         []string                         `json:"additionalClaims" yaml:"additionalClaims"`
+	SkipClaimsFromProfileURL bool                             `json:"skipClaimsFromProfileURL" yaml:"skipClaimsFromProfileURL"`
+	BackendLogoutURL         string                           `json:"backendLogoutURL,omitempty" yaml:"backendLogoutURL,omitempty"`
 }
 
 type consoleOAuth2ProxyOIDCYAML struct {
 	IssuerURL string `json:"issuerURL" yaml:"issuerURL"`
 }
 
+var marshalConsoleOAuth2ProxyYAML = func(config consoleOAuth2ProxyConfigYAML) ([]byte, error) {
+	return yamlv3.Marshal(config)
+}
+
 // ConsoleOAuth2ProxyConfigMap builds the alpha configuration consumed by the
 // Console oauth2-proxy sidecar. Credentials remain environment substitutions
-// so the Secret values never enter ConfigMap data.
+// so the Secret values never enter ConfigMap data. The placeholders are
+// rendered as YAML literal scalars because OAuth2 Proxy substitutes them before
+// parsing the alpha configuration.
 func ConsoleOAuth2ProxyConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
 	config := consoleOAuth2ProxyConfigYAML{
 		Server: consoleOAuth2ProxyServerYAML{BindAddress: "0.0.0.0:4180"},
@@ -389,26 +412,29 @@ func ConsoleOAuth2ProxyConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.Confi
 				ClaimSource: &consoleOAuth2ProxyClaimSourceYAML{Claim: "access_token"},
 			}},
 		}},
-		Providers: []consoleOAuth2ProxyProviderYAML{{
-			ID:                  "oidc",
-			Type:                "oidc",
-			ClientID:            "${OAUTH2_PROXY_CLIENT_ID}",
-			ClientSecret:        "${OAUTH2_PROXY_CLIENT_SECRET}",
-			CAFiles:             []string{InterServiceTLSCAFileFor(kn)},
-			UseSystemTrustStore: true,
-			OIDCConfig:          consoleOAuth2ProxyOIDCYAML{IssuerURL: kn.Spec.ConsoleIssuerURL()},
-			Scope:               "openid email profile",
-			AdditionalClaims:    []string{"iss", "sub", "sid"},
-			BackendLogoutURL:    kn.Spec.Console.Auth.ProviderLogoutURL,
+		Providers: []consoleOAuth2ProxyProviderYAML{{ //nolint:gosec // client credentials are environment placeholders, never secret values
+			ID:                       "oidc",
+			Type:                     "oidc",
+			ClientID:                 consoleOAuth2ProxyEnvPlaceholder("${OAUTH2_PROXY_CLIENT_ID}"),
+			ClientSecret:             consoleOAuth2ProxyEnvPlaceholder("${OAUTH2_PROXY_CLIENT_SECRET}"),
+			CAFiles:                  []string{InterServiceTLSCAFileFor(kn)},
+			UseSystemTrustStore:      true,
+			OIDCConfig:               consoleOAuth2ProxyOIDCYAML{IssuerURL: kn.Spec.ConsoleIssuerURL()},
+			Scope:                    "openid email profile",
+			AdditionalClaims:         []string{"iss", "sub", "sid"},
+			SkipClaimsFromProfileURL: true,
+			BackendLogoutURL:         kn.Spec.Console.Auth.ProviderLogoutURL,
 		}},
 	}
 
-	return yamlConfigMap(
-		ObjectMeta(kn, ComponentConsole+"-oauth2-proxy", ComponentConsole),
-		consoleOAuth2ProxyConfigKey,
-		"marshalling oauth2-proxy alpha config",
-		config,
-	)
+	data, err := marshalConsoleOAuth2ProxyYAML(config)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling oauth2-proxy alpha config: %w", err)
+	}
+	return &corev1.ConfigMap{
+		ObjectMeta: ObjectMeta(kn, ComponentConsole+"-oauth2-proxy", ComponentConsole),
+		Data:       map[string]string{consoleOAuth2ProxyConfigKey: string(data)},
+	}, nil
 }
 
 // consoleNginxHTTPConf returns the http-level nginx directives (rate-limit

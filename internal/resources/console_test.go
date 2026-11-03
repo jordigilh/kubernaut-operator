@@ -230,7 +230,7 @@ var _ = Describe("Console Resources", func() {
 
 			oauth2 := spec.Containers[0]
 			Expect(oauth2.Name).To(Equal("oauth2-proxy"))
-			Expect(oauth2.Image).To(Equal("quay.io/oauth2-proxy/oauth2-proxy@sha256:0d989b27d90d5e527fb2b045d864c4001c3104bdd763b3211b7e9ba2110380ea"))
+			Expect(oauth2.Image).To(Equal("quay.io/oauth2-proxy/oauth2-proxy@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916"))
 			Expect(*oauth2.SecurityContext.ReadOnlyRootFilesystem).To(BeTrue())
 			Expect(*oauth2.SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
 			Expect(oauth2.SecurityContext.RunAsUser).To(BeNil(), "hardcoded RunAsUser breaks OCP restricted SCC")
@@ -352,17 +352,45 @@ var _ = Describe("Console Resources", func() {
 			provider := config.Providers[0]
 			Expect(provider.ID).To(Equal("oidc"))
 			Expect(provider.Type).To(Equal("oidc"))
-			Expect(provider.ClientID).To(Equal("${OAUTH2_PROXY_CLIENT_ID}"))
-			Expect(provider.ClientSecret).To(Equal("${OAUTH2_PROXY_CLIENT_SECRET}"))
+			Expect(string(provider.ClientID)).To(Equal("${OAUTH2_PROXY_CLIENT_ID}"))
+			Expect(string(provider.ClientSecret)).To(Equal("${OAUTH2_PROXY_CLIENT_SECRET}"))
 			Expect(provider.OIDCConfig.IssuerURL).To(Equal(kn.Spec.ConsoleIssuerURL()))
 			Expect(provider.Scope).To(Equal("openid email profile"))
 			Expect(provider.CAFiles).To(ConsistOf(InterServiceTLSCAFileFor(kn)))
 			Expect(provider.UseSystemTrustStore).To(BeTrue())
 			Expect(provider.AdditionalClaims).To(Equal([]string{"iss", "sub", "sid"}))
+			Expect(provider.SkipClaimsFromProfileURL).To(BeTrue())
 			Expect(provider.BackendLogoutURL).To(Equal(kn.Spec.Console.Auth.ProviderLogoutURL))
+			Expect(cm.Data["oauth2-proxy.yaml"]).To(ContainSubstring("clientID: |-"))
+			Expect(cm.Data["oauth2-proxy.yaml"]).To(ContainSubstring("clientSecret: |-"))
 			Expect(cm.Data["oauth2-proxy.yaml"]).NotTo(ContainSubstring("cid"))
 			Expect(cm.Data["oauth2-proxy.yaml"]).NotTo(ContainSubstring("csec"))
 			Expect(cm.Data["oauth2-proxy.yaml"]).NotTo(ContainSubstring("cook"))
+		})
+
+		It("preserves YAML-significant credential characters after OAuth2 Proxy environment substitution", func() {
+			cm, err := ConsoleOAuth2ProxyConfigMap(testKubernautWithConsole())
+			Expect(err).NotTo(HaveOccurred())
+
+			data := strings.ReplaceAll(cm.Data["oauth2-proxy.yaml"], "${OAUTH2_PROXY_CLIENT_ID}", "client:id # [value]")
+			data = strings.ReplaceAll(data, "${OAUTH2_PROXY_CLIENT_SECRET}", "secret: # [value]")
+
+			var config consoleOAuth2ProxyConfigYAML
+			Expect(sigsyaml.Unmarshal([]byte(data), &config)).To(Succeed())
+			Expect(string(config.Providers[0].ClientID)).To(Equal("client:id # [value]"))
+			Expect(string(config.Providers[0].ClientSecret)).To(Equal("secret: # [value]"))
+		})
+
+		It("reports alpha configuration marshal failures", func() {
+			original := marshalConsoleOAuth2ProxyYAML
+			marshalConsoleOAuth2ProxyYAML = func(consoleOAuth2ProxyConfigYAML) ([]byte, error) {
+				return nil, fmt.Errorf("injected alpha config marshal failure")
+			}
+			defer func() { marshalConsoleOAuth2ProxyYAML = original }()
+
+			cm, err := ConsoleOAuth2ProxyConfigMap(testKubernautWithConsole())
+			Expect(cm).To(BeNil())
+			Expect(err).To(MatchError("marshalling oauth2-proxy alpha config: injected alpha config marshal failure"))
 		})
 
 		It("UT-CM-606-002 [AC-6, AC-12]: omits the optional backend logout field when it is not configured", func() {
