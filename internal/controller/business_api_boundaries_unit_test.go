@@ -671,16 +671,24 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 
 		kn.Spec.Gateway.Enabled = ptr.To(false)
 		kn.Spec.Fleet.Enabled = ptr.To(false)
+		kn.Spec.Console.Enabled = ptr.To(false)
 		Expect(r.cleanupDisabledGateway(ctx, kn)).To(Succeed())
+		Expect(r.cleanupDisabledConsole(ctx, kn)).To(Succeed())
 		failing := businessUnitReconciler(kn, interceptor.Funcs{Delete: deniedUnitDelete})
 		seedBusinessOwnedResources(failing, kn,
 			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resources.DeploymentName(resources.ComponentGateway), Namespace: kn.Namespace}},
+			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resources.ComponentConsole, Namespace: kn.Namespace}},
 			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resources.DeploymentName(resources.ComponentFleetMetadataCache), Namespace: kn.Namespace}})
+		Expect(failing.cleanupDisabledConsole(ctx, kn)).To(MatchError(ContainSubstring(unitAPIDenial)))
 		err = failing.deployWorkloads(ctx, kn, kn, nil, telemetryMaterialRevisionSet{})
 		Expect(err).To(HaveOccurred())
 		kn.Spec.Gateway.Enabled = ptr.To(true)
 		_, err = failing.enabledDeploymentBuilders(ctx, kn, kn)
-		Expect(err).To(HaveOccurred())
+		Expect(err).To(MatchError(ContainSubstring("cleaning up disabled console")))
+		kn.Spec.Console.Enabled = ptr.To(true)
+		_, err = failing.enabledDeploymentBuilders(ctx, kn, kn)
+		Expect(err).To(MatchError(ContainSubstring("cleaning up disabled fleetmetadatacache")))
+		kn.Spec.Console.Enabled = ptr.To(false)
 		kn.Spec.KubernautAgent.Audit.FlushIntervalSeconds = "NaN"
 		_, err = r.deployConfigMaps(ctx, kn, kn, "kubernaut", "kubernaut", "")
 		Expect(err).To(HaveOccurred())
@@ -698,6 +706,28 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		kn.Spec.APIFrontend.SeverityTriage = nil
 		withoutControllerImage("RELATED_IMAGE_DATA_STORAGE")
 		Expect(r.ensureDeployments(ctx, kn, kn, builders, nil, telemetryMaterialRevisionSet{})).To(HaveOccurred())
+	})
+
+	It("UT-AUDIT-515-API-020: reports OAuth2 Proxy ConfigMap revision read failures", func() {
+		kn := newMinimalCR()
+		kn.Spec.Console.Enabled = ptr.To(true)
+		kn.Spec.Console.Auth.SecretName = "external-console-oidc"
+		kn.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
+		oauth2ConfigMapName := resources.ComponentConsole + "-oauth2-proxy"
+		oauth2ConfigMapGets := 0
+		r := businessUnitReconciler(kn, interceptor.Funcs{Get: func(ctx context.Context, api client.WithWatch,
+			key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+			if key.Name == oauth2ConfigMapName {
+				oauth2ConfigMapGets++
+				if oauth2ConfigMapGets == 2 {
+					return fmt.Errorf("injected OAuth2 Proxy ConfigMap revision read failure")
+				}
+			}
+			return api.Get(ctx, key, object, options...)
+		}})
+
+		_, err := r.deployConfigMaps(ctx, kn, kn, "kubernaut", "kubernaut", "")
+		Expect(err).To(MatchError(ContainSubstring("reading Console OAuth2 Proxy ConfigMap revision")))
 	})
 
 	It("UT-AUDIT-515-API-019: rejects unreadable readiness, roles, cleanup resources and migration images", func() {

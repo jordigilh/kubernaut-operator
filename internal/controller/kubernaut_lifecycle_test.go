@@ -945,6 +945,14 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(cm.Data["server.conf"]).To(ContainSubstring(
 				"window.__KUBERNAUT_CONFIG__ = { enableRawThinking: false };"),
 				"the reconciled Console runtime configuration must hide raw thinking by default")
+
+			oauth2Config := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: string(resources.ComponentConsole) + "-oauth2-proxy", Namespace: testNamespace,
+			}, oauth2Config)).To(Succeed())
+			Expect(oauth2Config.Data).To(HaveKey("oauth2-proxy.yaml"))
+			Expect(oauth2Config.Data["oauth2-proxy.yaml"]).To(ContainSubstring("additionalClaims:"))
+			Expect(oauth2Config.Data["oauth2-proxy.yaml"]).To(ContainSubstring("X-Forwarded-Access-Token"))
 		})
 
 		It("IT-CN-476-002 [CM-3, CM-6, SI-10, CC8.1]: raw-thinking changes roll the Console pod", func() {
@@ -1020,7 +1028,13 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			deployment := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}, deployment)).To(Succeed())
-			Expect(deployment.Spec.Template.Spec.Containers[0].Args).To(ContainElement("--backend-logout-url=" + logoutURL1))
+			initialHash := deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
+			Expect(initialHash).NotTo(BeEmpty(), "Console Deployment must carry the combined Console ConfigMap hash")
+			Expect(deployment.Spec.Template.Spec.Containers[0].Args).NotTo(ContainElement("--backend-logout-url=" + logoutURL1))
+			oauth2Config := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: string(resources.ComponentConsole) + "-oauth2-proxy", Namespace: testNamespace}, oauth2Config)).To(Succeed())
+			Expect(oauth2Config.Data["oauth2-proxy.yaml"]).To(ContainSubstring("backendLogoutURL"))
+			Expect(oauth2Config.Data["oauth2-proxy.yaml"]).To(ContainSubstring(logoutURL1))
 			Expect(deployment.Spec.Template.Spec.Containers[0].Env).To(ContainElement(corev1.EnvVar{Name: "SSL_CERT_FILE", Value: "/etc/ssl/combined/ca-bundle.crt"}))
 			Expect(deployment.Spec.Template.Spec.InitContainers).To(HaveLen(1))
 			Expect(deployment.Spec.Template.Spec.InitContainers[0].Name).To(Equal("build-ca-bundle"))
@@ -1033,7 +1047,18 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}, deployment)).To(Succeed())
-			Expect(deployment.Spec.Template.Spec.Containers[0].Args).To(ContainElement("--backend-logout-url=" + logoutURL2))
+			Expect(deployment.Spec.Template.Spec.Containers[0].Args).NotTo(ContainElement("--backend-logout-url=" + logoutURL2))
+			Expect(deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]).NotTo(Equal(initialHash))
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: string(resources.ComponentConsole) + "-oauth2-proxy", Namespace: testNamespace}, oauth2Config)).To(Succeed())
+			Expect(oauth2Config.Data["oauth2-proxy.yaml"]).To(ContainSubstring(logoutURL2))
+
+			Expect(k8sClient.Delete(ctx, oauth2Config)).To(Succeed())
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{Name: string(resources.ComponentConsole) + "-oauth2-proxy", Namespace: testNamespace}, oauth2Config)
+			}, timeout, interval).Should(Succeed())
+			Expect(oauth2Config.Data["oauth2-proxy.yaml"]).To(ContainSubstring(logoutURL2))
 
 			Expect(k8sClient.Delete(ctx, deployment)).To(Succeed())
 			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -1041,7 +1066,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Eventually(func() error {
 				return k8sClient.Get(ctx, types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}, deployment)
 			}, timeout, interval).Should(Succeed())
-			Expect(deployment.Spec.Template.Spec.Containers[0].Args).To(ContainElement("--backend-logout-url=" + logoutURL2))
+			Expect(deployment.Spec.Template.Spec.Containers[0].Args).NotTo(ContainElement("--backend-logout-url=" + logoutURL2))
 		})
 
 		It("IT-CL-03 [SC-7, AC-6, CC6.1; ASVS v5.0.0-V2.2.1]: console redirect URL uses the administrator-owned callback URL", func() {
@@ -1093,6 +1118,97 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}, dep)
 			Expect(errors.IsNotFound(err)).To(BeTrue(),
 				"Console Deployment should not exist when console is disabled")
+		})
+
+		It("removes Console Deployment, Service, and ConfigMaps when disabled after being enabled", func() {
+			createBYOSecrets(ctx)
+			cr := newMinimalCR()
+			cr.Spec.Console.Enabled = ptr.To(true)
+			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+			cr.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
+			Expect(k8sClient.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
+				Data: map[string][]byte{
+					"client-id": []byte("cid"), "client-secret": []byte("csec"), "cookie-secret": []byte("cook"),
+				},
+			})).To(Succeed())
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			deployment := &appsv1.Deployment{}
+			service := &corev1.Service{}
+			nginxConfig := &corev1.ConfigMap{}
+			oauth2Config := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}, deployment)).To(Succeed())
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}, service)).To(Succeed())
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: string(resources.ComponentConsole) + "-nginx", Namespace: testNamespace}, nginxConfig)).To(Succeed())
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: string(resources.ComponentConsole) + "-oauth2-proxy", Namespace: testNamespace}, oauth2Config)).To(Succeed())
+
+			liveCR := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), liveCR)).To(Succeed())
+			liveCR.Spec.Console.Enabled = ptr.To(false)
+			Expect(k8sClient.Update(ctx, liveCR)).To(Succeed())
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() bool {
+				for _, object := range []client.Object{
+					&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: string(resources.ComponentConsole), Namespace: testNamespace}},
+					&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: string(resources.ComponentConsole), Namespace: testNamespace}},
+					&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: string(resources.ComponentConsole) + "-nginx", Namespace: testNamespace}},
+					&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: string(resources.ComponentConsole) + "-oauth2-proxy", Namespace: testNamespace}},
+				} {
+					if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(object), object); !errors.IsNotFound(err) {
+						return false
+					}
+				}
+				return true
+			}, timeout, interval).Should(BeTrue(), "all Console resources should be deleted after disabling Console")
+		})
+
+		It("repairs a tampered OAuth2 Proxy ConfigMap and rolls the Console pod", func() {
+			createBYOSecrets(ctx)
+			cr := newMinimalCR()
+			cr.Spec.Console.Enabled = ptr.To(true)
+			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+			cr.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
+			Expect(k8sClient.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
+				Data: map[string][]byte{
+					"client-id": []byte("cid"), "client-secret": []byte("csec"), "cookie-secret": []byte("cook"),
+				},
+			})).To(Succeed())
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			deployment := &appsv1.Deployment{}
+			deploymentKey := types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}
+			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+			initialHash := deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
+			Expect(initialHash).NotTo(BeEmpty())
+
+			oauth2Config := &corev1.ConfigMap{}
+			oauth2ConfigKey := types.NamespacedName{Name: string(resources.ComponentConsole) + "-oauth2-proxy", Namespace: testNamespace}
+			Expect(k8sClient.Get(ctx, oauth2ConfigKey, oauth2Config)).To(Succeed())
+			expectedConfig := oauth2Config.Data["oauth2-proxy.yaml"]
+			oauth2Config.Data["oauth2-proxy.yaml"] = "tampered: true\n"
+			Expect(k8sClient.Update(ctx, oauth2Config)).To(Succeed())
+
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() string {
+				if err := k8sClient.Get(ctx, oauth2ConfigKey, oauth2Config); err != nil {
+					return ""
+				}
+				return oauth2Config.Data["oauth2-proxy.yaml"]
+			}, timeout, interval).Should(Equal(expectedConfig), "drifted alpha config should be restored")
+			Eventually(func() string {
+				if err := k8sClient.Get(ctx, deploymentKey, deployment); err != nil {
+					return ""
+				}
+				return deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
+			}, timeout, interval).ShouldNot(Equal(initialHash), "repairing alpha config drift should roll the Console pod")
 		})
 
 		It("[SC-7, AC-3, CC6.6] applies standard policies without provider gating or API egress restriction", func() {
@@ -1848,8 +1964,13 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
 				Name: string(resources.ComponentConsole), Namespace: testNamespace,
 			}, consoleDeployment)).To(Succeed())
-			Expect(consoleDeployment.Spec.Template.Spec.Containers[0].Args).To(
+			Expect(consoleDeployment.Spec.Template.Spec.Containers[0].Args).NotTo(
 				ContainElement("--oidc-issuer-url=" + issuer))
+			oauth2ProxyConfig := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: string(resources.ComponentConsole) + "-oauth2-proxy", Namespace: testNamespace,
+			}, oauth2ProxyConfig)).To(Succeed())
+			Expect(oauth2ProxyConfig.Data["oauth2-proxy.yaml"]).To(ContainSubstring("issuerURL: " + issuer))
 		})
 
 		It("uses API Frontend TLS without an external sidecar", func() {

@@ -1692,6 +1692,44 @@ func (r *KubernautReconciler) cleanupDisabledFleetMetadataCache(ctx context.Cont
 	return nil
 }
 
+// cleanupDisabledConsole removes Console's namespaced workload, service, and
+// configuration when spec.console.enabled transitions to false.
+func (r *KubernautReconciler) cleanupDisabledConsole(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	ns := kn.Namespace
+	var errs []error
+
+	dep := &appsv1.Deployment{}
+	dep.Name = resources.DeploymentName(resources.ComponentConsole)
+	dep.Namespace = ns
+	if err := r.deleteIfExists(ctx, kn, dep); err != nil {
+		errs = append(errs, fmt.Errorf("deleting console Deployment: %w", err))
+	}
+
+	svc := &corev1.Service{}
+	svc.Name = string(resources.ComponentConsole)
+	svc.Namespace = ns
+	if err := r.deleteIfExists(ctx, kn, svc); err != nil {
+		errs = append(errs, fmt.Errorf("deleting console Service: %w", err))
+	}
+
+	for _, name := range []string{
+		string(resources.ComponentConsole) + "-nginx",
+		string(resources.ComponentConsole) + "-oauth2-proxy",
+	} {
+		cm := &corev1.ConfigMap{}
+		cm.Name = name
+		cm.Namespace = ns
+		if err := r.deleteIfExists(ctx, kn, cm); err != nil {
+			errs = append(errs, fmt.Errorf("deleting console ConfigMap %s: %w", name, err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
+}
+
 // deployConfigMaps builds and ensures all service ConfigMaps. Returns a map
 // of component name to SHA-256 hash of the ConfigMap data, used to stamp pod
 // template annotations and force rolling restarts when config content changes.
@@ -1712,6 +1750,17 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 	for _, cm := range configMaps {
 		if err := r.ensureNamespaced(ctx, kn, cm); err != nil {
 			return nil, fmt.Errorf("ensuring ConfigMap %s: %w", cm.Name, err)
+		}
+		if cm.Name == string(resources.ComponentConsole)+"-oauth2-proxy" {
+			live := &corev1.ConfigMap{}
+			if err := r.Get(ctx, client.ObjectKeyFromObject(cm), live); err != nil {
+				return nil, fmt.Errorf("reading Console OAuth2 Proxy ConfigMap revision: %w", err)
+			}
+			// The alpha config is mounted with subPath, so a repaired ConfigMap
+			// is not reflected in an already-running oauth2-proxy container. The
+			// live resourceVersion changes after a drift repair and forces the
+			// Console Deployment pod template to roll.
+			cmHashes["console"] += "+resourceVersion:" + live.ResourceVersion
 		}
 	}
 	return cmHashes, nil
@@ -1783,7 +1832,7 @@ func (r *KubernautReconciler) appendOptionalComponentConfigMaps(
 	kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut,
 	tlsOpt resources.ConfigMapOption, configMaps []*corev1.ConfigMap, cmHashes map[string]string,
 ) ([]*corev1.ConfigMap, error) {
-	builders := make([]cmBuilder, 0, 4)
+	builders := make([]cmBuilder, 0, 6)
 	if kn.Spec.GatewayEnabled() {
 		builders = append(builders, cmBuilder{"gateway", func() (*corev1.ConfigMap, error) {
 			return resources.GatewayConfigMap(kn, knV2, tlsOpt)
@@ -1794,17 +1843,31 @@ func (r *KubernautReconciler) appendOptionalComponentConfigMaps(
 			return resources.APIFrontendConfigMap(kn, knV2)
 		}})
 	}
-	if kn.Spec.ConsoleEnabled() {
-		builders = append(builders, cmBuilder{"console", func() (*corev1.ConfigMap, error) {
-			return resources.ConsoleNginxConfigMap(kn), nil
-		}})
-	}
 	if knV2.Spec.FleetMetadataCacheEnabled() {
 		builders = append(builders, cmBuilder{"fleetmetadatacache", func() (*corev1.ConfigMap, error) {
 			return resources.FleetMetadataCacheConfigMap(kn, knV2)
 		}})
 	}
-	return buildConfigMapSet(builders, configMaps, cmHashes)
+	if kn.Spec.ConsoleEnabled() {
+		builders = append(builders,
+			cmBuilder{"console", func() (*corev1.ConfigMap, error) {
+				return resources.ConsoleNginxConfigMap(kn), nil
+			}},
+			cmBuilder{"console-oauth2-proxy", func() (*corev1.ConfigMap, error) {
+				return resources.ConsoleOAuth2ProxyConfigMap(kn)
+			}},
+		)
+	}
+
+	configMaps, err := buildConfigMapSet(builders, configMaps, cmHashes)
+	if err != nil {
+		return nil, err
+	}
+	if kn.Spec.ConsoleEnabled() {
+		cmHashes["console"] += "+" + cmHashes["console-oauth2-proxy"]
+		delete(cmHashes, "console-oauth2-proxy")
+	}
+	return configMaps, nil
 }
 
 // Both core and optional builders share one fail-closed assembly path. No
@@ -2026,6 +2089,8 @@ func (r *KubernautReconciler) enabledDeploymentBuilders(
 		depBuilders = append(depBuilders, func(kn *kubernautv1alpha2.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 			return resources.ConsoleDeployment(kn)
 		})
+	} else if err := r.cleanupDisabledConsole(ctx, kn); err != nil {
+		return nil, fmt.Errorf("cleaning up disabled console: %w", err)
 	}
 	if knV2.Spec.FleetMetadataCacheEnabled() {
 		depBuilders = append(depBuilders, resources.FleetMetadataCacheDeployment)
