@@ -393,6 +393,21 @@ var _ = Describe("Console Resources", func() {
 			Expect(err).To(MatchError("marshalling oauth2-proxy alpha config: injected alpha config marshal failure"))
 		})
 
+		It("rejects unsafe provider logout URLs before writing the alpha ConfigMap", func() {
+			for _, value := range []string{
+				"http://idp.example.com/logout?id_token_hint={id_token}",
+				"https://other.example.com/logout?id_token_hint={id_token}",
+				"https://idp.example.com/logout#fragment",
+			} {
+				kn := testKubernautWithConsole()
+				kn.Spec.Console.Auth.ProviderLogoutURL = value
+
+				cm, err := ConsoleOAuth2ProxyConfigMap(kn)
+				Expect(cm).To(BeNil(), value)
+				Expect(err).To(MatchError(ContainSubstring("providerLogoutURL")), value)
+			}
+		})
+
 		It("UT-CM-606-002 [AC-6, AC-12]: omits the optional backend logout field when it is not configured", func() {
 			cm, err := ConsoleOAuth2ProxyConfigMap(testKubernautWithConsole())
 			Expect(err).NotTo(HaveOccurred())

@@ -1702,14 +1702,14 @@ func (r *KubernautReconciler) cleanupDisabledConsole(ctx context.Context, kn *ku
 	dep.Name = resources.DeploymentName(resources.ComponentConsole)
 	dep.Namespace = ns
 	if err := r.deleteIfExists(ctx, kn, dep); err != nil {
-		errs = append(errs, fmt.Errorf("deleting console Deployment: %w", err))
+		errs = append(errs, fmt.Errorf("deleting console deployment: %w", err))
 	}
 
 	svc := &corev1.Service{}
 	svc.Name = string(resources.ComponentConsole)
 	svc.Namespace = ns
 	if err := r.deleteIfExists(ctx, kn, svc); err != nil {
-		errs = append(errs, fmt.Errorf("deleting console Service: %w", err))
+		errs = append(errs, fmt.Errorf("deleting console service: %w", err))
 	}
 
 	for _, name := range []string{
@@ -1720,7 +1720,7 @@ func (r *KubernautReconciler) cleanupDisabledConsole(ctx context.Context, kn *ku
 		cm.Name = name
 		cm.Namespace = ns
 		if err := r.deleteIfExists(ctx, kn, cm); err != nil {
-			errs = append(errs, fmt.Errorf("deleting console ConfigMap %s: %w", name, err))
+			errs = append(errs, fmt.Errorf("deleting console config map %s: %w", name, err))
 		}
 	}
 

@@ -399,6 +399,10 @@ var marshalConsoleOAuth2ProxyYAML = func(config consoleOAuth2ProxyConfigYAML) ([
 // rendered as YAML literal scalars because OAuth2 Proxy substitutes them before
 // parsing the alpha configuration.
 func ConsoleOAuth2ProxyConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+	if err := validateConsoleProviderLogoutURL(kn); err != nil {
+		return nil, err
+	}
+
 	config := consoleOAuth2ProxyConfigYAML{
 		Server: consoleOAuth2ProxyServerYAML{BindAddress: "0.0.0.0:4180"},
 		UpstreamConfig: consoleOAuth2ProxyUpstreamConfigYAML{
