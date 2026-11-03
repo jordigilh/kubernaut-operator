@@ -730,7 +730,7 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		}})
 
 		_, err := r.deployConfigMaps(ctx, kn, kn, "kubernaut", "kubernaut", "")
-		Expect(err).To(MatchError(ContainSubstring("reading Console OAuth2 Proxy ConfigMap revision")))
+		Expect(err).To(MatchError(ContainSubstring("reading console oauth2-proxy configmap revision")))
 	})
 
 	It("uses the uncached API reader for the Console ConfigMap revision", func() {

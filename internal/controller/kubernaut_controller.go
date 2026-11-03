@@ -1748,13 +1748,20 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 	configMaps = appendServiceCAConfigMaps(kn, configMaps)
 
 	for _, cm := range configMaps {
-		if err := r.ensureNamespaced(ctx, kn, cm); err != nil {
+		changed := false
+		var err error
+		if cm.Name == string(resources.ComponentConsole)+"-oauth2-proxy" {
+			changed, err = r.ensureNamespacedChanged(ctx, kn, cm)
+		} else {
+			err = r.ensureNamespaced(ctx, kn, cm)
+		}
+		if err != nil {
 			return nil, fmt.Errorf("ensuring ConfigMap %s: %w", cm.Name, err)
 		}
-		if cm.Name == string(resources.ComponentConsole)+"-oauth2-proxy" {
+		if changed {
 			live := &corev1.ConfigMap{}
 			if err := r.ownershipReader().Get(ctx, client.ObjectKeyFromObject(cm), live); err != nil {
-				return nil, fmt.Errorf("reading Console OAuth2 Proxy ConfigMap revision: %w", err)
+				return nil, fmt.Errorf("reading console oauth2-proxy configmap revision: %w", err)
 			}
 			// The alpha config is mounted with subPath, so a repaired ConfigMap
 			// is not reflected in an already-running oauth2-proxy container. The
@@ -4466,10 +4473,15 @@ func (r *KubernautReconciler) hasCRD(ctx context.Context, crdName string) bool {
 // ensureNamespaced creates or updates a namespaced resource, setting the
 // Kubernaut CR as owner for garbage collection.
 func (r *KubernautReconciler) ensureNamespaced(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, obj client.Object) error {
+	_, err := r.ensureNamespacedChanged(ctx, kn, obj)
+	return err
+}
+
+func (r *KubernautReconciler) ensureNamespacedChanged(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, obj client.Object) (bool, error) {
 	if err := resources.SetOwnerReference(kn, obj, r.Scheme); err != nil {
-		return err
+		return false, err
 	}
-	return r.ensureResource(ctx, kn, obj)
+	return r.ensureResourceChanged(ctx, kn, obj)
 }
 
 // ensureUnowned creates or updates a resource without setting an owner
@@ -4490,6 +4502,11 @@ func (r *KubernautReconciler) ensureUnowned(ctx context.Context, kn *kubernautv1
 // additionally checks for content drift on ConfigMaps — detecting external
 // modifications that preserved the annotation but altered the data.
 func (r *KubernautReconciler) ensureResource(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, obj client.Object) error {
+	_, err := r.ensureResourceChanged(ctx, kn, obj)
+	return err
+}
+
+func (r *KubernautReconciler) ensureResourceChanged(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, obj client.Object) (bool, error) {
 	resources.StampOwnership(kn, obj)
 	desiredHash := resources.SpecHash(obj)
 	setHashAnnotation(obj, desiredHash)
@@ -4500,21 +4517,21 @@ func (r *KubernautReconciler) ensureResource(ctx context.Context, kn *kubernautv
 	if apierrors.IsNotFound(err) {
 		created, err := r.createOrReadExisting(ctx, obj, existing, key)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if created {
 			r.resourceLogger(ctx, kn, obj).Info("resource created")
-			return nil
+			return true, nil
 		}
 	} else if err != nil {
-		return fmt.Errorf("getting %s: %w", key, err)
+		return false, fmt.Errorf("getting %s: %w", key, err)
 	}
 
 	if err := r.checkResourceOwnership(ctx, kn, existing, metav1.GetControllerOf(obj) != nil); err != nil {
-		return err
+		return false, err
 	}
 	if existing.GetAnnotations()[resources.AnnotationSpecHash] == desiredHash && !contentDrifted(obj, existing) && ownershipMetadataMatches(obj, existing) {
-		return nil
+		return false, nil
 	}
 
 	obj.SetResourceVersion(existing.GetResourceVersion())
@@ -4523,10 +4540,10 @@ func (r *KubernautReconciler) ensureResource(ctx context.Context, kn *kubernautv
 	}
 	if err := r.Update(ctx, obj); err != nil {
 		r.resourceLogger(ctx, kn, obj).Error(err, "resource update failed")
-		return fmt.Errorf("updating %s: %w", key, err)
+		return false, fmt.Errorf("updating %s: %w", key, err)
 	}
 	r.resourceLogger(ctx, kn, obj).Info("resource updated")
-	return nil
+	return true, nil
 }
 
 // createOrReadExisting attempts to Create obj. If Create raced with another
