@@ -4456,7 +4456,7 @@ spec:
         - name: RELATED_IMAGE_CONSOLE
           value: quay.io/kubernaut-ai/kubernaut-console@sha256:85cdbb3596ba96873e5b30b1c861b6b96900427b61bd6001640c1789ad6c2edb
         - name: RELATED_IMAGE_OAUTH2_PROXY
-          value: quay.io/oauth2-proxy/oauth2-proxy@sha256:37c1570c0427e02fc7c947ef2c04e8995b8347b7abc9fcf1dbb4e376a4b221a7
+          value: quay.io/oauth2-proxy/oauth2-proxy@sha256:0d989b27d90d5e527fb2b045d864c4001c3104bdd763b3211b7e9ba2110380ea
         - name: RELATED_IMAGE_INIT_POSTGRES
           value: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
         - name: RELATED_IMAGE_INIT_UBI_MINIMAL

@@ -24,6 +24,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/utils/ptr"
+	sigsyaml "sigs.k8s.io/yaml"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -82,7 +83,12 @@ var _ = Describe("Console Resources", func() {
 
 			dep, err := ConsoleDeployment(kn)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(dep.Spec.Template.Spec.Containers[0].Args).To(ContainElement("--oidc-issuer-url=" + issuer))
+			Expect(dep.Spec.Template.Spec.Containers[0].Args).NotTo(ContainElement("--oidc-issuer-url=" + issuer))
+			oauth2ConfigMap, err := ConsoleOAuth2ProxyConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			var config consoleOAuth2ProxyConfigYAML
+			Expect(sigsyaml.Unmarshal([]byte(oauth2ConfigMap.Data["oauth2-proxy.yaml"]), &config)).To(Succeed())
+			Expect(config.Providers[0].OIDCConfig.IssuerURL).To(Equal(issuer))
 
 			cm, err := APIFrontendConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
@@ -104,7 +110,12 @@ var _ = Describe("Console Resources", func() {
 
 			dep, err := ConsoleDeployment(kn)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(dep.Spec.Template.Spec.Containers[0].Args).To(ContainElement("--oidc-issuer-url=" + issuer))
+			Expect(dep.Spec.Template.Spec.Containers[0].Args).NotTo(ContainElement("--oidc-issuer-url=" + issuer))
+			oauth2ConfigMap, err := ConsoleOAuth2ProxyConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			var config consoleOAuth2ProxyConfigYAML
+			Expect(sigsyaml.Unmarshal([]byte(oauth2ConfigMap.Data["oauth2-proxy.yaml"]), &config)).To(Succeed())
+			Expect(config.Providers[0].OIDCConfig.IssuerURL).To(Equal(issuer))
 
 			cm, err := APIFrontendConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
@@ -122,7 +133,13 @@ var _ = Describe("Console Resources", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			oauth2 := dep.Spec.Template.Spec.Containers[0]
-			Expect(oauth2.Args).To(ContainElement("--backend-logout-url=" + logoutURL))
+			Expect(oauth2.Args).NotTo(ContainElement("--backend-logout-url=" + logoutURL))
+			configMap, err := ConsoleOAuth2ProxyConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			var config consoleOAuth2ProxyConfigYAML
+			Expect(sigsyaml.Unmarshal([]byte(configMap.Data["oauth2-proxy.yaml"]), &config)).To(Succeed())
+			Expect(config.Providers).To(HaveLen(1))
+			Expect(config.Providers[0].BackendLogoutURL).To(Equal(logoutURL))
 			Expect(oauth2.Env).To(ContainElement(corev1.EnvVar{Name: "SSL_CERT_FILE", Value: "/etc/ssl/combined/ca-bundle.crt"}))
 			Expect(oauth2.VolumeMounts).To(ContainElement(corev1.VolumeMount{
 				Name: "combined-ca", MountPath: "/etc/ssl/combined", ReadOnly: true,
@@ -213,7 +230,7 @@ var _ = Describe("Console Resources", func() {
 
 			oauth2 := spec.Containers[0]
 			Expect(oauth2.Name).To(Equal("oauth2-proxy"))
-			Expect(oauth2.Image).To(Equal("quay.io/oauth2-proxy/oauth2-proxy:v7.9.0"))
+			Expect(oauth2.Image).To(Equal("quay.io/oauth2-proxy/oauth2-proxy@sha256:0d989b27d90d5e527fb2b045d864c4001c3104bdd763b3211b7e9ba2110380ea"))
 			Expect(*oauth2.SecurityContext.ReadOnlyRootFilesystem).To(BeTrue())
 			Expect(*oauth2.SecurityContext.AllowPrivilegeEscalation).To(BeFalse())
 			Expect(oauth2.SecurityContext.RunAsUser).To(BeNil(), "hardcoded RunAsUser breaks OCP restricted SCC")
@@ -242,7 +259,7 @@ var _ = Describe("Console Resources", func() {
 			Expect(console.Resources.Limits[corev1.ResourceMemory]).To(Equal(resource.MustParse("256Mi")))
 			Expect(console.VolumeMounts).To(HaveLen(4))
 
-			Expect(spec.Volumes).To(HaveLen(3))
+			Expect(spec.Volumes).To(HaveLen(4))
 			Expect(spec.Volumes[0].Name).To(Equal("nginx-tmp"))
 			Expect(spec.Volumes[1].Name).To(Equal("nginx-config"))
 			Expect(spec.Volumes[1].ConfigMap.Name).To(Equal(ComponentConsole + "-nginx"))
@@ -266,6 +283,97 @@ var _ = Describe("Console Resources", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(dep.Spec.Template.Spec.Containers[0].Resources).To(Equal(kn.Spec.Console.Resources))
 			Expect(dep.Spec.Template.Spec.Containers[1].Resources).To(Equal(kn.Spec.Console.Resources))
+		})
+
+		It("UT-CD-606-002 [AC-6, AC-12, CC6.1/CC6.3; ASVS V3.3/V7.2.1]: mounts only the dedicated alpha configuration and removes conflicting legacy flags", func() {
+			kn := testKubernautWithConsole()
+
+			dep, err := ConsoleDeployment(kn)
+			Expect(err).NotTo(HaveOccurred())
+
+			oauth2 := dep.Spec.Template.Spec.Containers[0]
+			Expect(oauth2.Args).To(ContainElement("--alpha-config=/etc/oauth2-proxy/alpha-config.yaml"))
+			Expect(oauth2.Args).To(ContainElement("--redirect-url=https://console.example.com/oauth2/callback"))
+			for _, arg := range oauth2.Args {
+				for _, legacyPrefix := range []string{
+					"--provider=",
+					"--oidc-issuer-url=",
+					"--http-address=",
+					"--upstream=",
+					"--pass-access-token=",
+					"--scope=",
+					"--provider-ca-file=",
+					"--use-system-trust-store=",
+					"--backend-logout-url=",
+				} {
+					Expect(arg).NotTo(HavePrefix(legacyPrefix))
+				}
+			}
+
+			Expect(oauth2.VolumeMounts).To(ContainElement(corev1.VolumeMount{
+				Name: "oauth2-proxy-config", MountPath: "/etc/oauth2-proxy/alpha-config.yaml", SubPath: "oauth2-proxy.yaml", ReadOnly: true,
+			}))
+			var configVolume *corev1.Volume
+			for i := range dep.Spec.Template.Spec.Volumes {
+				if dep.Spec.Template.Spec.Volumes[i].Name == "oauth2-proxy-config" {
+					configVolume = &dep.Spec.Template.Spec.Volumes[i]
+					break
+				}
+			}
+			Expect(configVolume).NotTo(BeNil())
+			Expect(configVolume.ConfigMap).NotTo(BeNil())
+			Expect(configVolume.ConfigMap.Name).To(Equal("kubernaut-console-oauth2-proxy"))
+			Expect(configVolume.ConfigMap.Items).To(ConsistOf(corev1.KeyToPath{Key: "oauth2-proxy.yaml", Path: "oauth2-proxy.yaml"}))
+		})
+	})
+
+	Context("ConsoleOAuth2ProxyConfigMap", func() {
+		It("UT-CM-606-001 [AC-6, AC-12, CC6.1/CC6.3]: renders the complete alpha configuration without secret values", func() {
+			const logoutURL = "https://idp.example.com/logout?id_token_hint={id_token}"
+			kn := testKubernautWithConsole()
+			kn.Spec.Console.Auth.ProviderLogoutURL = logoutURL
+
+			cm, err := ConsoleOAuth2ProxyConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cm.Name).To(Equal("kubernaut-console-oauth2-proxy"))
+			Expect(cm.Data).To(HaveKey("oauth2-proxy.yaml"))
+
+			var config consoleOAuth2ProxyConfigYAML
+			Expect(sigsyaml.Unmarshal([]byte(cm.Data["oauth2-proxy.yaml"]), &config)).To(Succeed())
+			Expect(config.Server.BindAddress).To(Equal("0.0.0.0:4180"))
+			Expect(config.UpstreamConfig.Upstreams).To(ConsistOf(consoleOAuth2ProxyUpstreamYAML{
+				ID: "console", Path: "/", URI: "http://localhost:8080",
+			}))
+			Expect(config.InjectRequestHeaders).To(ConsistOf(consoleOAuth2ProxyHeaderYAML{
+				Name:   "X-Forwarded-Access-Token",
+				Values: []consoleOAuth2ProxyHeaderValueYAML{{ClaimSource: &consoleOAuth2ProxyClaimSourceYAML{Claim: "access_token"}}},
+			}))
+			Expect(config.Providers).To(HaveLen(1))
+			provider := config.Providers[0]
+			Expect(provider.ID).To(Equal("oidc"))
+			Expect(provider.Type).To(Equal("oidc"))
+			Expect(provider.ClientID).To(Equal("${OAUTH2_PROXY_CLIENT_ID}"))
+			Expect(provider.ClientSecret).To(Equal("${OAUTH2_PROXY_CLIENT_SECRET}"))
+			Expect(provider.OIDCConfig.IssuerURL).To(Equal(kn.Spec.ConsoleIssuerURL()))
+			Expect(provider.Scope).To(Equal("openid email profile"))
+			Expect(provider.CAFiles).To(ConsistOf(InterServiceTLSCAFileFor(kn)))
+			Expect(provider.UseSystemTrustStore).To(BeTrue())
+			Expect(provider.AdditionalClaims).To(Equal([]string{"iss", "sub", "sid"}))
+			Expect(provider.BackendLogoutURL).To(Equal(kn.Spec.Console.Auth.ProviderLogoutURL))
+			Expect(cm.Data["oauth2-proxy.yaml"]).NotTo(ContainSubstring("cid"))
+			Expect(cm.Data["oauth2-proxy.yaml"]).NotTo(ContainSubstring("csec"))
+			Expect(cm.Data["oauth2-proxy.yaml"]).NotTo(ContainSubstring("cook"))
+		})
+
+		It("UT-CM-606-002 [AC-6, AC-12]: omits the optional backend logout field when it is not configured", func() {
+			cm, err := ConsoleOAuth2ProxyConfigMap(testKubernautWithConsole())
+			Expect(err).NotTo(HaveOccurred())
+
+			var config consoleOAuth2ProxyConfigYAML
+			Expect(sigsyaml.Unmarshal([]byte(cm.Data["oauth2-proxy.yaml"]), &config)).To(Succeed())
+			Expect(config.Providers).To(HaveLen(1))
+			Expect(config.Providers[0].BackendLogoutURL).To(BeEmpty())
+			Expect(cm.Data["oauth2-proxy.yaml"]).NotTo(ContainSubstring("backendLogoutURL"))
 		})
 	})
 
@@ -453,14 +561,19 @@ var _ = Describe("Console Resources", func() {
 			}
 		})
 
-		It("UT-CD-309-002 [SC-8, CC6.1]: points oauth2-proxy at the mounted CA bundle for issuer TLS verification", func() {
+		It("UT-CD-309-002 [SC-8, CC6.1]: points alpha-config at the mounted CA bundle for issuer TLS verification", func() {
 			kn := testKubernautWithConsole()
 			dep, err := ConsoleDeployment(kn)
 			Expect(err).NotTo(HaveOccurred())
 
 			oauth2 := dep.Spec.Template.Spec.Containers[0]
-			Expect(oauth2.Args).To(ContainElement(fmt.Sprintf("--provider-ca-file=%s/service-ca.crt", tlsCAMountPath)),
-				"oauth2-proxy must trust the cluster's service-ca bundle when the OIDC issuer uses a self-signed/internal cert")
+			Expect(oauth2.Args).NotTo(ContainElement(fmt.Sprintf("--provider-ca-file=%s/service-ca.crt", tlsCAMountPath)))
+			configMap, err := ConsoleOAuth2ProxyConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			var config consoleOAuth2ProxyConfigYAML
+			Expect(sigsyaml.Unmarshal([]byte(configMap.Data["oauth2-proxy.yaml"]), &config)).To(Succeed())
+			Expect(config.Providers[0].CAFiles).To(ConsistOf(fmt.Sprintf("%s/service-ca.crt", tlsCAMountPath)))
+			Expect(config.Providers[0].UseSystemTrustStore).To(BeTrue())
 		})
 
 		It("UT-CD-309-003 [SC-8]: oauth2-proxy container mounts tls-ca volume at /etc/tls-ca", func() {
@@ -491,8 +604,14 @@ var _ = Describe("Console Resources", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			oauth2 := dep.Spec.Template.Spec.Containers[0]
-			Expect(oauth2.Args).To(ContainElement("--provider-ca-file=/etc/tls-ca/ca.crt"))
-			Expect(oauth2.Args).To(ContainElement("--use-system-trust-store=true"))
+			Expect(oauth2.Args).NotTo(ContainElement("--provider-ca-file=/etc/tls-ca/ca.crt"))
+			Expect(oauth2.Args).NotTo(ContainElement("--use-system-trust-store=true"))
+			configMap, err := ConsoleOAuth2ProxyConfigMap(kn)
+			Expect(err).NotTo(HaveOccurred())
+			var config consoleOAuth2ProxyConfigYAML
+			Expect(sigsyaml.Unmarshal([]byte(configMap.Data["oauth2-proxy.yaml"]), &config)).To(Succeed())
+			Expect(config.Providers[0].CAFiles).To(ConsistOf("/etc/tls-ca/ca.crt"))
+			Expect(config.Providers[0].UseSystemTrustStore).To(BeTrue())
 			Expect(oauth2.VolumeMounts).To(ContainElement(corev1.VolumeMount{
 				Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true,
 			}))
