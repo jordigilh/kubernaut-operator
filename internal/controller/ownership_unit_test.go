@@ -10,6 +10,7 @@ import (
 	monitoringv1alpha1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1alpha1"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -91,6 +92,10 @@ var _ = Describe("integrated ownership API boundaries", Label("unit"), func() {
 			&monitoringv1alpha1.AlertmanagerConfig{ObjectMeta: metav1.ObjectMeta{Name: "kubernaut-gateway-alerts", Namespace: kn.Namespace}},
 			&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "fleetmetadatacache-service", Namespace: kn.Namespace}},
 			&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "fleetmetadatacache-config", Namespace: kn.Namespace}},
+			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resources.ComponentConsole, Namespace: kn.Namespace}},
+			&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: resources.ComponentConsole, Namespace: kn.Namespace}},
+			&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: resources.ComponentConsole + "-nginx", Namespace: kn.Namespace}},
+			&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: resources.ComponentConsole + "-oauth2-proxy", Namespace: kn.Namespace}},
 		)
 		for _, name := range bindingNames {
 			objects = append(objects, &rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: name}})
@@ -101,6 +106,7 @@ var _ = Describe("integrated ownership API boundaries", Label("unit"), func() {
 		seedBusinessOwnedResources(r, kn, objects...)
 		Expect(r.pruneStaleGatewayRBAC(ctx, kn)).NotTo(BeEmpty())
 		Expect(r.cleanupDisabledGateway(ctx, kn)).To(MatchError(ContainSubstring(unitAPIDenial)))
+		Expect(r.cleanupDisabledConsole(ctx, kn)).To(MatchError(ContainSubstring(unitAPIDenial)))
 		Expect(r.cleanupDisabledFleetMetadataCache(ctx, kn)).To(MatchError(ContainSubstring(unitAPIDenial)))
 		for _, cleanup := range []func(context.Context, *kubernautv1alpha2.Kubernaut) []error{
 			r.deleteAnsibleClusterRBAC, r.deleteMonitoringClusterRBAC, r.deleteAdditionalAgentAndToolRBAC, r.deleteWebhookResources,

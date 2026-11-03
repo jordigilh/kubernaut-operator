@@ -33,7 +33,7 @@ mirror:
     - name: quay.io/kubernaut-ai/remediationorchestrator@sha256:86cde42501683be6c61f7fc577a00fdbc6f26e849f795c03ffee69032d846cd7
     - name: quay.io/kubernaut-ai/signalprocessing@sha256:67043980d66bd782aadf76bd2c4344995197fda67f92ed62474cf3780633770c
     - name: quay.io/kubernaut-ai/workflowexecution@sha256:7865bd09537a497d0608077d9c6fb380c64ca41c67e90d7d7c02abdb38b06800
-    - name: quay.io/oauth2-proxy/oauth2-proxy@sha256:37c1570c0427e02fc7c947ef2c04e8995b8347b7abc9fcf1dbb4e376a4b221a7
+    - name: quay.io/oauth2-proxy/oauth2-proxy@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916
     - name: registry.access.redhat.com/ubi10/ubi-minimal@sha256:7dc60d7777e010c50f5e041ff069112b379c3d5eef2823d20871c67cf663f10c
     - name: registry.redhat.io/rhel10/postgresql-16@sha256:877ac0f8207ada1559ef73b70e92616255b95d3b6ef6a1af314c0f67edfde96e
     # Infrastructure dependencies (PostgreSQL, Valkey)

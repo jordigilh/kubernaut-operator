@@ -19,6 +19,7 @@ package resources
 import (
 	"fmt"
 
+	yamlv3 "go.yaml.in/yaml/v3"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -29,8 +30,11 @@ import (
 )
 
 const (
-	consoleProxyPort  = int32(4180)
-	consoleStaticPort = int32(8080)
+	consoleProxyPort                  = int32(4180)
+	consoleStaticPort                 = int32(8080)
+	consoleOAuth2ProxyConfigKey       = "oauth2-proxy.yaml"
+	consoleOAuth2ProxyConfigVolume    = "oauth2-proxy-config"
+	consoleOAuth2ProxyConfigMountPath = "/etc/oauth2-proxy/alpha-config.yaml"
 )
 
 // ConsoleDeployment builds the Deployment for the standalone web console.
@@ -46,9 +50,8 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, err
 		return nil, err
 	}
 
-	issuerURL := kn.Spec.ConsoleIssuerURL()
-	if issuerURL == "" {
-		return nil, fmt.Errorf("console requires a valid effective OIDC issuer")
+	if err := validateConsoleEffectiveIssuer(kn); err != nil {
+		return nil, err
 	}
 
 	secretName := kn.Spec.Console.Auth.SecretName
@@ -71,7 +74,7 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, err
 		return nil, err
 	}
 
-	oauthArgs := consoleOAuthArgs(issuerURL, redirectURL, caFile, logoutURL)
+	oauthArgs := consoleOAuthArgs(redirectURL)
 	resources := consoleContainerResources(kn)
 
 	volumes := consoleDeploymentVolumes(kn, logoutURL != "")
@@ -109,33 +112,28 @@ func ConsoleDeployment(kn *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, err
 	return dep, nil
 }
 
-func consoleOAuthArgs(issuerURL, redirectURL, caFile, logoutURL string) []string {
-	args := []string{
-		"--provider=oidc",
-		fmt.Sprintf("--oidc-issuer-url=%s", issuerURL),
+// validateConsoleEffectiveIssuer rejects an enabled Console without the
+// effective OIDC issuer required by oauth2-proxy.
+func validateConsoleEffectiveIssuer(kn *kubernautv1alpha2.Kubernaut) error {
+	if kn.Spec.ConsoleEnabled() && kn.Spec.ConsoleIssuerURL() == "" {
+		return fmt.Errorf("console requires a valid effective OIDC issuer")
+	}
+	return nil
+}
+
+func consoleOAuthArgs(redirectURL string) []string {
+	return []string{
+		"--alpha-config=" + consoleOAuth2ProxyConfigMountPath,
 		fmt.Sprintf("--redirect-url=%s", redirectURL),
-		"--http-address=0.0.0.0:4180",
-		"--upstream=http://localhost:8080",
-		"--pass-access-token=true",
 		"--skip-provider-button=true",
 		"--cookie-name=_kubernaut_console",
 		"--cookie-secure=true",
 		"--cookie-samesite=lax",
 		"--email-domain=*",
-		"--scope=openid email profile",
 		"--skip-jwt-bearer-tokens=true",
 		"--cookie-refresh=25m",
-		// #309: verify the OIDC issuer's TLS certificate rather than skip
-		// verification; trust the cluster's service-ca bundle (mounted
-		// below) so internal/self-signed issuers still validate.
-		"--provider-ca-file=" + caFile,
-		"--use-system-trust-store=true",
 		"--ping-path=/oauth2/ping",
 	}
-	if logoutURL != "" {
-		args = append(args, "--backend-logout-url="+logoutURL)
-	}
-	return args
 }
 
 const (
@@ -172,6 +170,13 @@ func consoleDeploymentVolumes(kn *kubernautv1alpha2.Kubernaut, includeCombinedCA
 			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
 		})
 	}
+	volumes = append(volumes, corev1.Volume{
+		Name: consoleOAuth2ProxyConfigVolume,
+		VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{
+			LocalObjectReference: corev1.LocalObjectReference{Name: ComponentConsole + "-oauth2-proxy"},
+			Items:                []corev1.KeyToPath{{Key: consoleOAuth2ProxyConfigKey, Path: consoleOAuth2ProxyConfigKey}},
+		}},
+	})
 	return volumes
 }
 
@@ -224,6 +229,7 @@ func consoleOAuth2ProxyContainer(image string, args []string, secretName, caDir,
 		env = append(env, corev1.EnvVar{Name: "SSL_CERT_FILE", Value: combinedCAFile})
 	}
 	volumeMounts := []corev1.VolumeMount{
+		{Name: consoleOAuth2ProxyConfigVolume, MountPath: consoleOAuth2ProxyConfigMountPath, SubPath: consoleOAuth2ProxyConfigKey, ReadOnly: true},
 		{Name: "tls-ca", MountPath: caDir, ReadOnly: true},
 	}
 	if combinedCAFile != "" {
@@ -322,6 +328,129 @@ func ConsoleNginxConfigMap(kn *kubernautv1alpha2.Kubernaut) *corev1.ConfigMap {
 			"server.conf": consoleNginxServerConf(afURL, kn.Spec.Console.EnableRawThinkingValue(), InterServiceTLSCAFileFor(kn)),
 		},
 	}
+}
+
+type consoleOAuth2ProxyConfigYAML struct {
+	Server               consoleOAuth2ProxyServerYAML         `json:"server" yaml:"server"`
+	UpstreamConfig       consoleOAuth2ProxyUpstreamConfigYAML `json:"upstreamConfig" yaml:"upstreamConfig"`
+	InjectRequestHeaders []consoleOAuth2ProxyHeaderYAML       `json:"injectRequestHeaders" yaml:"injectRequestHeaders"`
+	Providers            []consoleOAuth2ProxyProviderYAML     `json:"providers" yaml:"providers"`
+}
+
+type consoleOAuth2ProxyServerYAML struct {
+	BindAddress string `json:"bindAddress" yaml:"bindAddress"`
+}
+
+type consoleOAuth2ProxyUpstreamConfigYAML struct {
+	Upstreams []consoleOAuth2ProxyUpstreamYAML `json:"upstreams" yaml:"upstreams"`
+}
+
+type consoleOAuth2ProxyUpstreamYAML struct {
+	ID   string `json:"id" yaml:"id"`
+	Path string `json:"path" yaml:"path"`
+	URI  string `json:"uri" yaml:"uri"`
+}
+
+type consoleOAuth2ProxyHeaderYAML struct {
+	Name   string                              `json:"name" yaml:"name"`
+	Values []consoleOAuth2ProxyHeaderValueYAML `json:"values" yaml:"values"`
+}
+
+type consoleOAuth2ProxyHeaderValueYAML struct {
+	ClaimSource *consoleOAuth2ProxyClaimSourceYAML `json:"claimSource,omitempty" yaml:"claimSource,omitempty"`
+}
+
+type consoleOAuth2ProxyClaimSourceYAML struct {
+	Claim string `json:"claim" yaml:"claim"`
+}
+
+// consoleOAuth2ProxyEnvPlaceholder renders an environment placeholder as a
+// YAML literal scalar. OAuth2 Proxy substitutes environment references before
+// decoding its alpha YAML, so a block scalar keeps YAML-significant credential
+// characters such as ':', '#', and '[' inside the scalar value.
+type consoleOAuth2ProxyEnvPlaceholder string
+
+func (v consoleOAuth2ProxyEnvPlaceholder) MarshalYAML() (any, error) {
+	return &yamlv3.Node{
+		Kind:  yamlv3.ScalarNode,
+		Tag:   "!!str",
+		Value: string(v),
+		Style: yamlv3.LiteralStyle,
+	}, nil
+}
+
+type consoleOAuth2ProxyProviderYAML struct {
+	ID                       string                           `json:"id" yaml:"id"`
+	Type                     string                           `json:"provider" yaml:"provider"`
+	ClientID                 consoleOAuth2ProxyEnvPlaceholder `json:"clientID" yaml:"clientID"`
+	ClientSecret             consoleOAuth2ProxyEnvPlaceholder `json:"clientSecret" yaml:"clientSecret"`
+	CAFiles                  []string                         `json:"caFiles" yaml:"caFiles"`
+	UseSystemTrustStore      bool                             `json:"useSystemTrustStore" yaml:"useSystemTrustStore"`
+	OIDCConfig               consoleOAuth2ProxyOIDCYAML       `json:"oidcConfig" yaml:"oidcConfig"`
+	Scope                    string                           `json:"scope" yaml:"scope"`
+	AdditionalClaims         []string                         `json:"additionalClaims" yaml:"additionalClaims"`
+	SkipClaimsFromProfileURL bool                             `json:"skipClaimsFromProfileURL" yaml:"skipClaimsFromProfileURL"`
+	BackendLogoutURL         string                           `json:"backendLogoutURL,omitempty" yaml:"backendLogoutURL,omitempty"`
+}
+
+type consoleOAuth2ProxyOIDCYAML struct {
+	IssuerURL string `json:"issuerURL" yaml:"issuerURL"`
+}
+
+var marshalConsoleOAuth2ProxyYAML = func(config consoleOAuth2ProxyConfigYAML) ([]byte, error) {
+	return yamlv3.Marshal(config)
+}
+
+// ConsoleOAuth2ProxyConfigMap builds the alpha configuration consumed by the
+// Console oauth2-proxy sidecar. Credentials remain environment substitutions
+// so the Secret values never enter ConfigMap data. The placeholders are
+// rendered as YAML literal scalars because OAuth2 Proxy substitutes them before
+// parsing the alpha configuration.
+func ConsoleOAuth2ProxyConfigMap(kn *kubernautv1alpha2.Kubernaut) (*corev1.ConfigMap, error) {
+	if err := validateConsoleEffectiveIssuer(kn); err != nil {
+		return nil, err
+	}
+	if err := validateConsoleProviderLogoutURL(kn); err != nil {
+		return nil, err
+	}
+	issuerURL := kn.Spec.ConsoleIssuerURL()
+
+	config := consoleOAuth2ProxyConfigYAML{
+		Server: consoleOAuth2ProxyServerYAML{BindAddress: "0.0.0.0:4180"},
+		UpstreamConfig: consoleOAuth2ProxyUpstreamConfigYAML{
+			Upstreams: []consoleOAuth2ProxyUpstreamYAML{{
+				ID: "console", Path: "/", URI: "http://localhost:8080",
+			}},
+		},
+		InjectRequestHeaders: []consoleOAuth2ProxyHeaderYAML{{
+			Name: "X-Forwarded-Access-Token",
+			Values: []consoleOAuth2ProxyHeaderValueYAML{{
+				ClaimSource: &consoleOAuth2ProxyClaimSourceYAML{Claim: "access_token"},
+			}},
+		}},
+		Providers: []consoleOAuth2ProxyProviderYAML{{ //nolint:gosec // client credentials are environment placeholders, never secret values
+			ID:                       "oidc",
+			Type:                     "oidc",
+			ClientID:                 consoleOAuth2ProxyEnvPlaceholder("${OAUTH2_PROXY_CLIENT_ID}"),
+			ClientSecret:             consoleOAuth2ProxyEnvPlaceholder("${OAUTH2_PROXY_CLIENT_SECRET}"),
+			CAFiles:                  []string{InterServiceTLSCAFileFor(kn)},
+			UseSystemTrustStore:      true,
+			OIDCConfig:               consoleOAuth2ProxyOIDCYAML{IssuerURL: issuerURL},
+			Scope:                    "openid email profile",
+			AdditionalClaims:         []string{"iss", "sub", "sid"},
+			SkipClaimsFromProfileURL: true,
+			BackendLogoutURL:         kn.Spec.Console.Auth.ProviderLogoutURL,
+		}},
+	}
+
+	data, err := marshalConsoleOAuth2ProxyYAML(config)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling oauth2-proxy alpha config: %w", err)
+	}
+	return &corev1.ConfigMap{
+		ObjectMeta: ObjectMeta(kn, ComponentConsole+"-oauth2-proxy", ComponentConsole),
+		Data:       map[string]string{consoleOAuth2ProxyConfigKey: string(data)},
+	}, nil
 }
 
 // consoleNginxHTTPConf returns the http-level nginx directives (rate-limit

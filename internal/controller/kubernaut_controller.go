@@ -1692,6 +1692,44 @@ func (r *KubernautReconciler) cleanupDisabledFleetMetadataCache(ctx context.Cont
 	return nil
 }
 
+// cleanupDisabledConsole removes Console's namespaced workload, service, and
+// configuration when spec.console.enabled transitions to false.
+func (r *KubernautReconciler) cleanupDisabledConsole(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	ns := kn.Namespace
+	var errs []error
+
+	dep := &appsv1.Deployment{}
+	dep.Name = resources.DeploymentName(resources.ComponentConsole)
+	dep.Namespace = ns
+	if err := r.deleteIfExists(ctx, kn, dep); err != nil {
+		errs = append(errs, fmt.Errorf("deleting console deployment: %w", err))
+	}
+
+	svc := &corev1.Service{}
+	svc.Name = string(resources.ComponentConsole)
+	svc.Namespace = ns
+	if err := r.deleteIfExists(ctx, kn, svc); err != nil {
+		errs = append(errs, fmt.Errorf("deleting console service: %w", err))
+	}
+
+	for _, name := range []string{
+		string(resources.ComponentConsole) + "-nginx",
+		string(resources.ComponentConsole) + "-oauth2-proxy",
+	} {
+		cm := &corev1.ConfigMap{}
+		cm.Name = name
+		cm.Namespace = ns
+		if err := r.deleteIfExists(ctx, kn, cm); err != nil {
+			errs = append(errs, fmt.Errorf("deleting console config map %s: %w", name, err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
+}
+
 // deployConfigMaps builds and ensures all service ConfigMaps. Returns a map
 // of component name to SHA-256 hash of the ConfigMap data, used to stamp pod
 // template annotations and force rolling restarts when config content changes.
@@ -1710,8 +1748,26 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 	configMaps = appendServiceCAConfigMaps(kn, configMaps)
 
 	for _, cm := range configMaps {
-		if err := r.ensureNamespaced(ctx, kn, cm); err != nil {
+		changed := false
+		var err error
+		if cm.Name == string(resources.ComponentConsole)+"-oauth2-proxy" {
+			changed, err = r.ensureNamespacedChanged(ctx, kn, cm)
+		} else {
+			err = r.ensureNamespaced(ctx, kn, cm)
+		}
+		if err != nil {
 			return nil, fmt.Errorf("ensuring ConfigMap %s: %w", cm.Name, err)
+		}
+		if changed {
+			live := &corev1.ConfigMap{}
+			if err := r.ownershipReader().Get(ctx, client.ObjectKeyFromObject(cm), live); err != nil {
+				return nil, fmt.Errorf("reading console oauth2-proxy configmap revision: %w", err)
+			}
+			// The alpha config is mounted with subPath, so a repaired ConfigMap
+			// is not reflected in an already-running oauth2-proxy container. The
+			// uncached resourceVersion changes after a drift repair and forces the
+			// Console Deployment pod template to roll.
+			cmHashes["console"] += "+resourceVersion:" + live.ResourceVersion
 		}
 	}
 	return cmHashes, nil
@@ -1783,7 +1839,7 @@ func (r *KubernautReconciler) appendOptionalComponentConfigMaps(
 	kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut,
 	tlsOpt resources.ConfigMapOption, configMaps []*corev1.ConfigMap, cmHashes map[string]string,
 ) ([]*corev1.ConfigMap, error) {
-	builders := make([]cmBuilder, 0, 4)
+	builders := make([]cmBuilder, 0, 6)
 	if kn.Spec.GatewayEnabled() {
 		builders = append(builders, cmBuilder{"gateway", func() (*corev1.ConfigMap, error) {
 			return resources.GatewayConfigMap(kn, knV2, tlsOpt)
@@ -1794,17 +1850,31 @@ func (r *KubernautReconciler) appendOptionalComponentConfigMaps(
 			return resources.APIFrontendConfigMap(kn, knV2)
 		}})
 	}
-	if kn.Spec.ConsoleEnabled() {
-		builders = append(builders, cmBuilder{"console", func() (*corev1.ConfigMap, error) {
-			return resources.ConsoleNginxConfigMap(kn), nil
-		}})
-	}
 	if knV2.Spec.FleetMetadataCacheEnabled() {
 		builders = append(builders, cmBuilder{"fleetmetadatacache", func() (*corev1.ConfigMap, error) {
 			return resources.FleetMetadataCacheConfigMap(kn, knV2)
 		}})
 	}
-	return buildConfigMapSet(builders, configMaps, cmHashes)
+	if kn.Spec.ConsoleEnabled() {
+		builders = append(builders,
+			cmBuilder{"console", func() (*corev1.ConfigMap, error) {
+				return resources.ConsoleNginxConfigMap(kn), nil
+			}},
+			cmBuilder{"console-oauth2-proxy", func() (*corev1.ConfigMap, error) {
+				return resources.ConsoleOAuth2ProxyConfigMap(kn)
+			}},
+		)
+	}
+
+	configMaps, err := buildConfigMapSet(builders, configMaps, cmHashes)
+	if err != nil {
+		return nil, err
+	}
+	if kn.Spec.ConsoleEnabled() {
+		cmHashes["console"] += "+" + cmHashes["console-oauth2-proxy"]
+		delete(cmHashes, "console-oauth2-proxy")
+	}
+	return configMaps, nil
 }
 
 // Both core and optional builders share one fail-closed assembly path. No
@@ -2026,6 +2096,8 @@ func (r *KubernautReconciler) enabledDeploymentBuilders(
 		depBuilders = append(depBuilders, func(kn *kubernautv1alpha2.Kubernaut, _ *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 			return resources.ConsoleDeployment(kn)
 		})
+	} else if err := r.cleanupDisabledConsole(ctx, kn); err != nil {
+		return nil, fmt.Errorf("cleaning up disabled console: %w", err)
 	}
 	if knV2.Spec.FleetMetadataCacheEnabled() {
 		depBuilders = append(depBuilders, resources.FleetMetadataCacheDeployment)
@@ -3033,12 +3105,13 @@ const (
 )
 
 type precreatedReference struct {
-	kind         precreatedReferenceKind
-	path         string
-	name         string
-	requiredKeys []string
-	pemKeys      []string
-	jsonKeys     []string
+	kind          precreatedReferenceKind
+	path          string
+	name          string
+	requiredKeys  []string
+	pemKeys       []string
+	jsonKeys      []string
+	noNewlineKeys []string
 }
 
 // validatePrecreatedConfiguration verifies administrator/GitOps-owned inputs
@@ -3147,6 +3220,11 @@ func validatePrecreatedSecretKeys(secret *corev1.Secret, reference precreatedRef
 		}
 		values[key] = value
 	}
+	for _, key := range reference.noNewlineKeys {
+		if strings.ContainsAny(string(values[key]), "\r\n") {
+			return fmt.Errorf("%s: secret %q key %q must not contain newlines", reference.path, reference.name, key)
+		}
+	}
 	if err := validatePrecreatedSecretPEMKeys(values, reference); err != nil {
 		return err
 	}
@@ -3228,6 +3306,23 @@ func (c *precreatedReferenceCollector) addPEMSecretReference(path, name, key str
 	}
 }
 
+// addNoNewlineSecretKeys marks Secret values that must remain single-line
+// before they are substituted into a YAML scalar.
+func (c *precreatedReferenceCollector) addNoNewlineSecretKeys(path, name string, keys ...string) {
+	for i := range c.references {
+		reference := &c.references[i]
+		if reference.kind != precreatedSecretReference || reference.path != path || reference.name != name {
+			continue
+		}
+		for _, key := range keys {
+			if !slices.Contains(reference.noNewlineKeys, key) {
+				reference.noNewlineKeys = append(reference.noNewlineKeys, key)
+			}
+		}
+		return
+	}
+}
+
 // addJSONSecretReference registers a Secret key whose content must be valid JSON.
 func (c *precreatedReferenceCollector) addJSONSecretReference(path, name, key string) {
 	c.add(precreatedSecretReference, path, name, key)
@@ -3277,6 +3372,8 @@ func appendPrecreatedConsoleSecret(c *precreatedReferenceCollector, kn *kubernau
 	}
 	c.add(precreatedSecretReference, "spec.console.auth.secretName", kn.Spec.Console.Auth.SecretName,
 		"client-id", "client-secret", "cookie-secret")
+	c.addNoNewlineSecretKeys("spec.console.auth.secretName", kn.Spec.Console.Auth.SecretName,
+		"client-id", "client-secret")
 }
 
 func appendPrecreatedValkeyTLSSecrets(c *precreatedReferenceCollector, kn *kubernautv1alpha2.Kubernaut) {
@@ -4376,10 +4473,15 @@ func (r *KubernautReconciler) hasCRD(ctx context.Context, crdName string) bool {
 // ensureNamespaced creates or updates a namespaced resource, setting the
 // Kubernaut CR as owner for garbage collection.
 func (r *KubernautReconciler) ensureNamespaced(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, obj client.Object) error {
+	_, err := r.ensureNamespacedChanged(ctx, kn, obj)
+	return err
+}
+
+func (r *KubernautReconciler) ensureNamespacedChanged(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, obj client.Object) (bool, error) {
 	if err := resources.SetOwnerReference(kn, obj, r.Scheme); err != nil {
-		return err
+		return false, err
 	}
-	return r.ensureResource(ctx, kn, obj)
+	return r.ensureResourceChanged(ctx, kn, obj)
 }
 
 // ensureUnowned creates or updates a resource without setting an owner
@@ -4400,6 +4502,11 @@ func (r *KubernautReconciler) ensureUnowned(ctx context.Context, kn *kubernautv1
 // additionally checks for content drift on ConfigMaps — detecting external
 // modifications that preserved the annotation but altered the data.
 func (r *KubernautReconciler) ensureResource(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, obj client.Object) error {
+	_, err := r.ensureResourceChanged(ctx, kn, obj)
+	return err
+}
+
+func (r *KubernautReconciler) ensureResourceChanged(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, obj client.Object) (bool, error) {
 	resources.StampOwnership(kn, obj)
 	desiredHash := resources.SpecHash(obj)
 	setHashAnnotation(obj, desiredHash)
@@ -4410,21 +4517,21 @@ func (r *KubernautReconciler) ensureResource(ctx context.Context, kn *kubernautv
 	if apierrors.IsNotFound(err) {
 		created, err := r.createOrReadExisting(ctx, obj, existing, key)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if created {
 			r.resourceLogger(ctx, kn, obj).Info("resource created")
-			return nil
+			return true, nil
 		}
 	} else if err != nil {
-		return fmt.Errorf("getting %s: %w", key, err)
+		return false, fmt.Errorf("getting %s: %w", key, err)
 	}
 
 	if err := r.checkResourceOwnership(ctx, kn, existing, metav1.GetControllerOf(obj) != nil); err != nil {
-		return err
+		return false, err
 	}
 	if existing.GetAnnotations()[resources.AnnotationSpecHash] == desiredHash && !contentDrifted(obj, existing) && ownershipMetadataMatches(obj, existing) {
-		return nil
+		return false, nil
 	}
 
 	obj.SetResourceVersion(existing.GetResourceVersion())
@@ -4433,10 +4540,10 @@ func (r *KubernautReconciler) ensureResource(ctx context.Context, kn *kubernautv
 	}
 	if err := r.Update(ctx, obj); err != nil {
 		r.resourceLogger(ctx, kn, obj).Error(err, "resource update failed")
-		return fmt.Errorf("updating %s: %w", key, err)
+		return false, fmt.Errorf("updating %s: %w", key, err)
 	}
 	r.resourceLogger(ctx, kn, obj).Info("resource updated")
-	return nil
+	return true, nil
 }
 
 // createOrReadExisting attempts to Create obj. If Create raced with another
