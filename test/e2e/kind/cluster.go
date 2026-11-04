@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -171,7 +172,14 @@ func helmBinary() string {
 	return "helm"
 }
 
+// operatorImage selects the operator image, preferring the qualification
+// override only when the opt-in lane is active.
 func operatorImage() string {
+	if qualificationLane {
+		if image := qualificationOperatorImage(); image != "" {
+			return image
+		}
+	}
 	if image := strings.TrimSpace(os.Getenv("KUBERNAUT_OPERATOR_IMAGE")); image != "" {
 		return image
 	}
@@ -185,19 +193,89 @@ func contractImage() string {
 	return defaultContractImage
 }
 
+// loadOperatorImage loads the configured operator image into the active Kind
+// cluster, using the qualification transfer path when the lane is enabled.
 func loadOperatorImage(ctx context.Context) error {
-	if _, err := runCmd(ctx, "kind", "load", "docker-image", operatorImage(), "--name", kindClusterName()); err != nil {
-		return fmt.Errorf("loading operator image %q into Kind: %w", operatorImage(), err)
+	image := operatorImage()
+	if qualificationLane {
+		return loadQualificationImage(ctx, qualificationContainerTool(), image, "operator")
+	}
+	if _, err := runCmd(ctx, "kind", "load", "docker-image", image, "--name", kindClusterName()); err != nil {
+		return fmt.Errorf("loading operator image %q into Kind: %w", image, err)
 	}
 	return nil
 }
 
+// loadInfrastructureImages imports the contract dependencies, or all pinned
+// qualification operands when the real-component lane is active.
 func loadInfrastructureImages(ctx context.Context) error {
+	if qualificationLane {
+		return loadQualificationImages(ctx)
+	}
 	images := []string{contractImage(), postgresImage, valkeyImage}
 	for _, image := range images {
 		if _, err := runCmd(ctx, "kind", "load", "docker-image", image, "--name", kindClusterName()); err != nil {
 			return fmt.Errorf("loading contract or dependency image %q into Kind: %w", image, err)
 		}
+	}
+	return nil
+}
+
+// loadQualificationImages imports all immutable operand images required by the
+// opt-in real-component qualification lane.
+func loadQualificationImages(ctx context.Context) error {
+	images := qualificationImageOverrides()
+	images[qualificationKeycloakService] = qualificationKeycloakImage()
+	names := make([]string, 0, len(images))
+	for name := range images {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if err := loadQualificationImage(ctx, qualificationContainerTool(), images[name], name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// loadQualificationImage imports one immutable qualification image without
+// contacting its registry when the selected container store already has it.
+// Podman uses a temporary Docker archive because Kind's Docker-image loader
+// cannot read Podman's image store directly.
+func loadQualificationImage(ctx context.Context, containerTool, image, component string) error {
+	if _, err := runCmd(ctx, containerTool, "image", "inspect", image); err != nil {
+		if _, err := runCmd(ctx, containerTool, "pull", image); err != nil {
+			return fmt.Errorf("pulling qualification image %q for %s: %w", image, component, err)
+		}
+	}
+
+	if QualificationImageLoadUsesArchive(containerTool) {
+		archiveDir, err := os.MkdirTemp("", "kubernaut-qualification-image-")
+		if err != nil {
+			return fmt.Errorf("creating temporary archive directory for qualification image %q: %w", image, err)
+		}
+		defer func() {
+			if removeErr := os.RemoveAll(archiveDir); removeErr != nil {
+				_, _ = fmt.Fprintf(GinkgoWriter,
+					"warning: removing qualification image archive directory %q failed: %v\n",
+					archiveDir, removeErr) //nolint:errcheck
+			}
+		}()
+		archivePath := filepath.Join(archiveDir, "image.tar")
+		if _, err := runCmd(ctx, containerTool, "save", "--format", "docker-archive",
+			"--output", archivePath, image); err != nil {
+			return fmt.Errorf("saving qualification image %q for %s: %w", image, component, err)
+		}
+		if _, err := runCmd(ctx, "kind", "load", "image-archive", archivePath, "--name", kindClusterName()); err != nil {
+			return fmt.Errorf("loading qualification image archive for %q and %s into Kind: %w",
+				image, component, err)
+		}
+		return nil
+	}
+
+	if _, err := runCmd(ctx, "kind", "load", "docker-image", image, "--name", kindClusterName()); err != nil {
+		return fmt.Errorf("loading qualification image %q for %s into Kind: %w", image, component, err)
 	}
 	return nil
 }
@@ -257,6 +335,8 @@ func repositoryRoot() string {
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
 }
 
+// createKindCluster creates the disposable Kind cluster and, for qualification
+// runs, exposes the Keycloak NodePort on loopback only.
 func createKindCluster(ctx context.Context) error {
 	configFile, err := os.CreateTemp("", "kubernaut-kind-*.yaml")
 	if err != nil {
@@ -264,6 +344,15 @@ func createKindCluster(ctx context.Context) error {
 	}
 	configPath := configFile.Name()
 	defer func() { _ = os.Remove(configPath) }()
+	portMappings := ""
+	if qualificationLane {
+		portMappings = fmt.Sprintf(`
+    extraPortMappings:
+      - containerPort: %d
+        hostPort: %d
+        listenAddress: "127.0.0.1"
+        protocol: TCP`, qualificationKeycloakNodePort, qualificationKeycloakHostPort)
+	}
 	config := fmt.Sprintf(`kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 networking:
@@ -277,9 +366,10 @@ kubeadmConfigPatches:
 nodes:
   - role: control-plane
     image: %s
+%s
   - role: worker
     image: %s
-`, kindNodeImage, kindNodeImage)
+`, kindNodeImage, portMappings, kindNodeImage)
 	if _, err := configFile.WriteString(config); err != nil {
 		_ = configFile.Close()
 		return fmt.Errorf("writing Kind config: %w", err)

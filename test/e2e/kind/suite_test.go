@@ -41,6 +41,17 @@ var _ = BeforeSuite(func() {
 	var err error
 	configuredTLS, err = tlsSourceFromEnvironment()
 	Expect(err).NotTo(HaveOccurred())
+	qualificationLane = qualificationEnabledFromEnvironment()
+	if qualificationLane {
+		By("validating immutable Issue 609 qualification inputs")
+		Expect(validateQualificationEnvironment()).To(Succeed())
+		if configuredTLS != tlsManualAdmin {
+			Fail(
+				"Issue 609 qualification requires KUBERNAUT_E2E_TLS_SOURCE=manual-admin " +
+					"so Keycloak uses the operator trust root",
+			)
+		}
+	}
 
 	clusterContext = kubeContext()
 	SetDefaultEventuallyTimeout(3 * time.Minute)
@@ -84,6 +95,10 @@ var _ = BeforeSuite(func() {
 	if configuredTLS == tlsCertManager {
 		By("creating cert-manager-issued runtime TLS material")
 		Expect(ensureCertManagerRuntimeTLS(ctx)).To(Succeed())
+	}
+	if qualificationLane {
+		By("deploying the upstream-Keycloak qualification fixture")
+		Expect(ensureQualificationKeycloak(ctx)).To(Succeed())
 	}
 })
 

@@ -52,8 +52,10 @@ import (
 )
 
 const (
-	testAwxAPIURL          = "https://awx.example.com"
-	testConsoleRedirectURL = "https://console.example.com/oauth2/callback"
+	testAwxAPIURL           = "https://awx.example.com"
+	testConsoleRedirectURL  = "https://console.example.com/oauth2/callback"
+	tamperedConfigYAML      = "tampered: true\n"
+	tamperedConfigNoNewline = "tampered: true"
 )
 
 // kubernautVerbs returns the effective kubernaut.ai verbs for one resource.
@@ -1191,7 +1193,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			oauth2ConfigKey := types.NamespacedName{Name: string(resources.ComponentConsole) + "-oauth2-proxy", Namespace: testNamespace}
 			Expect(k8sClient.Get(ctx, oauth2ConfigKey, oauth2Config)).To(Succeed())
 			expectedConfig := oauth2Config.Data["oauth2-proxy.yaml"]
-			oauth2Config.Data["oauth2-proxy.yaml"] = "tampered: true\n"
+			oauth2Config.Data["oauth2-proxy.yaml"] = tamperedConfigYAML
 			Expect(k8sClient.Update(ctx, oauth2Config)).To(Succeed())
 
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
@@ -1209,6 +1211,57 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				}
 				return deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
 			}, timeout, interval).ShouldNot(Equal(initialHash), "repairing alpha config drift should roll the Console pod")
+		})
+
+		It("IT-CN-609-001 [CM-3, CM-6, SI-4, CC8.1]: repairs persisted OAuth2 Proxy drift after a fresh reconciler", func() {
+			createBYOSecrets(ctx)
+			cr := newMinimalCR()
+			cr.Spec.Console.Enabled = ptr.To(true)
+			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+			cr.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
+			Expect(k8sClient.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
+				Data: map[string][]byte{
+					"client-id": []byte("cid"), "client-secret": []byte("csec"), "cookie-secret": []byte("cook"),
+				},
+			})).To(Succeed())
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+
+			By("persisting the Console resources with the first reconciler instance")
+			reconcileToRunning(ctx)
+
+			deploymentKey := types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}
+			deployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+			initialHash := deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
+			Expect(initialHash).NotTo(BeEmpty())
+
+			oauth2ConfigKey := types.NamespacedName{
+				Name: string(resources.ComponentConsole) + "-oauth2-proxy", Namespace: testNamespace,
+			}
+			oauth2Config := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, oauth2ConfigKey, oauth2Config)).To(Succeed())
+			expectedConfig := oauth2Config.Data["oauth2-proxy.yaml"]
+			oauth2Config.Data["oauth2-proxy.yaml"] = tamperedConfigYAML
+			Expect(k8sClient.Update(ctx, oauth2Config)).To(Succeed())
+
+			By("starting a fresh reconciler against the persisted objects")
+			restarted := newReconciler()
+			_, err := restarted.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() string {
+				if err := k8sClient.Get(ctx, oauth2ConfigKey, oauth2Config); err != nil {
+					return ""
+				}
+				return oauth2Config.Data["oauth2-proxy.yaml"]
+			}, timeout, interval).Should(Equal(expectedConfig), "a fresh reconciler must repair persisted OAuth2 Proxy drift")
+			Eventually(func() string {
+				if err := k8sClient.Get(ctx, deploymentKey, deployment); err != nil {
+					return ""
+				}
+				return deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
+			}, timeout, interval).ShouldNot(Equal(initialHash), "a repaired subPath ConfigMap must roll the Console pod")
 		})
 
 		It("[SC-7, AC-3, CC6.6] applies standard policies without provider gating or API egress restriction", func() {
@@ -2096,7 +2149,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			origHash := cm.Annotations[resources.AnnotationSpecHash]
 
 			By("simulating an out-of-band edit")
-			cm.Data["remediationorchestrator.yaml"] = "tampered: true"
+			cm.Data["remediationorchestrator.yaml"] = tamperedConfigNoNewline
 			cm.Annotations[resources.AnnotationSpecHash] = "stale-hash"
 			Expect(k8sClient.Update(ctx, cm)).To(Succeed())
 
@@ -2332,13 +2385,13 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(origHash).NotTo(BeEmpty())
 
 			By("simulating external actor modifying data but PRESERVING the spec-hash annotation")
-			cm.Data["workflowexecution.yaml"] = "tampered: true\n"
+			cm.Data["workflowexecution.yaml"] = tamperedConfigYAML
 			Expect(k8sClient.Update(ctx, cm)).To(Succeed())
 
 			By("verifying annotation is still the original hash (simulates the issue)")
 			Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
 			Expect(cm.Annotations[resources.AnnotationSpecHash]).To(Equal(origHash))
-			Expect(cm.Data["workflowexecution.yaml"]).To(Equal("tampered: true\n"))
+			Expect(cm.Data["workflowexecution.yaml"]).To(Equal(tamperedConfigYAML))
 
 			By("reconciling — operator should detect content drift and restore")
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})

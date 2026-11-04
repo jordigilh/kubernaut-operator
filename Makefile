@@ -61,6 +61,13 @@ KIND_OPERATOR_VERSION ?= ci
 KIND_OPERATOR_IMAGE ?= localhost/kubernaut-operator:$(KIND_OPERATOR_VERSION)
 KIND_CONTRACT_IMAGE ?= localhost/kubernaut-operator-e2e-contract:$(KIND_OPERATOR_VERSION)
 
+# Issue 609 is an opt-in proxy-level qualification lane. It deliberately
+# requires prebuilt immutable operator and Keycloak references; unlike the
+# default contract lane it must never report runtime evidence for a mutable
+# tag or an unapproved local Keycloak default.
+KIND_QUALIFICATION_OPERATOR_IMAGE ?=
+KIND_QUALIFICATION_KEYCLOAK_IMAGE ?=
+
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
 GOBIN=$(shell go env GOPATH)/bin
@@ -216,6 +223,25 @@ test-e2e-kind-helm: fmt vet ## Run the isolated operator-only Helm bootstrap Kin
 		echo "Using prebuilt operator image $$operator_image"; \
 	fi; \
 	HELM_BIN=$(HELM_BIN) KUBERNAUT_OPERATOR_IMAGE="$$operator_image" KUBERNAUT_HELM_E2E_CLUSTER="$${KUBERNAUT_HELM_E2E_CLUSTER:-kubernaut-operator-helm-e2e}" go test ./test/e2e/helm/ -v -ginkgo.v -timeout 30m
+
+.PHONY: test-e2e-kind-qualification
+test-e2e-kind-qualification: fmt vet ## Run the opt-in Keycloak-backed OAuth2 Proxy Console qualification lane.
+	@command -v kind >/dev/null 2>&1 || { echo "kind CLI not found. Install: https://kind.sigs.k8s.io/docs/user/quick-start/"; exit 1; }
+	@command -v kubectl >/dev/null 2>&1 || { echo "kubectl CLI not found."; exit 1; }
+	@command -v $(HELM_BIN) >/dev/null 2>&1 || { echo "Helm CLI not found: $(HELM_BIN)"; exit 1; }
+	@command -v $(CONTAINER_TOOL) >/dev/null 2>&1 || { echo "$(CONTAINER_TOOL) CLI not found."; exit 1; }
+	@operator_image="$${KUBERNAUT_E2E_QUALIFICATION_OPERATOR_IMAGE:-$(KIND_QUALIFICATION_OPERATOR_IMAGE)}"; \
+	keycloak_image="$${KUBERNAUT_E2E_QUALIFICATION_KEYCLOAK_IMAGE:-$(KIND_QUALIFICATION_KEYCLOAK_IMAGE)}"; \
+	test -n "$$operator_image" || { echo "Set KUBERNAUT_E2E_QUALIFICATION_OPERATOR_IMAGE to a preloaded immutable operator image."; exit 1; }; \
+	test -n "$$keycloak_image" || { echo "Set KUBERNAUT_E2E_QUALIFICATION_KEYCLOAK_IMAGE to an immutable Keycloak image."; exit 1; }; \
+	KUBERNAUT_E2E_QUALIFICATION=1 \
+	KUBERNAUT_E2E_TLS_SOURCE=manual-admin \
+	KUBERNAUT_E2E_CONTAINER_TOOL=$(CONTAINER_TOOL) \
+	KUBERNAUT_E2E_QUALIFICATION_OPERATOR_IMAGE="$$operator_image" \
+	KUBERNAUT_E2E_QUALIFICATION_KEYCLOAK_IMAGE="$$keycloak_image" \
+	KUBERNAUT_OPERATOR_IMAGE="$$operator_image" \
+	KUBERNAUT_E2E_QUALIFICATION_EVIDENCE="$${KUBERNAUT_E2E_QUALIFICATION_EVIDENCE:-$$(pwd)/issue-609-qualification-evidence.json}" \
+	go test ./test/e2e/kind/ -v -ginkgo.v -ginkgo.label-filter=issue-609 -timeout 45m
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter

@@ -57,6 +57,9 @@ type manualTLSFixture struct {
 	mode                  kubernautv1alpha2.TLSMode
 	caSecretName          string
 	caConfigMapName       string
+	caCertificate         *x509.Certificate
+	caKey                 *ecdsa.PrivateKey
+	caPEM                 []byte
 	serviceTLSSecretNames map[string]string
 	signingSecretName     string
 	secrets               map[string]*corev1.Secret
@@ -372,6 +375,8 @@ func TLSProbeCertificateMatches(expectedPEM []byte, curlOutput string) error {
 	return nil
 }
 
+// newManualTLSFixture creates the disposable CA, service certificates, and
+// webhook material used by a Kind TLS journey.
 func newManualTLSFixture(mode kubernautv1alpha2.TLSMode, prefix, namespace string) (manualTLSFixture, error) {
 	now := time.Now().UTC()
 	caCertificate, caKey, caPEM, err := generateManualCA(now, prefix)
@@ -465,6 +470,9 @@ func newManualTLSFixture(mode kubernautv1alpha2.TLSMode, prefix, namespace strin
 		mode:                  mode,
 		caSecretName:          caSecretName,
 		serviceTLSSecretNames: serviceNames,
+		caCertificate:         caCertificate,
+		caKey:                 caKey,
+		caPEM:                 append([]byte(nil), caPEM...),
 		signingSecretName:     signingSecretName,
 		secrets:               secrets,
 		configMaps:            configMaps,
@@ -607,6 +615,8 @@ func generateManualCA(now time.Time, prefix string) (*x509.Certificate, *ecdsa.P
 	return certificate, key, pemEncodeCertificate(der), nil
 }
 
+// generateManualLeaf creates a service certificate signed by the fixture CA
+// with the in-cluster DNS names required by the selected workload.
 func generateManualLeaf(
 	now time.Time,
 	ca *x509.Certificate,
@@ -634,6 +644,9 @@ func generateManualLeaf(
 			"authwebhook."+namespace+".svc",
 			"authwebhook."+namespace+".svc.cluster.local",
 		)
+	}
+	if serviceKey == "keycloak" {
+		dnsNames = append(dnsNames, "localhost")
 	}
 	template := &x509.Certificate{
 		SerialNumber: serial,
