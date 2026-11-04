@@ -44,12 +44,21 @@ const (
 	qualificationEnabledTrue    = "true"
 )
 
-var immutableImageDigestPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+var (
+	immutableImageDigestPattern     = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+	immutableImageRepositoryPattern = regexp.MustCompile(
+		`^[a-z0-9]+(?:[a-z0-9._-]*[a-z0-9])?(?::[0-9]+)?` +
+			`(?:/[a-z0-9]+(?:[a-z0-9._-]*[a-z0-9])?)*` +
+			`(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?$`,
+	)
+)
 
 // qualificationLane is set once by BeforeSuite. The default Kind suite does
 // not load application images, expose NodePorts, or create an IdP.
 var qualificationLane bool
 
+// qualificationEnabledFromEnvironment reads the explicit opt-in switch used
+// by the Kind qualification lane.
 func qualificationEnabledFromEnvironment() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(qualificationEnabledEnvironment))) {
 	case "1", qualificationEnabledTrue, "yes", "on":
@@ -82,6 +91,9 @@ func ValidateImmutableImageReference(image string) error {
 	if at <= 0 || at == len(image)-1 {
 		return fmt.Errorf("image reference %q must include an immutable @sha256 digest", image)
 	}
+	if !immutableImageRepositoryPattern.MatchString(image[:at]) {
+		return fmt.Errorf("image reference %q has an invalid repository", image)
+	}
 	if !immutableImageDigestPattern.MatchString(image[at+1:]) {
 		return fmt.Errorf("image reference %q has an invalid immutable digest", image)
 	}
@@ -113,10 +125,14 @@ func ValidateQualificationImageReferences(images map[string]string) error {
 	return nil
 }
 
+// qualificationKeycloakImage returns the administrator-supplied immutable
+// Keycloak reference for a qualification run.
 func qualificationKeycloakImage() string {
 	return strings.TrimSpace(os.Getenv(qualificationKeycloakImageEnv))
 }
 
+// qualificationOperatorImage returns the qualification-specific operator
+// reference, falling back to the standard operator override.
 func qualificationOperatorImage() string {
 	if image := strings.TrimSpace(os.Getenv(qualificationOperatorImageEnv)); image != "" {
 		return image
@@ -124,6 +140,8 @@ func qualificationOperatorImage() string {
 	return strings.TrimSpace(os.Getenv("KUBERNAUT_OPERATOR_IMAGE"))
 }
 
+// qualificationContainerTool selects the local image-store command used to
+// transfer qualification images into Kind.
 func qualificationContainerTool() string {
 	if tool := strings.TrimSpace(os.Getenv(qualificationContainerToolEnv)); tool != "" {
 		return tool
@@ -137,6 +155,8 @@ func QualificationImageLoadUsesArchive(containerTool string) bool {
 	return strings.EqualFold(strings.TrimSpace(containerTool), "podman")
 }
 
+// validateQualificationEnvironment rejects missing or mutable qualification
+// inputs before the disposable Kind cluster is created.
 func validateQualificationEnvironment() error {
 	keycloakImage := qualificationKeycloakImage()
 	operatorImage := qualificationOperatorImage()
@@ -156,6 +176,8 @@ func validateQualificationEnvironment() error {
 	return nil
 }
 
+// qualificationOperandImages returns the pinned application images used by
+// the real-component qualification journey.
 func qualificationOperandImages() map[string]string {
 	return map[string]string{
 		"gateway": "quay.io/kubernaut-ai/gateway@" +
@@ -193,6 +215,8 @@ func qualificationOperandImages() map[string]string {
 	}
 }
 
+// qualificationImageOverrides returns pinned image overrides excluding the
+// gateway image, which is selected by the existing Kind journey.
 func qualificationImageOverrides() map[string]string {
 	images := qualificationOperandImages()
 	delete(images, "gateway")

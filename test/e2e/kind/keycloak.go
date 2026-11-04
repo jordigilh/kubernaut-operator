@@ -45,6 +45,8 @@ const (
 	qualificationKeycloakRealmMap  = "keycloak-realm-config"
 )
 
+// ensureQualificationKeycloak deploys the disposable upstream Keycloak
+// fixture and waits until the imported realm is reachable.
 func ensureQualificationKeycloak(ctx context.Context) error {
 	if !qualificationLane {
 		return nil
@@ -101,6 +103,8 @@ func ensureQualificationKeycloak(ctx context.Context) error {
 	return nil
 }
 
+// newQualificationKeycloakTLSSecret creates the Keycloak leaf certificate
+// signed by the active administrator-owned manual TLS fixture.
 func newQualificationKeycloakTLSSecret(fixture manualTLSFixture) (*corev1.Secret, error) {
 	certificate, key, err := generateManualLeaf(
 		time.Now().UTC(), fixture.caCertificate, fixture.caKey,
@@ -128,6 +132,8 @@ func newQualificationKeycloakTLSSecret(fixture manualTLSFixture) (*corev1.Secret
 	}, nil
 }
 
+// qualificationKeycloakRealmConfigMap returns the embedded upstream realm
+// import consumed by the disposable Keycloak deployment.
 func qualificationKeycloakRealmConfigMap() *corev1.ConfigMap {
 	return &corev1.ConfigMap{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
@@ -145,6 +151,8 @@ func qualificationKeycloakRealmConfigMap() *corev1.ConfigMap {
 	}
 }
 
+// qualificationKeycloakDeployment returns the HTTPS Keycloak fixture
+// deployment with its realm and TLS material mounted.
 func qualificationKeycloakDeployment() *appsv1.Deployment {
 	return &appsv1.Deployment{
 		TypeMeta: metav1.TypeMeta{APIVersion: "apps/v1", Kind: "Deployment"},
@@ -186,6 +194,8 @@ func qualificationKeycloakDeployment() *appsv1.Deployment {
 	}
 }
 
+// qualificationKeycloakContainer defines the upstream Keycloak container and
+// its HTTPS health probes for the qualification fixture.
 func qualificationKeycloakContainer() corev1.Container {
 	return corev1.Container{
 		Name:  qualificationKeycloakService,
@@ -233,6 +243,8 @@ func qualificationKeycloakContainer() corev1.Container {
 	}
 }
 
+// qualificationKeycloakServiceObject exposes Keycloak through the loopback
+// NodePort used by the qualification client.
 func qualificationKeycloakServiceObject() *corev1.Service {
 	return &corev1.Service{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
@@ -254,6 +266,8 @@ func qualificationKeycloakServiceObject() *corev1.Service {
 	}
 }
 
+// qualificationKeycloakAliasService gives in-cluster components the stable
+// keycloak service name used by the issuer and JWKS URLs.
 func qualificationKeycloakAliasService() *corev1.Service {
 	return &corev1.Service{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Service"},
@@ -272,6 +286,8 @@ func qualificationKeycloakAliasService() *corev1.Service {
 	}
 }
 
+// qualificationConsoleOIDCSecret returns disposable OIDC credentials for the
+// operator-managed Console configuration.
 func qualificationConsoleOIDCSecret() *corev1.Secret {
 	return &corev1.Secret{
 		TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},

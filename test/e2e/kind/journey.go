@@ -356,6 +356,8 @@ func applyKubernautCR(ctx context.Context) error {
 	})
 }
 
+// kubernautCR builds the singleton CR used by the default and qualification
+// Kind journeys, selecting the real Console and Keycloak wiring when enabled.
 func kubernautCR() *kubernautv1alpha2.Kubernaut {
 	tlsMode, err := TLSModeForSource(string(configuredTLS), string(activeManualTLSSelection))
 	if err != nil {

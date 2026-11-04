@@ -375,6 +375,8 @@ func TLSProbeCertificateMatches(expectedPEM []byte, curlOutput string) error {
 	return nil
 }
 
+// newManualTLSFixture creates the disposable CA, service certificates, and
+// webhook material used by a Kind TLS journey.
 func newManualTLSFixture(mode kubernautv1alpha2.TLSMode, prefix, namespace string) (manualTLSFixture, error) {
 	now := time.Now().UTC()
 	caCertificate, caKey, caPEM, err := generateManualCA(now, prefix)
@@ -613,6 +615,8 @@ func generateManualCA(now time.Time, prefix string) (*x509.Certificate, *ecdsa.P
 	return certificate, key, pemEncodeCertificate(der), nil
 }
 
+// generateManualLeaf creates a service certificate signed by the fixture CA
+// with the in-cluster DNS names required by the selected workload.
 func generateManualLeaf(
 	now time.Time,
 	ca *x509.Certificate,

@@ -202,6 +202,8 @@ func (adapter *qualificationIngress) Close(ctx context.Context) error {
 	return shutdownErr
 }
 
+// qualificationHTTPClient creates a TLS client that routes fixture service
+// names to the loopback Keycloak and Console endpoints.
 func qualificationHTTPClient(caPEM []byte, adapter *qualificationIngress) *http.Client {
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(caPEM) {
@@ -235,6 +237,7 @@ func qualificationHTTPClient(caPEM []byte, adapter *qualificationIngress) *http.
 	}
 }
 
+// qualificationResponseBody reads and closes a qualification HTTP response.
 func qualificationResponseBody(response *http.Response) (string, error) {
 	if response == nil {
 		return "", fmt.Errorf("qualification response is nil")
@@ -250,6 +253,7 @@ func qualificationResponseBody(response *http.Response) (string, error) {
 	return string(body), nil
 }
 
+// qualificationLocation returns the required redirect location from a response.
 func qualificationLocation(response *http.Response) (string, error) {
 	location := strings.TrimSpace(response.Header.Get("Location"))
 	if location == "" {

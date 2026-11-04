@@ -47,6 +47,7 @@ type qualificationSession struct {
 
 type qualificationEvidence struct {
 	Issue       string                          `json:"issue"`
+	Passed      bool                            `json:"passed"`
 	Images      map[string]string               `json:"images"`
 	Provenance  qualificationEvidenceProvenance `json:"provenance"`
 	Results     map[string]qualificationResult  `json:"results"`
@@ -64,6 +65,20 @@ type qualificationEvidenceProvenance struct {
 type qualificationResult struct {
 	Passed bool   `json:"passed"`
 	Detail string `json:"detail,omitempty"`
+}
+
+const (
+	qualificationLoginResultID   = "E2E-CN-609-HTTP-001"
+	qualificationAccessResultID  = "E2E-CN-609-HTTP-002"
+	qualificationRefreshResultID = "E2E-CN-609-HTTP-003"
+	qualificationLogoutResultID  = "E2E-CN-609-HTTP-004"
+)
+
+var qualificationExpectedResultIDs = []string{
+	qualificationLoginResultID,
+	qualificationAccessResultID,
+	qualificationRefreshResultID,
+	qualificationLogoutResultID,
 }
 
 // init registers the opt-in Issue 609 qualification suite without changing
@@ -127,7 +142,22 @@ func init() {
 			client.Jar = jar
 		})
 
+		AfterEach(func() {
+			report := CurrentSpecReport()
+			resultID := qualificationResultID(report.FullText())
+			if resultID == "" || (!report.Failed() && report.State.String() == "passed") {
+				return
+			}
+			if evidence.Results == nil {
+				evidence.Results = make(map[string]qualificationResult)
+			}
+			evidence.Results[resultID] = qualificationResult{
+				Detail: fmt.Sprintf("spec %s", strings.ToLower(report.State.String())),
+			}
+		})
+
 		AfterAll(func() {
+			finalizeQualificationEvidence(&evidence)
 			Expect(writeQualificationEvidence(evidence)).To(Succeed())
 		})
 
@@ -144,7 +174,9 @@ func init() {
 				claims, ok := session.userInfo["additionalClaims"].(map[string]any)
 				Expect(ok).To(BeTrue(), "OAuth2 Proxy /oauth2/userinfo must expose additionalClaims")
 				Expect(claims["iss"]).To(Equal(qualificationKeycloakIssuer))
-				Expect(claims["sub"]).NotTo(BeEmpty())
+				subject, subjectOK := claims["sub"].(string)
+				Expect(subjectOK).To(BeTrue(), "OAuth2 Proxy /oauth2/userinfo must expose a string sub claim")
+				Expect(subject).NotTo(BeEmpty())
 				Expect(claims["sid"]).NotTo(BeEmpty())
 				Expect(session.sid).To(Equal(claims["sid"]))
 				Expect(session.callback).NotTo(BeNil())
@@ -152,7 +184,7 @@ func init() {
 				Expect(session.callback.Header.Get("Authorization")).To(BeEmpty())
 
 				Expect(strings.ToLower(session.callbackBody)).NotTo(ContainSubstring("access_token"))
-				evidence.Results["login-claims-cookies"] = qualificationResult{
+				evidence.Results[qualificationLoginResultID] = qualificationResult{
 					Passed: true,
 					Detail: "Keycloak authorization-code login returned sre-user, group sre, iss/sub/sid, " +
 						"and Secure HttpOnly SameSite=Lax session cookies",
@@ -244,25 +276,22 @@ func init() {
 				for _, sensitiveValue := range qualificationSensitiveLogValues(session.setCookies) {
 					Expect(logs).NotTo(ContainSubstring(sensitiveValue))
 				}
-				evidence.Results["forwarding-and-forged-headers"] = qualificationResult{
+				evidence.Results[qualificationAccessResultID] = qualificationResult{
 					Passed: true,
-					Detail: "authenticated A2A access succeeded; forged identity and bearer headers did not " +
-						"change authenticated A2A/MCP access; unauthenticated A2A/MCP were not 200",
-				}
-				evidence.Results["log-redaction"] = qualificationResult{
-					Passed: true,
-					Detail: "OAuth2 Proxy logs did not contain the test bearer value, session cookie values, or client secret",
+					Detail: "authenticated A2A/MCP requests returned success; forged identity and bearer values " +
+						"were not reflected in responses; unauthenticated A2A/MCP were not 200; initial OAuth2 " +
+						"Proxy logs did not contain the test values",
 				}
 			})
 
 		It("E2E-CN-609-HTTP-003 [IA-2, SC-23]: refreshes a live session without changing the CRD contract", func() {
 			By("temporarily accelerating cookie-refresh on the deployed OAuth2 Proxy for this test only")
-			Expect(scaleQualificationOperator(ctx, 0)).To(Succeed())
 			defer func() {
 				Expect(patchOAuth2ProxyCookieRefresh(ctx, "25m")).To(Succeed())
 				Expect(scaleQualificationOperator(ctx, 1)).To(Succeed())
 				Expect(waitForDeployment(ctx, "kubernaut-console")).To(Succeed())
 			}()
+			Expect(scaleQualificationOperator(ctx, 0)).To(Succeed())
 			Expect(patchOAuth2ProxyCookieRefresh(ctx, "2s")).To(Succeed())
 			Expect(waitForDeployment(ctx, "kubernaut-console")).To(Succeed())
 
@@ -299,11 +328,18 @@ func init() {
 			})).To(Succeed())
 			Expect(refreshObserved).To(BeTrue())
 			Expect(cookieHasSecureFlags(refreshedCookies)).To(BeTrue())
+			refreshLogs, refreshLogErr := kubectl(ctx, "logs", "deployment/kubernaut-console", "-n", kubernautNamespace,
+				"-c", "oauth2-proxy", "--since=30m")
+			Expect(refreshLogErr).NotTo(HaveOccurred())
+			for _, sensitiveValue := range qualificationSensitiveLogValues(refreshedCookies) {
+				Expect(refreshLogs).NotTo(ContainSubstring(sensitiveValue))
+			}
 			Expect(refreshedUserInfo).NotTo(BeNil())
-			evidence.Results["session-refresh"] = qualificationResult{
+			evidence.Results[qualificationRefreshResultID] = qualificationResult{
 				Passed: true,
 				Detail: "test-only deployment argument acceleration caused OAuth2 Proxy to emit a refreshed " +
-					"Secure HttpOnly SameSite=Lax cookie while retaining validated iss/sub/sid claims",
+					"Secure HttpOnly SameSite=Lax cookie while retaining validated iss/sub/sid claims; " +
+					"refreshed cookie values were absent from the OAuth2 Proxy logs",
 			}
 		})
 
@@ -332,9 +368,16 @@ func init() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(rotated.sid).NotTo(Equal(session.sid))
 			Expect(rotated.sid).NotTo(BeEmpty())
-			evidence.Results["logout-and-sid-rotation"] = qualificationResult{
+			rotatedLogs, rotatedLogErr := kubectl(ctx, "logs", "deployment/kubernaut-console", "-n", kubernautNamespace,
+				"-c", "oauth2-proxy", "--since=30m")
+			Expect(rotatedLogErr).NotTo(HaveOccurred())
+			for _, sensitiveValue := range qualificationSensitiveLogValues(rotated.setCookies) {
+				Expect(rotatedLogs).NotTo(ContainSubstring(sensitiveValue))
+			}
+			evidence.Results[qualificationLogoutResultID] = qualificationResult{
 				Passed: true,
-				Detail: "logout expired the OAuth2 Proxy cookie and a new Keycloak login returned a different sid",
+				Detail: "logout expired the OAuth2 Proxy cookie and a new Keycloak login returned a different sid; " +
+					"rotated cookie values were absent from the OAuth2 Proxy logs",
 			}
 		})
 	})
@@ -474,6 +517,8 @@ func qualificationUserInfoWithClaims(body, expectedSID, expectedSub string) (map
 	return userInfo, nil
 }
 
+// qualificationSubject extracts the validated subject used across refresh
+// assertions in the ordered qualification journey.
 func qualificationSubject(userInfo map[string]any) string {
 	claims, ok := userInfo["additionalClaims"].(map[string]any)
 	if !ok {
@@ -481,6 +526,36 @@ func qualificationSubject(userInfo map[string]any) string {
 	}
 	subject, _ := claims["sub"].(string)
 	return subject
+}
+
+// qualificationResultID maps a Ginkgo spec report to the evidence ID it owns.
+func qualificationResultID(fullText string) string {
+	for _, resultID := range qualificationExpectedResultIDs {
+		if strings.Contains(fullText, resultID) {
+			return resultID
+		}
+	}
+	return ""
+}
+
+// finalizeQualificationEvidence makes incomplete or failed ordered-suite
+// results explicit and computes the overall pass/fail status.
+func finalizeQualificationEvidence(evidence *qualificationEvidence) {
+	if evidence.Results == nil {
+		evidence.Results = make(map[string]qualificationResult)
+	}
+	evidence.Passed = true
+	for _, resultID := range qualificationExpectedResultIDs {
+		result, ok := evidence.Results[resultID]
+		if !ok {
+			evidence.Results[resultID] = qualificationResult{Detail: "not executed"}
+			evidence.Passed = false
+			continue
+		}
+		if !result.Passed {
+			evidence.Passed = false
+		}
+	}
 }
 
 // qualificationSensitiveLogValues returns only disposable test values that
@@ -495,6 +570,7 @@ func qualificationSensitiveLogValues(cookies []*http.Cookie) []string {
 	return values
 }
 
+// qualificationRequest sends a GET request to the test-owned Console host.
 func qualificationRequest(
 	ctx context.Context, client *http.Client, path string, headers map[string]string,
 ) (*http.Response, error) {
@@ -503,6 +579,8 @@ func qualificationRequest(
 	)
 }
 
+// qualificationRequestURL sends a qualification request with explicit method,
+// body, and headers while preserving the client's cookie jar.
 func qualificationRequestURL(
 	ctx context.Context, client *http.Client, method, rawURL string, body io.Reader, headers map[string]string,
 ) (*http.Response, error) {
@@ -516,6 +594,8 @@ func qualificationRequestURL(
 	return client.Do(request)
 }
 
+// qualificationAbsoluteLocation resolves an HTTP redirect against its source
+// URL and returns the absolute destination.
 func qualificationAbsoluteLocation(base string, response *http.Response) (string, error) {
 	location, err := qualificationLocation(response)
 	if err != nil {
@@ -532,6 +612,8 @@ func qualificationAbsoluteLocation(base string, response *http.Response) (string
 	return baseURL.ResolveReference(redirectURL).String(), nil
 }
 
+// parseQualificationLoginForm extracts the action and hidden/text fields from
+// the upstream Keycloak login form.
 func parseQualificationLoginForm(response *http.Response) (string, map[string]string, error) {
 	if response == nil {
 		return "", nil, fmt.Errorf("Keycloak login response is nil")
@@ -607,6 +689,7 @@ func parseQualificationLoginForm(response *http.Response) (string, map[string]st
 	return resolved, fields, nil
 }
 
+// cookieHasSecureFlags verifies the deployed session cookie's required flags.
 func cookieHasSecureFlags(cookies []*http.Cookie) bool {
 	if len(cookies) == 0 {
 		return false
@@ -623,6 +706,8 @@ func cookieHasSecureFlags(cookies []*http.Cookie) bool {
 	return false
 }
 
+// hasExpiredSessionCookie reports whether logout returned an expired session
+// cookie for the Console.
 func hasExpiredSessionCookie(cookies []*http.Cookie) bool {
 	for _, cookie := range cookies {
 		if strings.HasPrefix(cookie.Name, "_kubernaut_console") &&
@@ -633,6 +718,8 @@ func hasExpiredSessionCookie(cookies []*http.Cookie) bool {
 	return false
 }
 
+// scaleQualificationOperator changes the operator replica count and waits for
+// the requested ready-replica state.
 func scaleQualificationOperator(ctx context.Context, replicas int32) error {
 	if _, err := kubectl(ctx, "scale", "deployment/"+operatorDeploymentName, "-n", operatorNamespace,
 		"--replicas="+strconv.FormatInt(int64(replicas), 10)); err != nil {
@@ -655,6 +742,8 @@ func scaleQualificationOperator(ctx context.Context, replicas int32) error {
 	})
 }
 
+// patchOAuth2ProxyCookieRefresh changes the deployed proxy refresh interval
+// for the isolated refresh qualification case.
 func patchOAuth2ProxyCookieRefresh(ctx context.Context, refresh string) error {
 	output, err := kubectl(ctx, "get", "deployment/kubernaut-console", "-n", kubernautNamespace, "-o", "json")
 	if err != nil {
@@ -689,6 +778,7 @@ func patchOAuth2ProxyCookieRefresh(ctx context.Context, refresh string) error {
 	return fmt.Errorf("Console Deployment has no OAuth2 Proxy cookie-refresh argument")
 }
 
+// waitForDeployment waits for a named Console workload rollout to complete.
 func waitForDeployment(ctx context.Context, name string) error {
 	if _, err := kubectl(
 		ctx, "rollout", "status", "deployment/"+name, "-n", kubernautNamespace, "--timeout=5m",
@@ -714,6 +804,9 @@ func writeQualificationEvidence(evidence qualificationEvidence) error {
 		return fmt.Errorf("marshalling qualification evidence: %w", err)
 	}
 	data = append(data, '\n')
+	if err := os.Chmod(path, 0o600); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("restricting qualification evidence permissions: %w", err)
+	}
 	if err := os.WriteFile(path, data, 0o600); err != nil { //nolint:gosec // explicit test evidence output path
 		return fmt.Errorf("writing qualification evidence: %w", err)
 	}

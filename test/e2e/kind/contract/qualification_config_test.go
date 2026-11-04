@@ -40,6 +40,7 @@ var _ = Describe("Issue 609 qualification configuration", func() {
 			"quay.io/example/component:v1.2.3",
 			"quay.io/example/component@sha256:0123",
 			"quay.io/example/component@sha256:GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+			"not a repository@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 			"",
 		} {
 			Expect(kind.ValidateImmutableImageReference(image)).NotTo(Succeed(), image)

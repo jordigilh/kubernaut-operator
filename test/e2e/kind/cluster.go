@@ -172,6 +172,8 @@ func helmBinary() string {
 	return "helm"
 }
 
+// operatorImage selects the operator image, preferring the qualification
+// override only when the opt-in lane is active.
 func operatorImage() string {
 	if qualificationLane {
 		if image := qualificationOperatorImage(); image != "" {
@@ -204,6 +206,8 @@ func loadOperatorImage(ctx context.Context) error {
 	return nil
 }
 
+// loadInfrastructureImages imports the contract dependencies, or all pinned
+// qualification operands when the real-component lane is active.
 func loadInfrastructureImages(ctx context.Context) error {
 	if qualificationLane {
 		return loadQualificationImages(ctx)
