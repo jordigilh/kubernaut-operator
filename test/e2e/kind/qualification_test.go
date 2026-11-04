@@ -100,8 +100,8 @@ func init() {
 				Gaps: []string{
 					"deployed missing, malformed, and mismatched iss/sub/sid token cases require a " +
 						"controlled signing-key fixture and are not executed by this lane",
-					"existing-session upgrade and OAuth2 Proxy v7.9 rollback qualification is not " +
-						"executed; the supported floor is v7.15.5+",
+					"backward compatibility with prior OAuth2 Proxy deployments, including v7.9 rollback, " +
+						"is unsupported; qualification starts from a clean v7.15.5+ deployment",
 				},
 				GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 			}
@@ -269,6 +269,7 @@ func init() {
 			refreshObserved := false
 			var refreshedCookies []*http.Cookie
 			var refreshedUserInfo map[string]any
+			expectedSub := qualificationSubject(session.userInfo)
 			Expect(pollUntilSuccess(ctx, 30*time.Second, 1*time.Second, func() error {
 				response, err := qualificationRequest(ctx, client, "/oauth2/userinfo", nil)
 				if err != nil {
@@ -287,7 +288,7 @@ func init() {
 				if strings.Contains(strings.ToLower(body), "access_token") {
 					return fmt.Errorf("userinfo response contains an access_token field")
 				}
-				userInfo, claimsErr := qualificationUserInfoWithClaims(body, session.sid)
+				userInfo, claimsErr := qualificationUserInfoWithClaims(body, session.sid, expectedSub)
 				if claimsErr != nil {
 					return claimsErr
 				}
@@ -462,30 +463,24 @@ func loginQualificationUser(ctx context.Context, client *http.Client) (qualifica
 
 // qualificationUserInfoWithClaims validates the claims returned after a live
 // OAuth2 Proxy refresh and prevents silent sid replacement.
-func qualificationUserInfoWithClaims(body, expectedSID string) (map[string]any, error) {
+func qualificationUserInfoWithClaims(body, expectedSID, expectedSub string) (map[string]any, error) {
 	userInfo := make(map[string]any)
 	if err := json.Unmarshal([]byte(body), &userInfo); err != nil {
 		return nil, fmt.Errorf("decoding refreshed OAuth2 Proxy userinfo: %w", err)
 	}
-	claims, ok := userInfo["additionalClaims"].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("refreshed OAuth2 Proxy userinfo additionalClaims is not an object")
-	}
-	if claims["iss"] != qualificationKeycloakIssuer {
-		return nil, fmt.Errorf("refreshed OAuth2 Proxy iss claim is %v", claims["iss"])
-	}
-	sub, ok := claims["sub"].(string)
-	if !ok || sub == "" {
-		return nil, fmt.Errorf("refreshed OAuth2 Proxy sub claim is empty")
-	}
-	sid, ok := claims["sid"].(string)
-	if !ok || sid == "" {
-		return nil, fmt.Errorf("refreshed OAuth2 Proxy sid claim is empty")
-	}
-	if expectedSID != "" && sid != expectedSID {
-		return nil, fmt.Errorf("refreshed OAuth2 Proxy sid claim changed from %q to %q", expectedSID, sid)
+	if err := ValidateQualificationAdditionalClaims(userInfo, expectedSID, expectedSub); err != nil {
+		return nil, fmt.Errorf("refreshed OAuth2 Proxy claims are invalid: %w", err)
 	}
 	return userInfo, nil
+}
+
+func qualificationSubject(userInfo map[string]any) string {
+	claims, ok := userInfo["additionalClaims"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	subject, _ := claims["sub"].(string)
+	return subject
 }
 
 // qualificationSensitiveLogValues returns only disposable test values that

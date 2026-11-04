@@ -40,21 +40,22 @@ The executable IDs are:
 - `IT-CN-609-001`: a fresh reconciler repairs persisted OAuth2 Proxy drift and
   rolls the Console workload.
 
-## Explicit limits and rollback boundary
+## Explicit deployment boundary
 
 The lane does not mutate or forge Keycloak-signed tokens. Therefore the JSON
 evidence records these as gaps rather than implying coverage:
 
 - deployed missing, malformed, and mismatched `iss`, `sub`, and `sid` token
   cases require a controlled signing-key fixture;
-- existing-session compatibility across an upgrade is not run;
+- backward compatibility with an existing OAuth2 Proxy session across an
+  upgrade is not supported;
 - OAuth2 Proxy v7.9 rollback is not supported or claimed.
 
 The supported floor is OAuth2 Proxy v7.15.5+, where the operator-owned alpha
-`additionalClaims` configuration is available. A rollback investigation must
-use another approved immutable v7.15.5+ reference, restore the operator image
-reference, rerun `IT-CN-609-001` and the HTTP lane, and retain both evidence
-files. A v7.9 image must not be used as a qualification input.
+`additionalClaims` configuration is available. This lane does not qualify
+rollback behavior.
+Qualification starts from a clean deployment using an approved immutable
+v7.15.5+ reference; a v7.9 image must not be used as a qualification input.
 
 ## Redaction and provenance rules
 

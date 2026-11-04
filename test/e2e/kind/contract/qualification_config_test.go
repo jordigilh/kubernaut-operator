@@ -61,4 +61,38 @@ var _ = Describe("Issue 609 qualification configuration", func() {
 		Expect(kind.QualificationImageLoadUsesArchive(" PODMAN ")).To(BeTrue())
 		Expect(kind.QualificationImageLoadUsesArchive("docker")).To(BeFalse())
 	})
+
+	It("fails closed for missing, malformed, and mismatched session claims", func() {
+		validUserInfo := func() map[string]any {
+			return map[string]any{
+				"additionalClaims": map[string]any{
+					"iss": "https://keycloak:8443/realms/kubernaut-demo",
+					"sub": "subject-609",
+					"sid": "session-609",
+				},
+			}
+		}
+		Expect(kind.ValidateQualificationAdditionalClaims(validUserInfo(), "session-609", "subject-609")).To(Succeed())
+
+		for _, claim := range []string{"iss", "sub", "sid"} {
+			userInfo := validUserInfo()
+			delete(userInfo["additionalClaims"].(map[string]any), claim)
+			err := kind.ValidateQualificationAdditionalClaims(userInfo, "session-609", "subject-609")
+			Expect(err).NotTo(Succeed(), "missing %s", claim)
+		}
+
+		for _, claim := range []string{"iss", "sub", "sid"} {
+			userInfo := validUserInfo()
+			userInfo["additionalClaims"].(map[string]any)[claim] = 42
+			err := kind.ValidateQualificationAdditionalClaims(userInfo, "session-609", "subject-609")
+			Expect(err).NotTo(Succeed(), "malformed %s", claim)
+		}
+
+		for _, claim := range []string{"iss", "sub", "sid"} {
+			userInfo := validUserInfo()
+			userInfo["additionalClaims"].(map[string]any)[claim] = "wrong-609"
+			err := kind.ValidateQualificationAdditionalClaims(userInfo, "session-609", "subject-609")
+			Expect(err).NotTo(Succeed(), "mismatched %s", claim)
+		}
+	})
 })
