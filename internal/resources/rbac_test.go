@@ -331,6 +331,31 @@ var _ = Describe("ClusterRoles", func() {
 			Expect(found).To(BeTrue(), "kubernaut-agent-investigator should have events with create/patch verbs")
 		})
 
+		It("does not retain cluster-wide workflow or ActionType catalog reads (#610)", func() {
+			kn := testKubernaut()
+			roles := ClusterRoles(kn, testKnV2(kn))
+			var investigator *rbacv1.ClusterRole
+			for _, role := range roles {
+				if role.Name == clusterRoleName(kn, "kubernaut-agent-investigator") {
+					investigator = role
+					break
+				}
+			}
+			Expect(investigator).NotTo(BeNil())
+
+			for _, rule := range investigator.Rules {
+				if slices.Contains(rule.APIGroups, kubernautAPIGroup) {
+					Expect(rule.Resources).NotTo(ContainElement("remediationworkflows"))
+					Expect(rule.Resources).NotTo(ContainElement("actiontypes"))
+				}
+			}
+			Expect(investigator.Rules).To(ContainElement(SatisfyAll(
+				HaveField("APIGroups", ConsistOf(kubernautAPIGroup)),
+				HaveField("Resources", ConsistOf("remediationrequests", "remediationapprovalrequests", "investigationsessions", "aianalyses", "signalprocessings", "effectivenessassessments", "workflowexecutions")),
+				HaveField("Verbs", ConsistOf("get", "list", "watch")),
+			)))
+		})
+
 		It("has get permission on nodes/proxy for kubelet proxy API access", func() {
 			kn := testKubernaut()
 			roles := ClusterRoles(kn, testKnV2(kn))
@@ -792,6 +817,77 @@ var _ = Describe("NamespaceRoleBindings", func() {
 		for _, rb := range rbs {
 			Expect(roleNames[rb.RoleRef.Name]).To(BeTrue(),
 				"RoleBinding %q references non-existent role %q", rb.Name, rb.RoleRef.Name)
+		}
+	})
+})
+
+var _ = Describe("TrustedWorkflowCatalogRBAC (#610)", func() {
+	It("renders catalog Roles and RoleBindings in the configured controller namespace", func() {
+		kn := testKubernaut()
+		kn.Namespace = "trusted-controller"
+		kn.Spec.WorkflowExecution.WorkflowNamespace = "workflow-execution"
+
+		roles, bindings := TrustedWorkflowCatalogRBAC(kn)
+		Expect(roles).To(HaveLen(3))
+		Expect(bindings).To(HaveLen(3))
+
+		want := map[string]struct {
+			roleBase  string
+			saName    string
+			resources []string
+			verbs     []string
+		}{
+			"kubernaut-agent": {
+				roleBase:  "kubernaut-agent-workflow-catalog",
+				saName:    ServiceAccountName(ComponentKubernautAgent),
+				resources: []string{"remediationworkflows", "actiontypes"},
+				verbs:     []string{"list", "watch"},
+			},
+			"authwebhook": {
+				roleBase:  "authwebhook-workflow-catalog",
+				saName:    ServiceAccountName(ComponentAuthWebhook),
+				resources: []string{"remediationworkflows"},
+				verbs:     []string{"list"},
+			},
+			"workflowexecution": {
+				roleBase:  "workflowexecution-workflow-catalog",
+				saName:    ServiceAccountName(ComponentWorkflowExecution),
+				resources: []string{"remediationworkflows"},
+				verbs:     []string{"list"},
+			},
+		}
+
+		rolesByName := make(map[string]*rbacv1.Role, len(roles))
+		for _, role := range roles {
+			rolesByName[role.Name] = role
+			Expect(role.Namespace).To(Equal(kn.Namespace))
+			Expect(role.Rules).To(HaveLen(1), "catalog Role %q should have one least-privilege rule", role.Name)
+		}
+
+		bindingsByName := make(map[string]*rbacv1.RoleBinding, len(bindings))
+		for _, binding := range bindings {
+			bindingsByName[binding.Name] = binding
+			Expect(binding.Namespace).To(Equal(kn.Namespace))
+			Expect(binding.RoleRef.Kind).To(Equal("Role"))
+			Expect(binding.RoleRef.APIGroup).To(Equal(rbacv1.GroupName))
+			Expect(binding.Subjects).To(HaveLen(1))
+			Expect(binding.Subjects[0].Kind).To(Equal(rbacv1.ServiceAccountKind))
+			Expect(binding.Subjects[0].Namespace).To(Equal(kn.Namespace),
+				"catalog RoleBindings must never point at the workflow-execution namespace")
+		}
+
+		for _, grant := range want {
+			roleName := clusterRoleName(kn, grant.roleBase)
+			role := rolesByName[roleName]
+			Expect(role).NotTo(BeNil(), "missing catalog Role %q", roleName)
+			Expect(role.Rules[0].APIGroups).To(ConsistOf(kubernautAPIGroup))
+			Expect(role.Rules[0].Resources).To(Equal(grant.resources))
+			Expect(role.Rules[0].Verbs).To(Equal(grant.verbs))
+
+			binding := bindingsByName[roleName+"-binding"]
+			Expect(binding).NotTo(BeNil(), "missing catalog RoleBinding for %q", roleName)
+			Expect(binding.RoleRef.Name).To(Equal(roleName))
+			Expect(binding.Subjects[0].Name).To(Equal(grant.saName))
 		}
 	})
 })
@@ -1945,6 +2041,28 @@ var _ = Describe("AIAnalysis controller ClusterRole", func() {
 			"aianalyses/finalizers should grant exactly update, matching the "+
 				"remediationrequests/workflowexecutions/notificationrequests/"+
 				"remediationworkflows finalizers rules -- not a broader grant")
+	})
+})
+
+var _ = Describe("AuthWebhook catalog permission preservation (#610)", func() {
+	It("retains workflow registration, status, finalizer, ActionType, and event permissions", func() {
+		kn := testKubernaut()
+		role := authWebhookClusterRole(kn, CommonLabels(kn))
+		verbsFor := func(resource string) []string {
+			for _, rule := range role.Rules {
+				if slices.Contains(rule.Resources, resource) {
+					return rule.Verbs
+				}
+			}
+			return nil
+		}
+
+		Expect(verbsFor("remediationworkflows")).To(ConsistOf("get", "list", "watch", "update", "patch"))
+		Expect(verbsFor("remediationworkflows/status")).To(ConsistOf("update", "patch"))
+		Expect(verbsFor("remediationworkflows/finalizers")).To(ConsistOf("update"))
+		Expect(verbsFor("actiontypes")).To(ConsistOf("get", "list", "watch"))
+		Expect(verbsFor("actiontypes/status")).To(ConsistOf("update", "patch"))
+		Expect(verbsFor("events")).To(ConsistOf("create", "patch"))
 	})
 })
 

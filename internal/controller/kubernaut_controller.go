@@ -1092,6 +1092,17 @@ func (r *KubernautReconciler) deployNamespacedCoreRBAC(ctx context.Context, kn *
 			return err
 		}
 	}
+	catalogRoles, catalogRoleBindings := resources.TrustedWorkflowCatalogRBAC(kn)
+	for _, role := range catalogRoles {
+		if err := r.ensureNamespaced(ctx, kn, role); err != nil {
+			return fmt.Errorf("ensuring workflow catalog role %s: %w", role.Name, err)
+		}
+	}
+	for _, rb := range catalogRoleBindings {
+		if err := r.ensureNamespaced(ctx, kn, rb); err != nil {
+			return fmt.Errorf("ensuring workflow catalog rolebinding %s: %w", rb.Name, err)
+		}
+	}
 	return nil
 }
 
