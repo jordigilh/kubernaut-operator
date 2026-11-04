@@ -437,6 +437,79 @@ func NamespaceRoleBindings(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alp
 	return rbs
 }
 
+// TrustedWorkflowCatalogRBAC returns namespace-scoped catalog permissions for
+// the controller/service namespace (#610; decision documented in
+// docs/design/ISSUE-610-TRUSTED-WORKFLOW-CATALOG-RBAC.md). The
+// workflow-execution namespace is a separate concern: catalog discovery and
+// trusted-workflow verification must use kn.Namespace regardless of
+// spec.workflowExecution.workflowNamespace.
+func TrustedWorkflowCatalogRBAC(kn *kubernautv1alpha2.Kubernaut) ([]*rbacv1.Role, []*rbacv1.RoleBinding) {
+	type catalogGrant struct {
+		roleBase  string
+		component string
+		resources []string
+		verbs     []string
+	}
+
+	grants := []catalogGrant{
+		{
+			roleBase:  "kubernaut-agent-workflow-catalog",
+			component: ComponentKubernautAgent,
+			resources: []string{"remediationworkflows", "actiontypes"},
+			verbs:     []string{"list", "watch"},
+		},
+		{
+			roleBase:  "authwebhook-workflow-catalog",
+			component: ComponentAuthWebhook,
+			resources: []string{"remediationworkflows"},
+			verbs:     []string{"list"},
+		},
+		{
+			roleBase:  "workflowexecution-workflow-catalog",
+			component: ComponentWorkflowExecution,
+			resources: []string{"remediationworkflows"},
+			verbs:     []string{"list"},
+		},
+	}
+
+	labels := CommonLabels(kn)
+	roles := make([]*rbacv1.Role, 0, len(grants))
+	bindings := make([]*rbacv1.RoleBinding, 0, len(grants))
+	for _, grant := range grants {
+		roleName := clusterRoleName(kn, grant.roleBase)
+		roles = append(roles, &rbacv1.Role{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      roleName,
+				Namespace: kn.Namespace,
+				Labels:    labels,
+			},
+			Rules: []rbacv1.PolicyRule{{
+				APIGroups: []string{kubernautv1alpha2.GroupVersion.Group},
+				Resources: grant.resources,
+				Verbs:     grant.verbs,
+			}},
+		})
+		bindings = append(bindings, &rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      roleName + "-binding",
+				Namespace: kn.Namespace,
+				Labels:    labels,
+			},
+			RoleRef: rbacv1.RoleRef{
+				APIGroup: rbacv1.GroupName,
+				Kind:     "Role",
+				Name:     roleName,
+			},
+			Subjects: []rbacv1.Subject{{
+				Kind:      rbacv1.ServiceAccountKind,
+				Name:      ServiceAccountName(grant.component),
+				Namespace: kn.Namespace,
+			}},
+		})
+	}
+	return roles, bindings
+}
+
 // WorkflowNamespaceRBAC returns the Roles and RoleBindings in the workflow namespace
 // for datastorage-dep-reader and workflowexecution-dep-reader.
 func WorkflowNamespaceRBAC(kn *kubernautv1alpha2.Kubernaut) ([]*rbacv1.Role, []*rbacv1.RoleBinding) {
@@ -1146,9 +1219,9 @@ func kubernautAgentInvestigatorClusterRole(kn *kubernautv1alpha2.Kubernaut, labe
 		{APIGroups: []string{"scheduling.k8s.io"}, Resources: []string{"priorityclasses"}, Verbs: []string{"get", "list", "watch"}},
 		// Kubernaut CRDs: the agent needs read access to list remediations, investigations, etc.
 		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{
-			"remediationrequests", "remediationworkflows", "remediationapprovalrequests",
+			"remediationrequests", "remediationapprovalrequests",
 			"investigationsessions", "aianalyses", "signalprocessings",
-			"effectivenessassessments", "workflowexecutions", "actiontypes",
+			"effectivenessassessments", "workflowexecutions",
 		}, Verbs: []string{"get", "list", "watch"}},
 		// AgentSession (#380, parity with kubernaut#2231/PR#2250): KA's
 		// Dispatcher Reconciler's dispatchCleanupFinalizer is a
