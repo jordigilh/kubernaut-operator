@@ -804,6 +804,7 @@ func writeQualificationEvidence(evidence qualificationEvidence) error {
 		return fmt.Errorf("marshalling qualification evidence: %w", err)
 	}
 	data = append(data, '\n')
+	//nolint:gosec // explicit test evidence output path
 	if err := os.Chmod(path, 0o600); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("restricting qualification evidence permissions: %w", err)
 	}
