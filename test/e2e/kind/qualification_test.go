@@ -25,6 +25,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -45,10 +46,19 @@ type qualificationSession struct {
 }
 
 type qualificationEvidence struct {
-	Issue       string                         `json:"issue"`
-	Images      map[string]string              `json:"images"`
-	Results     map[string]qualificationResult `json:"results"`
-	GeneratedAt string                         `json:"generatedAt"`
+	Issue       string                          `json:"issue"`
+	Images      map[string]string               `json:"images"`
+	Provenance  qualificationEvidenceProvenance `json:"provenance"`
+	Results     map[string]qualificationResult  `json:"results"`
+	Gaps        []string                        `json:"gaps,omitempty"`
+	GeneratedAt string                          `json:"generatedAt"`
+}
+
+type qualificationEvidenceProvenance struct {
+	GitCommit     string `json:"gitCommit"`
+	Kubernetes    string `json:"kubernetesContext"`
+	TLS           string `json:"tlsSource"`
+	ContainerTool string `json:"containerTool"`
 }
 
 type qualificationResult struct {
@@ -56,6 +66,8 @@ type qualificationResult struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+// init registers the opt-in Issue 609 qualification suite without changing
+// the default Kind contract suite.
 func init() {
 	if !qualificationEnabledFromEnvironment() {
 		return
@@ -76,9 +88,21 @@ func init() {
 			Expect(err).NotTo(HaveOccurred())
 			fixtureCA = append([]byte(nil), fixture.caPEM...)
 			evidence = qualificationEvidence{
-				Issue:       "kubernaut-operator#609",
-				Images:      QualificationImageReferences(qualificationKeycloakImage(), qualificationOperatorImage()),
-				Results:     make(map[string]qualificationResult),
+				Issue:  "kubernaut-operator#609",
+				Images: QualificationImageReferences(qualificationKeycloakImage(), qualificationOperatorImage()),
+				Provenance: qualificationEvidenceProvenance{
+					GitCommit:     qualificationGitCommit(ctx),
+					Kubernetes:    clusterContext,
+					TLS:           string(configuredTLS),
+					ContainerTool: qualificationContainerTool(),
+				},
+				Results: make(map[string]qualificationResult),
+				Gaps: []string{
+					"deployed missing, malformed, and mismatched iss/sub/sid token cases require a " +
+						"controlled signing-key fixture and are not executed by this lane",
+					"existing-session upgrade and OAuth2 Proxy v7.9 rollback qualification is not " +
+						"executed; the supported floor is v7.15.5+",
+				},
 				GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 			}
 
@@ -176,16 +200,58 @@ func init() {
 				Expect(unauthenticatedResponse.StatusCode).NotTo(Equal(http.StatusOK))
 				Expect(strings.ToLower(unauthenticatedBody)).NotTo(ContainSubstring("access_token"))
 
-				mcpResponse, err := qualificationRequest(ctx, unauthenticatedClient, "/mcp", nil)
+				mcpPayload := `{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": "2025-03-26",
+    "capabilities": {},
+    "clientInfo": {"name": "issue-609-qualification", "version": "1"}
+  }
+}`
+				mcpHeaders := map[string]string{
+					"Accept":                   "application/json, text/event-stream",
+					"Content-Type":             "application/json",
+					"Authorization":            "Bearer forged-token",
+					"X-Forwarded-Access-Token": "Bearer forged-token",
+					"X-Forwarded-User":         "forged",
+					"X-Forwarded-Email":        "forged@example.invalid",
+					"X-Auth-Request-User":      "forged",
+				}
+				mcpResponse, err := qualificationRequestURL(ctx, client, http.MethodPost,
+					"https://"+qualificationConsoleHost+":8843/mcp", strings.NewReader(mcpPayload), mcpHeaders)
 				Expect(err).NotTo(HaveOccurred())
 				mcpBody, bodyErr := qualificationResponseBody(mcpResponse)
 				Expect(bodyErr).NotTo(HaveOccurred())
-				Expect(mcpResponse.StatusCode).NotTo(Equal(http.StatusOK))
+				Expect(mcpResponse.StatusCode).To(Equal(http.StatusOK))
+				Expect(mcpBody).NotTo(BeEmpty())
+				Expect(strings.ToLower(mcpBody)).NotTo(ContainSubstring("forged@example.invalid"))
+				Expect(strings.ToLower(mcpBody)).NotTo(ContainSubstring("forged-token"))
 				Expect(strings.ToLower(mcpBody)).NotTo(ContainSubstring("access_token"))
+
+				unauthenticatedMCPResponse, err := qualificationRequestURL(ctx, unauthenticatedClient, http.MethodPost,
+					"https://"+qualificationConsoleHost+":8843/mcp", strings.NewReader(mcpPayload), mcpHeaders)
+				Expect(err).NotTo(HaveOccurred())
+				unauthenticatedMCPBody, bodyErr := qualificationResponseBody(unauthenticatedMCPResponse)
+				Expect(bodyErr).NotTo(HaveOccurred())
+				Expect(unauthenticatedMCPResponse.StatusCode).NotTo(Equal(http.StatusOK))
+				Expect(strings.ToLower(unauthenticatedMCPBody)).NotTo(ContainSubstring("access_token"))
+
+				logs, err := kubectl(ctx, "logs", "deployment/kubernaut-console", "-n", kubernautNamespace,
+					"-c", "oauth2-proxy", "--since=30m")
+				Expect(err).NotTo(HaveOccurred())
+				for _, sensitiveValue := range qualificationSensitiveLogValues(session.setCookies) {
+					Expect(logs).NotTo(ContainSubstring(sensitiveValue))
+				}
 				evidence.Results["forwarding-and-forged-headers"] = qualificationResult{
 					Passed: true,
 					Detail: "authenticated A2A access succeeded; forged identity and bearer headers did not " +
-						"create unauthenticated access; unauthenticated MCP was not 200",
+						"change authenticated A2A/MCP access; unauthenticated A2A/MCP were not 200",
+				}
+				evidence.Results["log-redaction"] = qualificationResult{
+					Passed: true,
+					Detail: "OAuth2 Proxy logs did not contain the test bearer value, session cookie values, or client secret",
 				}
 			})
 
@@ -202,6 +268,7 @@ func init() {
 
 			refreshObserved := false
 			var refreshedCookies []*http.Cookie
+			var refreshedUserInfo map[string]any
 			Expect(pollUntilSuccess(ctx, 30*time.Second, 1*time.Second, func() error {
 				response, err := qualificationRequest(ctx, client, "/oauth2/userinfo", nil)
 				if err != nil {
@@ -220,16 +287,22 @@ func init() {
 				if strings.Contains(strings.ToLower(body), "access_token") {
 					return fmt.Errorf("userinfo response contains an access_token field")
 				}
+				userInfo, claimsErr := qualificationUserInfoWithClaims(body, session.sid)
+				if claimsErr != nil {
+					return claimsErr
+				}
 				refreshedCookies = response.Cookies()
+				refreshedUserInfo = userInfo
 				refreshObserved = true
 				return nil
 			})).To(Succeed())
 			Expect(refreshObserved).To(BeTrue())
 			Expect(cookieHasSecureFlags(refreshedCookies)).To(BeTrue())
+			Expect(refreshedUserInfo).NotTo(BeNil())
 			evidence.Results["session-refresh"] = qualificationResult{
 				Passed: true,
 				Detail: "test-only deployment argument acceleration caused OAuth2 Proxy to emit a refreshed " +
-					"Secure HttpOnly SameSite=Lax cookie",
+					"Secure HttpOnly SameSite=Lax cookie while retaining validated iss/sub/sid claims",
 			}
 		})
 
@@ -266,6 +339,8 @@ func init() {
 	})
 }
 
+// loginQualificationUser performs the browser-equivalent authorization-code
+// flow and returns the claims and cookies observed at the deployed proxy.
 func loginQualificationUser(ctx context.Context, client *http.Client) (qualificationSession, error) {
 	result := qualificationSession{}
 	startURL := "https://" + qualificationConsoleHost + ":8843/"
@@ -383,6 +458,46 @@ func loginQualificationUser(ctx context.Context, client *http.Client) (qualifica
 		return result, fmt.Errorf("OAuth2 Proxy userinfo sid claim is empty")
 	}
 	return result, nil
+}
+
+// qualificationUserInfoWithClaims validates the claims returned after a live
+// OAuth2 Proxy refresh and prevents silent sid replacement.
+func qualificationUserInfoWithClaims(body, expectedSID string) (map[string]any, error) {
+	userInfo := make(map[string]any)
+	if err := json.Unmarshal([]byte(body), &userInfo); err != nil {
+		return nil, fmt.Errorf("decoding refreshed OAuth2 Proxy userinfo: %w", err)
+	}
+	claims, ok := userInfo["additionalClaims"].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("refreshed OAuth2 Proxy userinfo additionalClaims is not an object")
+	}
+	if claims["iss"] != qualificationKeycloakIssuer {
+		return nil, fmt.Errorf("refreshed OAuth2 Proxy iss claim is %v", claims["iss"])
+	}
+	sub, ok := claims["sub"].(string)
+	if !ok || sub == "" {
+		return nil, fmt.Errorf("refreshed OAuth2 Proxy sub claim is empty")
+	}
+	sid, ok := claims["sid"].(string)
+	if !ok || sid == "" {
+		return nil, fmt.Errorf("refreshed OAuth2 Proxy sid claim is empty")
+	}
+	if expectedSID != "" && sid != expectedSID {
+		return nil, fmt.Errorf("refreshed OAuth2 Proxy sid claim changed from %q to %q", expectedSID, sid)
+	}
+	return userInfo, nil
+}
+
+// qualificationSensitiveLogValues returns only disposable test values that
+// must not appear in the OAuth2 Proxy log stream.
+func qualificationSensitiveLogValues(cookies []*http.Cookie) []string {
+	values := []string{"Bearer forged-token", "forged-token", qualificationConsoleSecret}
+	for _, cookie := range cookies {
+		if cookie != nil && cookie.Value != "" {
+			values = append(values, cookie.Value)
+		}
+	}
+	return values
 }
 
 func qualificationRequest(
@@ -588,6 +703,8 @@ func waitForDeployment(ctx context.Context, name string) error {
 	return nil
 }
 
+// writeQualificationEvidence persists the redacted qualification result and
+// its immutable-image provenance with restrictive local file permissions.
 func writeQualificationEvidence(evidence qualificationEvidence) error {
 	path := strings.TrimSpace(os.Getenv("KUBERNAUT_E2E_QUALIFICATION_EVIDENCE"))
 	if path == "" {
@@ -606,4 +723,22 @@ func writeQualificationEvidence(evidence qualificationEvidence) error {
 		return fmt.Errorf("writing qualification evidence: %w", err)
 	}
 	return nil
+}
+
+// qualificationGitCommit resolves the run's source revision without failing
+// an otherwise valid local qualification when Git metadata is unavailable.
+func qualificationGitCommit(ctx context.Context) string {
+	for _, name := range []string{"GITHUB_SHA", "GIT_COMMIT"} {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			return value
+		}
+	}
+	output, err := exec.CommandContext(ctx, "git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		return "unknown"
+	}
+	if value := strings.TrimSpace(string(output)); value != "" {
+		return value
+	}
+	return "unknown"
 }

@@ -50,6 +50,8 @@ type qualificationProcessMonitor struct {
 	err  error
 }
 
+// newQualificationProcessMonitor waits for a started command in the
+// background while preserving its result for readiness and cleanup checks.
 func newQualificationProcessMonitor(command *exec.Cmd) *qualificationProcessMonitor {
 	monitor := &qualificationProcessMonitor{done: make(chan struct{})}
 	go func() {
@@ -61,6 +63,7 @@ func newQualificationProcessMonitor(command *exec.Cmd) *qualificationProcessMoni
 	return monitor
 }
 
+// exitedError reports a terminated port-forward without consuming its result.
 func (monitor *qualificationProcessMonitor) exitedError(description string) error {
 	select {
 	case <-monitor.done:
@@ -75,6 +78,7 @@ func (monitor *qualificationProcessMonitor) exitedError(description string) erro
 	}
 }
 
+// stop terminates the monitored child and waits for its result exactly once.
 func (monitor *qualificationProcessMonitor) stop(command *exec.Cmd) {
 	select {
 	case <-monitor.done:
@@ -184,6 +188,7 @@ func startQualificationIngress(ctx context.Context) (*qualificationIngress, erro
 	return adapter, nil
 }
 
+// Close shuts down the HTTPS adapter and its kubectl port-forward process.
 func (adapter *qualificationIngress) Close(ctx context.Context) error {
 	if adapter == nil {
 		return nil

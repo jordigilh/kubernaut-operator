@@ -217,6 +217,8 @@ func loadInfrastructureImages(ctx context.Context) error {
 	return nil
 }
 
+// loadQualificationImages imports all immutable operand images required by the
+// opt-in real-component qualification lane.
 func loadQualificationImages(ctx context.Context) error {
 	images := qualificationImageOverrides()
 	images[qualificationKeycloakService] = qualificationKeycloakImage()
