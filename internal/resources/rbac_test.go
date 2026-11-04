@@ -2065,6 +2065,11 @@ var _ = Describe("AuthWebhook catalog permission preservation (#610)", func() {
 		Expect(verbsFor("remediationworkflows/status")).To(ConsistOf("update", "patch"))
 		Expect(verbsFor("remediationworkflows/finalizers")).To(ConsistOf("update"))
 		Expect(verbsFor("actiontypes")).To(ConsistOf("get", "list", "watch"))
+		Expect(role.Rules).To(ContainElement(SatisfyAll(
+			HaveField("APIGroups", ConsistOf(kubernautAPIGroup)),
+			HaveField("Resources", ContainElement("actiontypes")),
+			HaveField("Verbs", ConsistOf("get", "list", "watch")),
+		)), "AuthWebhook ActionType access must remain in the kubernaut.ai API group")
 		Expect(verbsFor("actiontypes/status")).To(ConsistOf("update", "patch"))
 		Expect(verbsFor("events")).To(ConsistOf("create", "patch"))
 	})
