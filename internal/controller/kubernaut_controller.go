@@ -1029,13 +1029,15 @@ func (r *KubernautReconciler) deployConsoleAccessRBAC(ctx context.Context, kn *k
 	return nil
 }
 
-// deployCoreRBAC provisions ClusterRoles, ClusterRoleBindings, namespace-scoped
-// Roles/RoleBindings, DataStorage client bindings, and the Kubernaut Agent client binding.
+// deployCoreRBAC provisions namespace-scoped Roles/RoleBindings and client
+// bindings before ClusterRoles/ClusterRoleBindings. The ordering is deliberate:
+// replacement namespace-scoped catalog permissions must exist before the KA
+// ClusterRole loses its legacy cluster-wide catalog reads.
 func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
-	if err := r.deployClusterScopedCoreRBAC(ctx, kn, knV2); err != nil {
+	if err := r.deployNamespacedCoreRBAC(ctx, kn, knV2); err != nil {
 		return err
 	}
-	if err := r.deployNamespacedCoreRBAC(ctx, kn, knV2); err != nil {
+	if err := r.deployClusterScopedCoreRBAC(ctx, kn, knV2); err != nil {
 		return err
 	}
 	if err := r.deployMCPGatewayNamespaceRBAC(ctx, kn, knV2); err != nil {
@@ -1090,6 +1092,17 @@ func (r *KubernautReconciler) deployNamespacedCoreRBAC(ctx context.Context, kn *
 	if kn.Spec.APIFrontendEnabled() {
 		if err := r.ensureNamespaced(ctx, kn, resources.KubernautAgentClientAPIfrontendRoleBinding(kn)); err != nil {
 			return err
+		}
+	}
+	catalogRoles, catalogRoleBindings := resources.TrustedWorkflowCatalogRBAC(kn)
+	for _, role := range catalogRoles {
+		if err := r.ensureNamespaced(ctx, kn, role); err != nil {
+			return fmt.Errorf("ensuring workflow catalog role %s: %w", role.Name, err)
+		}
+	}
+	for _, rb := range catalogRoleBindings {
+		if err := r.ensureNamespaced(ctx, kn, rb); err != nil {
+			return fmt.Errorf("ensuring workflow catalog rolebinding %s: %w", rb.Name, err)
 		}
 	}
 	return nil
