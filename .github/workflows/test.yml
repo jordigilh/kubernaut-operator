@@ -179,7 +179,21 @@ jobs:
         run: syft packages "${OPERATOR_IMAGE}" -o cyclonedx-json > sbom.cdx.json
 
       - name: Install Trivy
-        run: curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.70.0
+        run: |
+          set -euo pipefail
+          trivy_version="0.70.0"
+          trivy_archive="trivy_${trivy_version}_Linux-64bit.tar.gz"
+          trivy_release_url="https://github.com/aquasecurity/trivy/releases/download/v${trivy_version}"
+          curl -sSfL --retry 3 --retry-delay 2 \
+            "${trivy_release_url}/${trivy_archive}" \
+            --output "${trivy_archive}"
+          curl -sSfL --retry 3 --retry-delay 2 \
+            "${trivy_release_url}/trivy_${trivy_version}_checksums.txt" \
+            --output trivy_checksums.txt
+          grep -F "  ${trivy_archive}" trivy_checksums.txt > trivy_checksum.txt
+          sha256sum --check trivy_checksum.txt
+          tar -xzf "${trivy_archive}" trivy
+          install trivy /usr/local/bin/trivy
 
       - name: Scan image
         run: trivy image --severity CRITICAL,HIGH,MEDIUM --exit-code 1 --ignorefile .trivyignore "${OPERATOR_IMAGE}"
