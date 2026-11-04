@@ -24,9 +24,12 @@ allowed for AuthWebhook by design.
 ## Wiring and evidence
 
 The Roles and RoleBindings use the existing namespaced RBAC reconciliation path
-(`deployNamespacedCoreRBAC`) and standard operator ownership metadata. Tests
-cover rendered objects, reconciled objects in standard and non-default
-controller namespaces, and SubjectAccessReview authorization:
+(`deployNamespacedCoreRBAC`) and standard operator ownership metadata. Core
+namespaced RBAC is reconciled before ClusterRoles so a failed replacement write
+does not remove KA's existing cluster-wide catalog access during an upgrade.
+Tests cover rendered objects, reconciled objects in standard and non-default
+controller namespaces, injected Role/RoleBinding failures, and
+SubjectAccessReview authorization:
 
 - KA and WorkflowExecution: trusted namespace allowed, foreign namespace denied
 - KA ActionType list/watch: trusted namespace allowed, foreign namespace denied

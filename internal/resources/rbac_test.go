@@ -883,6 +883,10 @@ var _ = Describe("TrustedWorkflowCatalogRBAC (#610)", func() {
 			Expect(role.Rules[0].APIGroups).To(ConsistOf(kubernautAPIGroup))
 			Expect(role.Rules[0].Resources).To(Equal(grant.resources))
 			Expect(role.Rules[0].Verbs).To(Equal(grant.verbs))
+			if slices.Contains(grant.resources, "actiontypes") {
+				Expect(role.Rules[0].APIGroups).To(Equal([]string{kubernautAPIGroup}),
+					"ActionType catalog access must use the kubernaut.ai API group")
+			}
 
 			binding := bindingsByName[roleName+"-binding"]
 			Expect(binding).NotTo(BeNil(), "missing catalog RoleBinding for %q", roleName)

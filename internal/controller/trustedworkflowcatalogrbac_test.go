@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
@@ -177,5 +178,85 @@ var _ = Describe("Trusted workflow catalog RBAC (#610)", func() {
 			"AuthWebhook's preserved ClusterRole intentionally keeps foreign workflow access")
 		Eventually(eventuallySubjectAccess(ctx, webhookUser, foreignNamespace, "remediationworkflows/status", "patch"), timeout, interval).Should(BeTrue())
 		Eventually(eventuallySubjectAccess(ctx, webhookUser, foreignNamespace, "remediationworkflows/finalizers", "update"), timeout, interval).Should(BeTrue())
+	})
+})
+
+var _ = Describe("Trusted workflow catalog RBAC failure handling (#610)", Label("unit"), func() {
+	It("keeps the legacy KA catalog grant until replacement Role or RoleBinding reconciliation succeeds", func() {
+		for _, test := range []struct {
+			name       string
+			objectType string
+			wantError  string
+		}{
+			{
+				name:       "catalog Role",
+				objectType: "role",
+				wantError:  "ensuring workflow catalog role",
+			},
+			{
+				name:       "catalog RoleBinding",
+				objectType: "rolebinding",
+				wantError:  "ensuring workflow catalog rolebinding",
+			},
+		} {
+			By("injecting " + test.name + " reconciliation failure")
+
+			kn := newMinimalCR()
+			kn.UID = types.UID("unit-610-rbac-upgrade")
+			catalogRoles, catalogBindings := resources.TrustedWorkflowCatalogRBAC(kn)
+			catalogRoleNames := make(map[string]struct{}, len(catalogRoles))
+			catalogBindingNames := make(map[string]struct{}, len(catalogBindings))
+			for _, role := range catalogRoles {
+				catalogRoleNames[role.Name] = struct{}{}
+			}
+			for _, binding := range catalogBindings {
+				catalogBindingNames[binding.Name] = struct{}{}
+			}
+
+			faults := interceptor.Funcs{Create: func(ctx context.Context, api client.WithWatch, object client.Object, options ...client.CreateOption) error {
+				if test.objectType == "role" {
+					if _, ok := catalogRoleNames[object.GetName()]; ok {
+						if _, ok := object.(*rbacv1.Role); ok {
+							return fmt.Errorf("injected catalog Role failure")
+						}
+					}
+				}
+				if test.objectType == "rolebinding" {
+					if _, ok := catalogBindingNames[object.GetName()]; ok {
+						if _, ok := object.(*rbacv1.RoleBinding); ok {
+							return fmt.Errorf("injected catalog RoleBinding failure")
+						}
+					}
+				}
+				return api.Create(ctx, object, options...)
+			}}
+			r := businessUnitReconciler(kn, faults)
+
+			var legacy *rbacv1.ClusterRole
+			for _, role := range resources.ClusterRoles(kn, kn) {
+				if role.Name == kn.Namespace+"-kubernaut-agent-investigator" {
+					legacy = role.DeepCopy()
+					break
+				}
+			}
+			Expect(legacy).NotTo(BeNil())
+			legacy.Rules = append(legacy.Rules, rbacv1.PolicyRule{
+				APIGroups: []string{kubernautv1alpha2.GroupVersion.Group},
+				Resources: []string{"remediationworkflows", "actiontypes"},
+				Verbs:     []string{"get", "list", "watch"},
+			})
+			resources.StampOwnership(kn, legacy)
+			Expect(r.Create(ctx, legacy)).To(Succeed())
+
+			Expect(r.deployCoreRBAC(ctx, kn, kn)).To(MatchError(ContainSubstring(test.wantError)))
+
+			live := &rbacv1.ClusterRole{}
+			Expect(r.Get(ctx, client.ObjectKeyFromObject(legacy), live)).To(Succeed())
+			Expect(live.Rules).To(ContainElement(SatisfyAll(
+				HaveField("APIGroups", ConsistOf(kubernautv1alpha2.GroupVersion.Group)),
+				HaveField("Resources", ConsistOf("remediationworkflows", "actiontypes")),
+				HaveField("Verbs", ConsistOf("get", "list", "watch")),
+			)), "the old cluster-wide KA catalog grant must remain while replacement RBAC is unavailable")
+		}
 	})
 })
