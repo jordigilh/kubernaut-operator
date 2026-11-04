@@ -398,13 +398,40 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 		}
 	}
 	apiFrontend := kubernautv1alpha2.APIFrontendSpec{Enabled: ptr.To(false)}
+	console := kubernautv1alpha2.ConsoleSpec{}
+	imageOverrides := ContractImageOverrides(contractImage())
+	if qualificationLane {
+		apiFrontend = kubernautv1alpha2.APIFrontendSpec{
+			Enabled: ptr.To(true),
+			Auth: kubernautv1alpha2.APIFrontendAuthSpec{
+				IssuerURL:  qualificationKeycloakIssuer,
+				JWKSURL:    qualificationKeycloakIssuer + "/protocol/openid-connect/certs",
+				Audience:   "kubernaut-apifrontend",
+				OIDCCAFile: "/etc/apifrontend/tls-ca/ca.crt",
+			},
+			RBAC: &kubernautv1alpha2.APIFrontendRBACSpec{
+				RoleBindings:                           []kubernautv1alpha2.ToolRoleBinding{{Role: "sre", Groups: []string{"sre"}}},
+				ConsoleAccessGroups:                    []string{"sre"},
+				ConsoleAccessAuthorizationCheckEnabled: ptr.To(true),
+			},
+		}
+		console = kubernautv1alpha2.ConsoleSpec{
+			Enabled: ptr.To(true),
+			Auth: kubernautv1alpha2.ConsoleAuthSpec{
+				SecretName:        "console-oidc-creds",
+				RedirectURL:       "https://" + qualificationConsoleHost + ":8843/oauth2/callback",
+				ProviderLogoutURL: qualificationKeycloakIssuer + "/protocol/openid-connect/logout?id_token_hint={id_token}",
+			},
+		}
+		imageOverrides = qualificationImageOverrides()
+	}
 	return &kubernautv1alpha2.Kubernaut{
 		TypeMeta:   metav1.TypeMeta{APIVersion: kubernautv1alpha2.GroupVersion.String(), Kind: "Kubernaut"},
 		ObjectMeta: metav1.ObjectMeta{Name: kubernautv1alpha2.SingletonName, Namespace: kubernautNamespace},
 		Spec: kubernautv1alpha2.KubernautSpec{
 			Image: kubernautv1alpha2.ImageSpec{
 				PullPolicy: corev1.PullIfNotPresent,
-				Overrides:  ContractImageOverrides(contractImage()),
+				Overrides:  imageOverrides,
 			},
 			PostgreSQL: kubernautv1alpha2.PostgreSQLSpec{ //nolint:gosec // disposable Kind fixture secret reference
 				SecretName: "postgresql-secret",
@@ -441,6 +468,7 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 			},
 			Gateway:         kubernautv1alpha2.GatewaySpec{Enabled: ptr.To(false)},
 			APIFrontend:     apiFrontend,
+			Console:         console,
 			TLS:             tls,
 			NetworkPolicies: kubernautv1alpha2.NetworkPoliciesSpec{},
 		},

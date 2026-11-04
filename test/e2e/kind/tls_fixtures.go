@@ -57,6 +57,9 @@ type manualTLSFixture struct {
 	mode                  kubernautv1alpha2.TLSMode
 	caSecretName          string
 	caConfigMapName       string
+	caCertificate         *x509.Certificate
+	caKey                 *ecdsa.PrivateKey
+	caPEM                 []byte
 	serviceTLSSecretNames map[string]string
 	signingSecretName     string
 	secrets               map[string]*corev1.Secret
@@ -465,6 +468,9 @@ func newManualTLSFixture(mode kubernautv1alpha2.TLSMode, prefix, namespace strin
 		mode:                  mode,
 		caSecretName:          caSecretName,
 		serviceTLSSecretNames: serviceNames,
+		caCertificate:         caCertificate,
+		caKey:                 caKey,
+		caPEM:                 append([]byte(nil), caPEM...),
 		signingSecretName:     signingSecretName,
 		secrets:               secrets,
 		configMaps:            configMaps,
@@ -634,6 +640,9 @@ func generateManualLeaf(
 			"authwebhook."+namespace+".svc",
 			"authwebhook."+namespace+".svc.cluster.local",
 		)
+	}
+	if serviceKey == "keycloak" {
+		dnsNames = append(dnsNames, "localhost")
 	}
 	template := &x509.Certificate{
 		SerialNumber: serial,

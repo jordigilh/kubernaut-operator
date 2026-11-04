@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -172,6 +173,11 @@ func helmBinary() string {
 }
 
 func operatorImage() string {
+	if qualificationLane {
+		if image := qualificationOperatorImage(); image != "" {
+			return image
+		}
+	}
 	if image := strings.TrimSpace(os.Getenv("KUBERNAUT_OPERATOR_IMAGE")); image != "" {
 		return image
 	}
@@ -186,6 +192,11 @@ func contractImage() string {
 }
 
 func loadOperatorImage(ctx context.Context) error {
+	if qualificationLane {
+		if _, err := runCmd(ctx, qualificationContainerTool(), "pull", operatorImage()); err != nil {
+			return fmt.Errorf("pulling qualification operator image %q: %w", operatorImage(), err)
+		}
+	}
 	if _, err := runCmd(ctx, "kind", "load", "docker-image", operatorImage(), "--name", kindClusterName()); err != nil {
 		return fmt.Errorf("loading operator image %q into Kind: %w", operatorImage(), err)
 	}
@@ -193,10 +204,33 @@ func loadOperatorImage(ctx context.Context) error {
 }
 
 func loadInfrastructureImages(ctx context.Context) error {
+	if qualificationLane {
+		return loadQualificationImages(ctx)
+	}
 	images := []string{contractImage(), postgresImage, valkeyImage}
 	for _, image := range images {
 		if _, err := runCmd(ctx, "kind", "load", "docker-image", image, "--name", kindClusterName()); err != nil {
 			return fmt.Errorf("loading contract or dependency image %q into Kind: %w", image, err)
+		}
+	}
+	return nil
+}
+
+func loadQualificationImages(ctx context.Context) error {
+	images := qualificationImageOverrides()
+	images[qualificationKeycloakService] = qualificationKeycloakImage()
+	names := make([]string, 0, len(images))
+	for name := range images {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		image := images[name]
+		if _, err := runCmd(ctx, qualificationContainerTool(), "pull", image); err != nil {
+			return fmt.Errorf("pulling qualification image %q for %s: %w", image, name, err)
+		}
+		if _, err := runCmd(ctx, "kind", "load", "docker-image", image, "--name", kindClusterName()); err != nil {
+			return fmt.Errorf("loading qualification image %q for %s into Kind: %w", image, name, err)
 		}
 	}
 	return nil
@@ -264,6 +298,14 @@ func createKindCluster(ctx context.Context) error {
 	}
 	configPath := configFile.Name()
 	defer func() { _ = os.Remove(configPath) }()
+	portMappings := ""
+	if qualificationLane {
+		portMappings = fmt.Sprintf(`
+    extraPortMappings:
+      - containerPort: %d
+        hostPort: %d
+        protocol: TCP`, qualificationKeycloakNodePort, qualificationKeycloakHostPort)
+	}
 	config := fmt.Sprintf(`kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 networking:
@@ -277,9 +319,10 @@ kubeadmConfigPatches:
 nodes:
   - role: control-plane
     image: %s
+%s
   - role: worker
     image: %s
-`, kindNodeImage, kindNodeImage)
+`, kindNodeImage, portMappings, kindNodeImage)
 	if _, err := configFile.WriteString(config); err != nil {
 		_ = configFile.Close()
 		return fmt.Errorf("writing Kind config: %w", err)
