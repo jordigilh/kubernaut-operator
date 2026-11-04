@@ -20,24 +20,79 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
 )
 
 type qualificationIngress struct {
-	server      *http.Server
-	portForward *exec.Cmd
+	server             *http.Server
+	portForward        *exec.Cmd
+	portForwardMonitor *qualificationProcessMonitor
 }
 
+// qualificationProcessMonitor records a child process result without making
+// readiness checks consume the result needed by cleanup.
+type qualificationProcessMonitor struct {
+	done chan struct{}
+	mu   sync.Mutex
+	err  error
+}
+
+func newQualificationProcessMonitor(command *exec.Cmd) *qualificationProcessMonitor {
+	monitor := &qualificationProcessMonitor{done: make(chan struct{})}
+	go func() {
+		monitor.mu.Lock()
+		monitor.err = command.Wait()
+		monitor.mu.Unlock()
+		close(monitor.done)
+	}()
+	return monitor
+}
+
+func (monitor *qualificationProcessMonitor) exitedError(description string) error {
+	select {
+	case <-monitor.done:
+		monitor.mu.Lock()
+		defer monitor.mu.Unlock()
+		if monitor.err == nil {
+			return fmt.Errorf("%s exited", description)
+		}
+		return fmt.Errorf("%s exited: %w", description, monitor.err)
+	default:
+		return nil
+	}
+}
+
+func (monitor *qualificationProcessMonitor) stop(command *exec.Cmd) {
+	select {
+	case <-monitor.done:
+		return
+	default:
+	}
+	if command.Process != nil {
+		if err := command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			_, _ = fmt.Fprintf(
+				GinkgoWriter, "warning: stopping Console service port-forward failed: %v\n", err,
+			) //nolint:errcheck
+		}
+	}
+	<-monitor.done
+}
+
+// startQualificationIngress starts the loopback Console adapter only after a
+// live kubectl port-forward process has successfully bound its upstream port.
 func startQualificationIngress(ctx context.Context) (*qualificationIngress, error) {
 	fixture, err := activeManualTLSFixture()
 	if err != nil {
@@ -65,19 +120,24 @@ func startQualificationIngress(ctx context.Context) (*qualificationIngress, erro
 	if err := portForward.Start(); err != nil {
 		return nil, fmt.Errorf("starting Console service port-forward: %w", err)
 	}
+	portForwardMonitor := newQualificationProcessMonitor(portForward)
 	stopPortForward := func() {
-		if portForward.Process != nil {
-			_ = portForward.Process.Kill()
-		}
-		_ = portForward.Wait()
+		portForwardMonitor.stop(portForward)
 	}
 	if err := pollUntilSuccess(ctx, 2*time.Minute, 500*time.Millisecond, func() error {
+		if err := portForwardMonitor.exitedError("Console service port-forward"); err != nil {
+			return err
+		}
 		dialer := &net.Dialer{Timeout: 2 * time.Second}
 		connection, dialErr := dialer.DialContext(ctx, "tcp", "127.0.0.1:4180")
 		if dialErr != nil {
 			return dialErr
 		}
-		return connection.Close()
+		closeErr := connection.Close()
+		if processErr := portForwardMonitor.exitedError("Console service port-forward"); processErr != nil {
+			return processErr
+		}
+		return closeErr
 	}); err != nil {
 		stopPortForward()
 		return nil, fmt.Errorf("waiting for Console service port-forward: %w", err)
@@ -107,7 +167,11 @@ func startQualificationIngress(ctx context.Context) (*qualificationIngress, erro
 		Handler:           proxy,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	adapter := &qualificationIngress{server: server, portForward: portForward}
+	adapter := &qualificationIngress{
+		server:             server,
+		portForward:        portForward,
+		portForwardMonitor: portForwardMonitor,
+	}
 	tlsListener := tls.NewListener(listener, &tls.Config{
 		Certificates: []tls.Certificate{serverCertificate},
 		MinVersion:   tls.VersionTLS12,
@@ -127,9 +191,8 @@ func (adapter *qualificationIngress) Close(ctx context.Context) error {
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	shutdownErr := adapter.server.Shutdown(shutdownCtx)
-	if adapter.portForward != nil && adapter.portForward.Process != nil {
-		_ = adapter.portForward.Process.Kill()
-		_ = adapter.portForward.Wait()
+	if adapter.portForward != nil && adapter.portForwardMonitor != nil {
+		adapter.portForwardMonitor.stop(adapter.portForward)
 	}
 	return shutdownErr
 }

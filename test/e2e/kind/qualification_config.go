@@ -131,6 +131,12 @@ func qualificationContainerTool() string {
 	return "docker"
 }
 
+// QualificationImageLoadUsesArchive reports whether the selected container
+// tool needs an archive handoff before an image can be loaded into Kind.
+func QualificationImageLoadUsesArchive(containerTool string) bool {
+	return strings.EqualFold(strings.TrimSpace(containerTool), "podman")
+}
+
 func validateQualificationEnvironment() error {
 	keycloakImage := qualificationKeycloakImage()
 	operatorImage := qualificationOperatorImage()

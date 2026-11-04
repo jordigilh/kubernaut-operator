@@ -55,4 +55,10 @@ var _ = Describe("Issue 609 qualification configuration", func() {
 		Expect(images).To(HaveKey("keycloak"))
 		Expect(kind.ValidateQualificationImageReferences(images)).To(Succeed())
 	})
+
+	It("uses archive transfer only for Podman qualification image loading", func() {
+		Expect(kind.QualificationImageLoadUsesArchive("podman")).To(BeTrue())
+		Expect(kind.QualificationImageLoadUsesArchive(" PODMAN ")).To(BeTrue())
+		Expect(kind.QualificationImageLoadUsesArchive("docker")).To(BeFalse())
+	})
 })

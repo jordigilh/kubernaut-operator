@@ -191,14 +191,15 @@ func contractImage() string {
 	return defaultContractImage
 }
 
+// loadOperatorImage loads the configured operator image into the active Kind
+// cluster, using the qualification transfer path when the lane is enabled.
 func loadOperatorImage(ctx context.Context) error {
+	image := operatorImage()
 	if qualificationLane {
-		if _, err := runCmd(ctx, qualificationContainerTool(), "pull", operatorImage()); err != nil {
-			return fmt.Errorf("pulling qualification operator image %q: %w", operatorImage(), err)
-		}
+		return loadQualificationImage(ctx, qualificationContainerTool(), image, "operator")
 	}
-	if _, err := runCmd(ctx, "kind", "load", "docker-image", operatorImage(), "--name", kindClusterName()); err != nil {
-		return fmt.Errorf("loading operator image %q into Kind: %w", operatorImage(), err)
+	if _, err := runCmd(ctx, "kind", "load", "docker-image", image, "--name", kindClusterName()); err != nil {
+		return fmt.Errorf("loading operator image %q into Kind: %w", image, err)
 	}
 	return nil
 }
@@ -225,13 +226,50 @@ func loadQualificationImages(ctx context.Context) error {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		image := images[name]
-		if _, err := runCmd(ctx, qualificationContainerTool(), "pull", image); err != nil {
-			return fmt.Errorf("pulling qualification image %q for %s: %w", image, name, err)
+		if err := loadQualificationImage(ctx, qualificationContainerTool(), images[name], name); err != nil {
+			return err
 		}
-		if _, err := runCmd(ctx, "kind", "load", "docker-image", image, "--name", kindClusterName()); err != nil {
-			return fmt.Errorf("loading qualification image %q for %s into Kind: %w", image, name, err)
+	}
+	return nil
+}
+
+// loadQualificationImage imports one immutable qualification image without
+// contacting its registry when the selected container store already has it.
+// Podman uses a temporary Docker archive because Kind's Docker-image loader
+// cannot read Podman's image store directly.
+func loadQualificationImage(ctx context.Context, containerTool, image, component string) error {
+	if _, err := runCmd(ctx, containerTool, "image", "inspect", image); err != nil {
+		if _, err := runCmd(ctx, containerTool, "pull", image); err != nil {
+			return fmt.Errorf("pulling qualification image %q for %s: %w", image, component, err)
 		}
+	}
+
+	if QualificationImageLoadUsesArchive(containerTool) {
+		archiveDir, err := os.MkdirTemp("", "kubernaut-qualification-image-")
+		if err != nil {
+			return fmt.Errorf("creating temporary archive directory for qualification image %q: %w", image, err)
+		}
+		defer func() {
+			if removeErr := os.RemoveAll(archiveDir); removeErr != nil {
+				_, _ = fmt.Fprintf(GinkgoWriter,
+					"warning: removing qualification image archive directory %q failed: %v\n",
+					archiveDir, removeErr) //nolint:errcheck
+			}
+		}()
+		archivePath := filepath.Join(archiveDir, "image.tar")
+		if _, err := runCmd(ctx, containerTool, "save", "--format", "docker-archive",
+			"--output", archivePath, image); err != nil {
+			return fmt.Errorf("saving qualification image %q for %s: %w", image, component, err)
+		}
+		if _, err := runCmd(ctx, "kind", "load", "image-archive", archivePath, "--name", kindClusterName()); err != nil {
+			return fmt.Errorf("loading qualification image archive for %q and %s into Kind: %w",
+				image, component, err)
+		}
+		return nil
+	}
+
+	if _, err := runCmd(ctx, "kind", "load", "docker-image", image, "--name", kindClusterName()); err != nil {
+		return fmt.Errorf("loading qualification image %q for %s into Kind: %w", image, component, err)
 	}
 	return nil
 }
@@ -291,6 +329,8 @@ func repositoryRoot() string {
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
 }
 
+// createKindCluster creates the disposable Kind cluster and, for qualification
+// runs, exposes the Keycloak NodePort on loopback only.
 func createKindCluster(ctx context.Context) error {
 	configFile, err := os.CreateTemp("", "kubernaut-kind-*.yaml")
 	if err != nil {
@@ -304,6 +344,7 @@ func createKindCluster(ctx context.Context) error {
     extraPortMappings:
       - containerPort: %d
         hostPort: %d
+        listenAddress: "127.0.0.1"
         protocol: TCP`, qualificationKeycloakNodePort, qualificationKeycloakHostPort)
 	}
 	config := fmt.Sprintf(`kind: Cluster
