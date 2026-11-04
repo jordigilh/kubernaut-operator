@@ -90,12 +90,11 @@ func startQualificationIngress(ctx context.Context) (*qualificationIngress, erro
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	proxy.ErrorLog = nil
-	proxy.Director = func(request *http.Request) {
-		request.URL.Scheme = target.Scheme
-		request.URL.Host = target.Host
-		request.Host = qualificationConsoleHost
-		request.Header.Set("X-Forwarded-Proto", "https")
-		request.Header.Set("X-Forwarded-Host", qualificationConsoleHost)
+	proxy.Rewrite = func(request *httputil.ProxyRequest) {
+		request.SetURL(target)
+		request.Out.Host = qualificationConsoleHost
+		request.Out.Header.Set("X-Forwarded-Proto", "https")
+		request.Out.Header.Set("X-Forwarded-Host", qualificationConsoleHost)
 	}
 	listener, err := (&net.ListenConfig{}).Listen(
 		ctx, "tcp", fmt.Sprintf("127.0.0.1:%d", qualificationConsoleHostPort),

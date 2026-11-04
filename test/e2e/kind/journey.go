@@ -417,7 +417,7 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 		}
 		console = kubernautv1alpha2.ConsoleSpec{
 			Enabled: ptr.To(true),
-			Auth: kubernautv1alpha2.ConsoleAuthSpec{
+			Auth: kubernautv1alpha2.ConsoleAuthSpec{ //nolint:gosec // disposable qualification fixture Secret reference
 				SecretName:        "console-oidc-creds",
 				RedirectURL:       "https://" + qualificationConsoleHost + ":8843/oauth2/callback",
 				ProviderLogoutURL: qualificationKeycloakIssuer + "/protocol/openid-connect/logout?id_token_hint={id_token}",

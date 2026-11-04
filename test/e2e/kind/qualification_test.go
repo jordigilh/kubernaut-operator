@@ -593,14 +593,16 @@ func writeQualificationEvidence(evidence qualificationEvidence) error {
 	if path == "" {
 		path = filepath.Join(os.TempDir(), "kubernaut-issue-609-qualification.json")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	evidenceDir := filepath.Dir(path)
+	if err := os.MkdirAll(evidenceDir, 0o700); err != nil { //nolint:gosec // explicit test evidence output path
 		return fmt.Errorf("creating qualification evidence directory: %w", err)
 	}
 	data, err := json.MarshalIndent(evidence, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshalling qualification evidence: %w", err)
 	}
-	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+	data = append(data, '\n')
+	if err := os.WriteFile(path, data, 0o600); err != nil { //nolint:gosec // explicit test evidence output path
 		return fmt.Errorf("writing qualification evidence: %w", err)
 	}
 	return nil
