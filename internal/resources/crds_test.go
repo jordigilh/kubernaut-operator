@@ -127,6 +127,60 @@ var _ = Describe("EnsureCRDs embedded assets", func() {
 		Expect(schemaEnumValues(schemaProperty(embeddedCRDSchemaPointer("kubernaut.ai_workflowexecutions.yaml"), "status", "phase"))).
 			To(ContainElements("Cancelling", "Cancelled"))
 	})
+
+	It("contains the #2601 trusted-dispatch and approval asset contract", func() {
+		// Keep this contract tied to the immutable upstream dependency in go.mod.
+		// A local CRD patch would make this test pass while leaving the
+		// dependency's other schemas stale.
+		workflowCRD := embeddedCRD("kubernaut.ai_remediationworkflows.yaml")
+		Expect(workflowCRD.Spec.Versions).To(HaveLen(1))
+		Expect(workflowCRD.Spec.Versions[0].SelectableFields).To(ConsistOf(
+			apiextensionsv1.SelectableField{JSONPath: ".status.workflowId"},
+		))
+
+		aiAnalysis := embeddedCRDSchema("kubernaut.ai_aianalyses.yaml")
+		selectedWorkflow := schemaProperty(&aiAnalysis, "status", "rcaResult", "selectedWorkflow")
+		Expect(selectedWorkflow.Properties).To(HaveKey("parameterSchema"))
+		Expect(schemaProperty(&selectedWorkflow, "parameters").Description).
+			To(ContainSubstring("explicitly empty map is preserved"))
+		validationRules := make([]string, 0, len(selectedWorkflow.XValidations))
+		for _, validation := range selectedWorkflow.XValidations {
+			validationRules = append(validationRules, validation.Rule)
+		}
+		Expect(validationRules).To(ContainElement(ContainSubstring("parameterSchema")))
+
+		approvalRequest := embeddedCRDSchema("kubernaut.ai_remediationapprovalrequests.yaml")
+		approvalSpec := schemaProperty(&approvalRequest, "spec")
+		Expect(approvalSpec.Properties).To(HaveKey("parameterSchema"))
+		Expect(approvalSpec.Properties).To(HaveKey("parameters"))
+		Expect(approvalSpec.Properties).To(HaveKey("targetContext"))
+		Expect(approvalSpec.Properties).To(HaveKey("workflow"))
+		Expect(schemaProperty(&approvalRequest, "spec", "parameters").Description).
+			To(ContainSubstring("distinct from missing data"))
+		approvalParameterSchema := schemaProperty(&approvalRequest, "spec", "parameterSchema")
+		Expect(approvalParameterSchema.Items).NotTo(BeNil())
+		if approvalParameterSchema.Items != nil {
+			Expect(approvalParameterSchema.Items.Schema).NotTo(BeNil())
+			if approvalParameterSchema.Items.Schema != nil {
+				Expect(approvalParameterSchema.Items.Schema.Properties).To(HaveKey("name"))
+			}
+		}
+		Expect(schemaProperty(&approvalRequest, "spec", "targetContext").Properties).
+			To(HaveKey("signalTarget"))
+		workflowSnapshot := schemaProperty(&approvalRequest, "spec", "workflow")
+		Expect(workflowSnapshot.Properties).To(HaveKey("actionType"))
+		Expect(workflowSnapshot.Properties).To(HaveKey("workflowId"))
+		Expect(workflowSnapshot.Properties).To(HaveKey("workflowName"))
+		Expect(workflowSnapshot.Properties).To(HaveKey("executionBundle"))
+		Expect(schemaProperty(&approvalRequest, "status", "workflowOverride", "parameters").Description).
+			To(ContainSubstring("partial changes"))
+		Expect(schemaProperty(&approvalRequest, "status", "workflowOverride", "workflowName").Description).
+			To(ContainSubstring("legacy field"))
+
+		workflowExecution := embeddedCRDSchema("kubernaut.ai_workflowexecutions.yaml")
+		Expect(schemaProperty(&workflowExecution, "spec", "workflowRef", "declaredParameterNames").Description).
+			To(ContainSubstring("missing schema, fail closed"))
+	})
 })
 
 // embeddedCRDSchema loads the OpenAPI schema from an embedded CRD asset.
@@ -136,14 +190,20 @@ func embeddedCRDSchema(filename string) apiextensionsv1.JSONSchemaProps {
 
 // embeddedCRDSchemaPointer loads the OpenAPI schema while preserving its nested property tree.
 func embeddedCRDSchemaPointer(filename string) *apiextensionsv1.JSONSchemaProps {
+	crd := embeddedCRD(filename)
+	Expect(crd.Spec.Versions).NotTo(BeEmpty(), "%s has no versions", filename)
+	Expect(crd.Spec.Versions[0].Schema).NotTo(BeNil(), "%s has no OpenAPI schema", filename)
+	return crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+}
+
+// embeddedCRD loads one operand CRD from the upstream shared asset filesystem.
+func embeddedCRD(filename string) *apiextensionsv1.CustomResourceDefinition {
 	data, err := fs.ReadFile(assets.CRDsFS, "crds/"+filename)
 	Expect(err).NotTo(HaveOccurred(), "reading %s", filename)
 
 	crd := &apiextensionsv1.CustomResourceDefinition{}
 	Expect(sigsyaml.Unmarshal(data, crd)).NotTo(HaveOccurred(), "unmarshalling %s", filename)
-	Expect(crd.Spec.Versions).NotTo(BeEmpty(), "%s has no versions", filename)
-	Expect(crd.Spec.Versions[0].Schema).NotTo(BeNil(), "%s has no OpenAPI schema", filename)
-	return crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+	return crd
 }
 
 // schemaProperty returns the nested schema property at path.
