@@ -794,6 +794,29 @@ var _ = Describe("ConfigMaps", func() {
 	})
 
 	Describe("AIAnalysis ConfigMap", func() {
+		It("renders the effective policy ConfigMap reference in the runtime Rego config", func() {
+			kn := testKubernaut()
+			cm, err := AIAnalysisConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			var rendered aiAnalysisConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &rendered)).To(Succeed())
+			Expect(rendered.Rego.PolicyConfigMapName).To(Equal("aianalysis-policy"))
+			Expect(rendered.Rego.PolicyConfigMapKey).To(Equal("approval.rego"))
+		})
+
+		It("renders a custom policy ConfigMap reference in the runtime Rego config", func() {
+			kn := testKubernaut()
+			kn.Spec.AIAnalysis.Policy.ConfigMapName = testCustomAIAnalysisPolicy
+			cm, err := AIAnalysisConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			var rendered aiAnalysisConfigYAML
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &rendered)).To(Succeed())
+			Expect(rendered.Rego.PolicyConfigMapName).To(Equal(testCustomAIAnalysisPolicy))
+			Expect(rendered.Rego.PolicyConfigMapKey).To(Equal("approval.rego"))
+		})
+
 		It("includes confidence threshold when set", func() {
 			kn := testKubernaut()
 			kn.Spec.AIAnalysis.ConfidenceThreshold = "0.85"
@@ -3421,30 +3444,17 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(data).To(ContainSubstring("issuerURL"))
 	})
 
-	It("renders the effective policy ConfigMap references for policy reads", func() {
+	It("does not render policy references in the API Frontend config", func() {
 		kn := testKubernautWithAF()
+		kn.Spec.AIAnalysis.Policy.ConfigMapName = testCustomAIAnalysisPolicy
+		kn.Spec.SignalProcessing.Policy.ConfigMapName = testCustomSignalPolicy
 		cm, err := APIFrontendConfigMap(kn, testKnV2(kn))
 		Expect(err).NotTo(HaveOccurred())
 
 		data := cm.Data["config.yaml"]
-		Expect(data).To(ContainSubstring("policyRead:"))
-		Expect(data).To(ContainSubstring("configMapName: aianalysis-policy"))
-		Expect(data).To(ContainSubstring("configMapName: signalprocessing-policy"))
-	})
-
-	It("renders custom policy ConfigMap references for policy reads", func() {
-		kn := testKubernautWithAF()
-		kn.Spec.AIAnalysis.Policy.ConfigMapName = "custom-ai-policy"
-		kn.Spec.SignalProcessing.Policy.ConfigMapName = "custom-signal-policy"
-
-		cm, err := APIFrontendConfigMap(kn, testKnV2(kn))
-		Expect(err).NotTo(HaveOccurred())
-
-		data := cm.Data["config.yaml"]
-		Expect(data).To(ContainSubstring("configMapName: custom-ai-policy"))
-		Expect(data).To(ContainSubstring("configMapName: custom-signal-policy"))
-		Expect(data).NotTo(ContainSubstring("configMapName: aianalysis-policy"))
-		Expect(data).NotTo(ContainSubstring("configMapName: signalprocessing-policy"))
+		Expect(data).NotTo(ContainSubstring("policyRead:"))
+		Expect(data).NotTo(ContainSubstring(testCustomAIAnalysisPolicy))
+		Expect(data).NotTo(ContainSubstring(testCustomSignalPolicy))
 	})
 
 	It("does not invent an issuer when auth issuerURL is omitted", func() {
