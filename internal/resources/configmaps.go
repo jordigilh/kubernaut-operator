@@ -2396,7 +2396,8 @@ type afPolicyReadYAML struct {
 }
 
 type afPolicyConfigMapYAML struct {
-	ConfigMapName string `json:"configMapName" yaml:"configMapName"`
+	ConfigMapName       string `json:"configMapName" yaml:"configMapName"`
+	ConfidenceThreshold string `json:"confidenceThreshold,omitempty" yaml:"confidenceThreshold,omitempty"`
 }
 
 type afSessionYAML struct {
@@ -2698,7 +2699,7 @@ func APIFrontendConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 		Auth: afAuthConfig(kn),
 		RBAC: afRBACConfig(kn, knV2),
 		PolicyRead: afPolicyReadYAML{
-			AIAnalysis:       afPolicyConfigMapYAML{ConfigMapName: AIAnalysisPolicyName(kn)},
+			AIAnalysis:       afPolicyConfigMapYAML{ConfigMapName: AIAnalysisPolicyName(kn), ConfidenceThreshold: kn.Spec.AIAnalysis.ConfidenceThreshold},
 			SignalProcessing: afPolicyConfigMapYAML{ConfigMapName: SignalProcessingPolicyName(kn)},
 		},
 		Logging: afLoggingYAML{

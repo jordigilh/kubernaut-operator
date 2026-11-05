@@ -849,6 +849,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("omits threshold when empty", func() {
 			kn := testKubernaut()
+			kn.Spec.AIAnalysis.ConfidenceThreshold = ""
 			cm, err := AIAnalysisConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
@@ -3429,6 +3430,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		data := cm.Data["config.yaml"]
 		Expect(data).To(ContainSubstring("policyRead:"))
 		Expect(data).To(ContainSubstring("configMapName: aianalysis-policy"))
+		Expect(data).To(ContainSubstring("confidenceThreshold: \"0.85\""))
 		Expect(data).To(ContainSubstring("configMapName: signalprocessing-policy"))
 	})
 

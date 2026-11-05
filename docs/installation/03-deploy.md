@@ -156,6 +156,7 @@ spec:
   aiAnalysis:
     policy:
       configMapName: aianalysis-policy
+    confidenceThreshold: "0.85"
 
   signalProcessing:
     policy:

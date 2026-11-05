@@ -105,7 +105,8 @@ func newMinimalCR() *kubernautv1alpha2.Kubernaut {
 				WorkflowDiscovery: kubernautv1alpha2.WorkflowDiscoverySpec{LLMProfileRef: "primary"},
 			},
 			AIAnalysis: kubernautv1alpha2.AIAnalysisSpec{
-				Policy: kubernautv1alpha2.PolicyConfigMapRef{ConfigMapName: "aianalysis-policy"},
+				Policy:              kubernautv1alpha2.PolicyConfigMapRef{ConfigMapName: "aianalysis-policy"},
+				ConfidenceThreshold: "0.85",
 			},
 			SignalProcessing: kubernautv1alpha2.SignalProcessingSpec{
 				Policy: kubernautv1alpha2.PolicyConfigMapRef{ConfigMapName: "signalprocessing-policy"},

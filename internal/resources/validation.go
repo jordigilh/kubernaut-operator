@@ -422,7 +422,16 @@ func validatePostgreSQLSSLMode(kn *kubernautv1alpha2.Kubernaut) []error {
 	return nil
 }
 
-func validatePolicyPrerequisites(_ *kubernautv1alpha2.Kubernaut) []error {
+func validatePolicyPrerequisites(kn *kubernautv1alpha2.Kubernaut) []error {
+	threshold := strings.TrimSpace(kn.Spec.AIAnalysis.ConfidenceThreshold)
+	if threshold == "" {
+		return []error{fmt.Errorf("spec.aiAnalysis.confidenceThreshold: required")}
+	}
+
+	value, err := strconv.ParseFloat(threshold, 64)
+	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 || value > 1 {
+		return []error{fmt.Errorf("spec.aiAnalysis.confidenceThreshold: must be finite and in range (0.0, 1.0], got %q", kn.Spec.AIAnalysis.ConfidenceThreshold)}
+	}
 	return nil
 }
 

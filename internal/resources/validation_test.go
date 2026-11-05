@@ -749,6 +749,33 @@ var _ = Describe("Interactive Mode Validation", func() {
 })
 
 var _ = Describe("Policy Prerequisite Validation", func() {
+	DescribeTable("UT-AF-2584-OP-001 [BR-AI-088, SI-10]: accepts finite operator confidence thresholds in (0,1]",
+		func(threshold string) {
+			kn := testKubernaut()
+			kn.Spec.AIAnalysis.ConfidenceThreshold = threshold
+
+			Expect(ValidateKubernaut(kn)).To(BeEmpty())
+		},
+		Entry("normal", "0.85"),
+		Entry("upper bound", "1"),
+	)
+
+	DescribeTable("UT-AF-2584-OP-002 [BR-AI-088, SI-10]: rejects a missing or invalid operator confidence threshold",
+		func(threshold string) {
+			kn := testKubernaut()
+			kn.Spec.AIAnalysis.ConfidenceThreshold = threshold
+
+			Expect(strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")).To(ContainSubstring("spec.aiAnalysis.confidenceThreshold"))
+		},
+		Entry("missing", ""),
+		Entry("malformed", "not-a-number"),
+		Entry("negative", "-0.1"),
+		Entry("zero", "0"),
+		Entry("above one", "1.01"),
+		Entry("not finite", "NaN"),
+		Entry("positive infinity", "+Inf"),
+	)
+
 	It("accepts empty policy configMapNames (defaults used)", func() {
 		kn := testKubernaut()
 		kn.Spec.AIAnalysis.Policy.ConfigMapName = ""
