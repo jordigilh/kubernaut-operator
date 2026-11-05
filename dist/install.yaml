@@ -104,7 +104,8 @@ spec:
                   confidenceThreshold:
                     description: |-
                       Optional confidence threshold override for the Rego policy.
-                      Expressed as a decimal string, e.g. "0.85".
+                      Expressed as a decimal string, e.g. "0.85". When omitted, the operator
+                      renders the runtime default of 0.8.
                     type: string
                   logging:
                     description: LoggingSpec configures the log level for a service.

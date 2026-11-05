@@ -662,7 +662,8 @@ type AIAnalysisSpec struct {
 	Policy PolicyConfigMapRef `json:"policy"`
 
 	// Optional confidence threshold override for the Rego policy.
-	// Expressed as a decimal string, e.g. "0.85".
+	// Expressed as a decimal string, e.g. "0.85". When omitted, the operator
+	// renders the runtime default of 0.8.
 	// +optional
 	ConfidenceThreshold string `json:"confidenceThreshold,omitempty"`
 

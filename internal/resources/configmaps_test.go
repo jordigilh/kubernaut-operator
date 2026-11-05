@@ -817,14 +817,36 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(rendered.Rego.PolicyConfigMapKey).To(Equal("approval.rego"))
 		})
 
-		It("includes confidence threshold when set", func() {
+		It("renders confidence threshold as a numeric Rego value", func() {
 			kn := testKubernaut()
 			kn.Spec.AIAnalysis.ConfidenceThreshold = "0.85"
 			cm, err := AIAnalysisConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
-			data := cm.Data["config.yaml"]
-			Expect(strings.Contains(data, "confidenceThreshold") && strings.Contains(data, "0.85")).To(BeTrue(), "aianalysis config should contain confidence threshold, got:\n%s", data)
+			var rendered struct {
+				Rego struct {
+					ConfidenceThreshold *float64 `yaml:"confidenceThreshold"`
+				} `yaml:"rego"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &rendered)).To(Succeed())
+			Expect(rendered.Rego.ConfidenceThreshold).NotTo(BeNil())
+			Expect(*rendered.Rego.ConfidenceThreshold).To(Equal(float64(0.85)))
+		})
+
+		It("renders the upper confidence threshold boundary as a numeric Rego value", func() {
+			kn := testKubernaut()
+			kn.Spec.AIAnalysis.ConfidenceThreshold = "1.0"
+			cm, err := AIAnalysisConfigMap(kn, testKnV2(kn))
+			Expect(err).NotTo(HaveOccurred())
+
+			var rendered struct {
+				Rego struct {
+					ConfidenceThreshold *float64 `yaml:"confidenceThreshold"`
+				} `yaml:"rego"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &rendered)).To(Succeed())
+			Expect(rendered.Rego.ConfidenceThreshold).NotTo(BeNil())
+			Expect(*rendered.Rego.ConfidenceThreshold).To(Equal(float64(1.0)))
 		})
 
 		It("renders low confidence floor as a numeric Rego value", func() {
@@ -861,6 +883,21 @@ var _ = Describe("ConfigMaps", func() {
 			Entry("above one", "1.01"),
 		)
 
+		DescribeTable("rejects invalid confidence threshold values", func(value string) {
+			kn := testKubernaut()
+			kn.Spec.AIAnalysis.ConfidenceThreshold = value
+
+			_, err := AIAnalysisConfigMap(kn, testKnV2(kn))
+			Expect(err).To(MatchError(ContainSubstring("confidenceThreshold")))
+		},
+			Entry("malformed", "not-a-number"),
+			Entry("negative", "-0.01"),
+			Entry("zero", "0"),
+			Entry("NaN", "NaN"),
+			Entry("positive infinity", "+Inf"),
+			Entry("above one", "1.01"),
+		)
+
 		It("uses agent key and not legacy kubernautAgent key", func() {
 			kn := testKubernaut()
 			cm, err := AIAnalysisConfigMap(kn, testKnV2(kn))
@@ -870,13 +907,19 @@ var _ = Describe("ConfigMaps", func() {
 			Expect(data).NotTo(ContainSubstring("kubernautAgent:"), "aianalysis config should not contain old 'kubernautAgent:' key, got:\n%s", data)
 		})
 
-		It("omits threshold when empty", func() {
+		It("renders the default confidence threshold when empty", func() {
 			kn := testKubernaut()
 			cm, err := AIAnalysisConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
-			data := cm.Data["config.yaml"]
-			Expect(data).NotTo(ContainSubstring("confidenceThreshold"), "aianalysis config should not contain threshold when empty, got:\n%s", data)
+			var rendered struct {
+				Rego struct {
+					ConfidenceThreshold *float64 `yaml:"confidenceThreshold"`
+				} `yaml:"rego"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &rendered)).To(Succeed())
+			Expect(rendered.Rego.ConfidenceThreshold).NotTo(BeNil())
+			Expect(*rendered.Rego.ConfidenceThreshold).To(Equal(float64(0.8)))
 		})
 	})
 
