@@ -74,6 +74,7 @@ var _ = Describe("MutatingWebhookConfiguration", func() {
 			"remediationapprovalrequests/status",
 			"remediationrequests/status",
 		}
+		wantAPIVersions := []string{"v1alpha1", "v1alpha1", "v1alpha1"}
 
 		for i, wh := range mwc.Webhooks {
 			Expect(wh.Rules).To(HaveLen(1), "webhook[%d] should have 1 rule, got %d", i, len(wh.Rules))
@@ -84,6 +85,7 @@ var _ = Describe("MutatingWebhookConfiguration", func() {
 
 			Expect(rule.APIGroups).NotTo(BeEmpty())
 			Expect(rule.APIGroups[0]).To(Equal("kubernaut.ai"), "webhook[%d] apiGroups = %v, want [kubernaut.ai]", i, rule.APIGroups)
+			Expect(rule.APIVersions).To(Equal([]string{wantAPIVersions[i]}), "webhook[%d] apiVersions = %v, want [%s]", i, rule.APIVersions, wantAPIVersions[i])
 			Expect(rule.Resources).NotTo(BeEmpty())
 			Expect(rule.Resources[0]).To(Equal(wantResources[i]), "webhook[%d] resources = %v, want [%s]", i, rule.Resources, wantResources[i])
 		}
@@ -227,9 +229,10 @@ var _ = Describe("WebhookConfigurations", func() {
 
 		Expect(mwc.Annotations).NotTo(HaveKey(OCPServiceCAInjectAnnotation))
 		Expect(vwc.Annotations).NotTo(HaveKey(OCPServiceCAInjectAnnotation))
-		for _, webhook := range mwc.Webhooks {
+		wantMutatingAPIVersions := []string{"v1alpha1", "v1alpha1", "v1alpha1"}
+		for i, webhook := range mwc.Webhooks {
 			Expect(webhook.ClientConfig.CABundle).To(Equal(ca))
-			Expect(webhook.Rules[0].APIVersions).To(Equal([]string{"v1alpha2"}))
+			Expect(webhook.Rules[0].APIVersions).To(Equal([]string{wantMutatingAPIVersions[i]}))
 		}
 		wantValidatingAPIVersions := []string{"v1alpha2", "v1alpha1", "v1alpha1", "v1alpha2"}
 		for i, webhook := range vwc.Webhooks {
