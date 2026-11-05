@@ -527,8 +527,12 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 					Expect(deleteErr == nil || errors.IsNotFound(deleteErr)).To(BeTrue())
 				})
 			}
+			mutating := resources.MutatingWebhookConfigurationWithCABundle(cr, runtimeSecrets[0].Data["ca.crt"])
+			for index := range mutating.Webhooks {
+				mutating.Webhooks[index].Rules[0].APIVersions = []string{"v1alpha2"}
+			}
 			for _, webhook := range []client.Object{
-				resources.MutatingWebhookConfigurationWithCABundle(cr, runtimeSecrets[0].Data["ca.crt"]),
+				mutating,
 				resources.ValidatingWebhookConfigurationWithCABundle(cr, runtimeSecrets[0].Data["ca.crt"]),
 			} {
 				Expect(k8sClient.Create(ctx, webhook)).To(Succeed())
@@ -548,8 +552,12 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			mwc := &admissionregistrationv1.MutatingWebhookConfiguration{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: testNamespace + "-authwebhook-mutating", Namespace: ""}, mwc)).To(Succeed())
 			Expect(mwc.Annotations).NotTo(HaveKey(resources.OCPServiceCAInjectAnnotation))
-			Expect(mwc.Webhooks[0].ClientConfig.CABundle).To(Equal(ca.Data["ca.crt"]))
-			Expect(mwc.Webhooks[0].Rules[0].APIVersions).To(Equal([]string{"v1alpha2"}))
+			Expect(mwc.Webhooks).To(HaveLen(3))
+			for index, webhook := range mwc.Webhooks {
+				Expect(webhook.ClientConfig.CABundle).To(Equal(ca.Data["ca.crt"]), "webhook[%d] CA bundle", index)
+				Expect(webhook.Rules).To(HaveLen(1), "webhook[%d] rules", index)
+				Expect(webhook.Rules[0].APIVersions).To(Equal([]string{"v1alpha1"}), "webhook[%d] API version", index)
+			}
 
 			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())

@@ -27,6 +27,8 @@ import (
 // Mirrors the Helm chart's authwebhook/webhooks.yaml with three mutating
 // webhooks for workflowexecution, remediationapprovalrequest, and
 // remediationrequest status mutations (audit attribution).
+// These operand CRDs are served as v1alpha1; v1alpha2 is the API version of
+// the operator's Kubernaut CR, not these shared application resources.
 // OCP service-CA injects the caBundle via the inject-cabundle annotation.
 func MutatingWebhookConfiguration(kn *kubernautv1alpha2.Kubernaut) *admissionregistrationv1.MutatingWebhookConfiguration {
 	namespacedScope := admissionregistrationv1.NamespacedScope
@@ -50,7 +52,7 @@ func MutatingWebhookConfiguration(kn *kubernautv1alpha2.Kubernaut) *admissionreg
 					Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Update},
 					Rule: admissionregistrationv1.Rule{
 						APIGroups:   []string{"kubernaut.ai"},
-						APIVersions: []string{"v1alpha2"},
+						APIVersions: []string{"v1alpha1"},
 						Resources:   []string{"workflowexecutions/status"},
 						Scope:       &namespacedScope,
 					},
@@ -68,7 +70,7 @@ func MutatingWebhookConfiguration(kn *kubernautv1alpha2.Kubernaut) *admissionreg
 					Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Update},
 					Rule: admissionregistrationv1.Rule{
 						APIGroups:   []string{"kubernaut.ai"},
-						APIVersions: []string{"v1alpha2"},
+						APIVersions: []string{"v1alpha1"},
 						Resources:   []string{"remediationapprovalrequests/status"},
 						Scope:       &namespacedScope,
 					},
@@ -86,7 +88,7 @@ func MutatingWebhookConfiguration(kn *kubernautv1alpha2.Kubernaut) *admissionreg
 					Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Update},
 					Rule: admissionregistrationv1.Rule{
 						APIGroups:   []string{"kubernaut.ai"},
-						APIVersions: []string{"v1alpha2"},
+						APIVersions: []string{"v1alpha1"},
 						Resources:   []string{"remediationrequests/status"},
 						Scope:       &namespacedScope,
 					},
