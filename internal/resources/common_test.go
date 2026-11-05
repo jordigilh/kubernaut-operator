@@ -34,11 +34,13 @@ import (
 )
 
 const (
-	invalidRotationBefore   = "not-a-duration"
-	testSystemNamespace     = "kubernaut-system"
-	testIngressDomain       = "apps.test.example.com"
-	testWorkflowLiteProfile = "workflow-lite"
-	testMissingProfile      = "does-not-exist"
+	invalidRotationBefore      = "not-a-duration"
+	testSystemNamespace        = "kubernaut-system"
+	testIngressDomain          = "apps.test.example.com"
+	testWorkflowLiteProfile    = "workflow-lite"
+	testMissingProfile         = "does-not-exist"
+	testCustomAIAnalysisPolicy = "custom-ai-policy"
+	testCustomSignalPolicy     = "custom-signal-policy"
 
 	// testCustomPrometheusURL is an in-cluster *.svc override used across
 	// spec.monitoring (#298) RED/GREEN tests to verify the URL is actually
@@ -563,11 +565,11 @@ var _ = Describe("InterServiceTLSCAFile", func() {
 		Expect(SignalProcessingPolicyName(kn)).To(Equal("signalprocessing-policy"))
 		Expect(KubernautAgentLLMRuntimeConfigName(kn)).To(Equal("kubernaut-agent-llm-runtime"))
 
-		kn.Spec.AIAnalysis.Policy.ConfigMapName = "custom-ai-policy"
-		kn.Spec.SignalProcessing.Policy.ConfigMapName = "custom-signal-policy"
+		kn.Spec.AIAnalysis.Policy.ConfigMapName = testCustomAIAnalysisPolicy
+		kn.Spec.SignalProcessing.Policy.ConfigMapName = testCustomSignalPolicy
 		kn.Spec.KubernautAgent.RuntimeConfigMapName = "custom-runtime"
-		Expect(AIAnalysisPolicyName(kn)).To(Equal("custom-ai-policy"))
-		Expect(SignalProcessingPolicyName(kn)).To(Equal("custom-signal-policy"))
+		Expect(AIAnalysisPolicyName(kn)).To(Equal(testCustomAIAnalysisPolicy))
+		Expect(SignalProcessingPolicyName(kn)).To(Equal(testCustomSignalPolicy))
 		Expect(KubernautAgentLLMRuntimeConfigName(kn)).To(Equal("custom-runtime"))
 		_, found := ResolveLLMProfile(kn, "")
 		Expect(found).To(BeFalse())
