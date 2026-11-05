@@ -102,10 +102,15 @@ spec:
                   (Helm's chart fails `helm install` under the equivalent condition).
                 properties:
                   confidenceThreshold:
+                    default: 0.8
                     description: |-
                       Optional confidence threshold override for the Rego policy.
-                      Expressed as a decimal string, e.g. "0.85".
-                    type: string
+                      Numeric value in the range (0, 1]. When omitted, the operator renders the
+                      runtime default of 0.8.
+                    exclusiveMinimum: true
+                    maximum: 1
+                    minimum: 0
+                    type: number
                   logging:
                     description: LoggingSpec configures the log level for a service.
                     properties:

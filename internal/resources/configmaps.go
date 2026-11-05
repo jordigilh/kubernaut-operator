@@ -18,6 +18,7 @@ package resources
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -32,7 +33,10 @@ import (
 
 var configmapsLog = logf.Log.WithName("configmaps")
 
-const defaultTenMinuteDuration = "10m"
+const (
+	defaultTenMinuteDuration             = "10m"
+	defaultAIAnalysisConfidenceThreshold = 0.8
+)
 
 // controllerConfig holds controller-runtime style settings shared by the
 // AIAnalysis, SignalProcessing, and Notification controllers.
@@ -571,7 +575,7 @@ type aiAnalysisRegoYAML struct {
 	PolicyPath          string   `json:"policyPath" yaml:"policyPath"`
 	PolicyConfigMapName string   `json:"policyConfigMapName" yaml:"policyConfigMapName"`
 	PolicyConfigMapKey  string   `json:"policyConfigMapKey" yaml:"policyConfigMapKey"`
-	ConfidenceThreshold string   `json:"confidenceThreshold,omitempty" yaml:"confidenceThreshold,omitempty"`
+	ConfidenceThreshold *float64 `json:"confidenceThreshold,omitempty" yaml:"confidenceThreshold,omitempty"`
 	LowConfidenceFloor  *float64 `json:"lowConfidenceFloor,omitempty" yaml:"lowConfidenceFloor,omitempty"`
 }
 
@@ -1532,6 +1536,10 @@ func dataStorageRedisConfig(kn, knV2 *kubernautv1alpha2.Kubernaut) dataStorageRe
 func AIAnalysisConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, opts ...ConfigMapOption) (*corev1.ConfigMap, error) {
 	o := resolveOpts(opts)
 	ns := kn.Namespace
+	confidenceThreshold, hasConfidenceThreshold, err := parseConfidenceThreshold(kn.Spec.AIAnalysis.ConfidenceThreshold)
+	if err != nil {
+		return nil, err
+	}
 	lowConfidenceFloor, hasLowConfidenceFloor, err := parseLowConfidenceFloor(kn.Spec.AIAnalysis.LowConfidenceFloor)
 	if err != nil {
 		return nil, err
@@ -1541,11 +1549,11 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha
 		PolicyConfigMapName: AIAnalysisPolicyName(kn),
 		PolicyConfigMapKey:  "approval.rego",
 	}
+	if hasConfidenceThreshold {
+		rego.ConfidenceThreshold = &confidenceThreshold
+	}
 	if hasLowConfidenceFloor {
 		rego.LowConfidenceFloor = &lowConfidenceFloor
-	}
-	if kn.Spec.AIAnalysis.ConfidenceThreshold != "" {
-		rego.ConfidenceThreshold = kn.Spec.AIAnalysis.ConfidenceThreshold
 	}
 	cfg := aiAnalysisConfigYAML{
 		TLSCAFile:  InterServiceTLSCAFileFor(knV2),
@@ -1574,16 +1582,35 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha
 	return yamlConfigMap(ObjectMeta(kn, "aianalysis-config", ComponentAIAnalysis), "config.yaml", "aianalysis config", cfg)
 }
 
+func parseConfidenceThreshold(raw *float64) (float64, bool, error) {
+	if raw == nil {
+		return defaultAIAnalysisConfidenceThreshold, true, nil
+	}
+
+	return validateBoundedFraction(*raw, "aiAnalysis.confidenceThreshold", strconv.FormatFloat(*raw, 'g', -1, 64))
+}
+
 func parseLowConfidenceFloor(raw string) (float64, bool, error) {
 	if raw == "" {
 		return 0, false, nil
 	}
 
 	value, err := strconv.ParseFloat(raw, 64)
-	if err != nil || !(value > 0 && value <= 1) {
-		return 0, false, fmt.Errorf("invalid aiAnalysis.lowConfidenceFloor %q: expected a number greater than 0 and at most 1", raw)
+	if err != nil {
+		return 0, false, invalidBoundedFraction("aiAnalysis.lowConfidenceFloor", raw)
+	}
+	return validateBoundedFraction(value, "aiAnalysis.lowConfidenceFloor", raw)
+}
+
+func validateBoundedFraction(value float64, field, raw string) (float64, bool, error) {
+	if math.IsNaN(value) || math.IsInf(value, 0) || !(value > 0 && value <= 1) {
+		return 0, false, invalidBoundedFraction(field, raw)
 	}
 	return value, true, nil
+}
+
+func invalidBoundedFraction(field, raw string) error {
+	return fmt.Errorf("invalid %s %q: expected a number greater than 0 and at most 1", field, raw)
 }
 
 // SignalProcessingConfigMap builds the signalprocessing-config ConfigMap.

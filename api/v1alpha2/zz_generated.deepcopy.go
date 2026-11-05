@@ -30,6 +30,11 @@ import (
 func (in *AIAnalysisSpec) DeepCopyInto(out *AIAnalysisSpec) {
 	*out = *in
 	out.Policy = in.Policy
+	if in.ConfidenceThreshold != nil {
+		in, out := &in.ConfidenceThreshold, &out.ConfidenceThreshold
+		*out = new(float64)
+		**out = **in
+	}
 	out.Logging = in.Logging
 	in.Resources.DeepCopyInto(&out.Resources)
 }
