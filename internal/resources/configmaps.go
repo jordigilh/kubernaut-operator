@@ -18,6 +18,7 @@ package resources
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -1581,12 +1582,12 @@ func AIAnalysisConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha
 	return yamlConfigMap(ObjectMeta(kn, "aianalysis-config", ComponentAIAnalysis), "config.yaml", "aianalysis config", cfg)
 }
 
-func parseConfidenceThreshold(raw string) (float64, bool, error) {
-	if raw == "" {
+func parseConfidenceThreshold(raw *float64) (float64, bool, error) {
+	if raw == nil {
 		return defaultAIAnalysisConfidenceThreshold, true, nil
 	}
 
-	return parseBoundedFraction(raw, "aiAnalysis.confidenceThreshold")
+	return validateBoundedFraction(*raw, "aiAnalysis.confidenceThreshold", strconv.FormatFloat(*raw, 'g', -1, 64))
 }
 
 func parseLowConfidenceFloor(raw string) (float64, bool, error) {
@@ -1594,15 +1595,22 @@ func parseLowConfidenceFloor(raw string) (float64, bool, error) {
 		return 0, false, nil
 	}
 
-	return parseBoundedFraction(raw, "aiAnalysis.lowConfidenceFloor")
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, false, invalidBoundedFraction("aiAnalysis.lowConfidenceFloor", raw)
+	}
+	return validateBoundedFraction(value, "aiAnalysis.lowConfidenceFloor", raw)
 }
 
-func parseBoundedFraction(raw, field string) (float64, bool, error) {
-	value, err := strconv.ParseFloat(raw, 64)
-	if err != nil || !(value > 0 && value <= 1) {
-		return 0, false, fmt.Errorf("invalid %s %q: expected a number greater than 0 and at most 1", field, raw)
+func validateBoundedFraction(value float64, field, raw string) (float64, bool, error) {
+	if math.IsNaN(value) || math.IsInf(value, 0) || !(value > 0 && value <= 1) {
+		return 0, false, invalidBoundedFraction(field, raw)
 	}
 	return value, true, nil
+}
+
+func invalidBoundedFraction(field, raw string) error {
+	return fmt.Errorf("invalid %s %q: expected a number greater than 0 and at most 1", field, raw)
 }
 
 // SignalProcessingConfigMap builds the signalprocessing-config ConfigMap.

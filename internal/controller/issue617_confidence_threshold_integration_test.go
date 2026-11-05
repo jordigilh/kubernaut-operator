@@ -22,9 +22,11 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/yaml"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
@@ -49,7 +51,7 @@ var _ = Describe("Issue #617 AIAnalysis confidence threshold reconciliation", La
 	It("persists a configured confidence threshold as numeric runtime YAML", func() {
 		createBYOSecrets(ctx)
 		kn := newMinimalCR()
-		kn.Spec.AIAnalysis.ConfidenceThreshold = "0.85"
+		kn.Spec.AIAnalysis.ConfidenceThreshold = ptr.To(0.85)
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 
 		reconcileToDeployPhase(ctx)
@@ -72,6 +74,11 @@ var _ = Describe("Issue #617 AIAnalysis confidence threshold reconciliation", La
 		kn := newMinimalCR()
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 
+		fetched := &kubernautv1alpha2.Kubernaut{}
+		Expect(k8sClient.Get(ctx, singletonKey(), fetched)).To(Succeed())
+		Expect(fetched.Spec.AIAnalysis.ConfidenceThreshold).NotTo(BeNil())
+		Expect(*fetched.Spec.AIAnalysis.ConfidenceThreshold).To(Equal(float64(0.8)))
+
 		reconcileToDeployPhase(ctx)
 
 		configMap := &corev1.ConfigMap{}
@@ -87,27 +94,11 @@ var _ = Describe("Issue #617 AIAnalysis confidence threshold reconciliation", La
 		Expect(*rendered.Rego.ConfidenceThreshold).To(Equal(float64(0.8)))
 	})
 
-	It("fails closed before creating AIAnalysis resources for an invalid threshold", func() {
-		createBYOSecrets(ctx)
+	It("rejects an invalid threshold at CRD admission before creating AIAnalysis resources", func() {
 		kn := newMinimalCR()
-		kn.Spec.AIAnalysis.ConfidenceThreshold = "not-a-number"
-		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
-
-		r := newReconciler()
-		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-		Expect(err).NotTo(HaveOccurred())
-		_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-		deployErr := err
-		if deployErr == nil {
-			markMigrationJobComplete(ctx)
-			for range 2 {
-				_, deployErr = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-				if deployErr != nil {
-					break
-				}
-			}
-		}
-		Expect(deployErr).To(MatchError(ContainSubstring("confidenceThreshold")))
+		kn.Spec.AIAnalysis.ConfidenceThreshold = ptr.To(0.0)
+		err := k8sClient.Create(ctx, kn)
+		Expect(err).To(MatchError(ContainSubstring("confidenceThreshold")))
 
 		configMap := &corev1.ConfigMap{}
 		err = k8sClient.Get(ctx, types.NamespacedName{Name: "aianalysis-config", Namespace: testNamespace}, configMap)
@@ -116,5 +107,22 @@ var _ = Describe("Issue #617 AIAnalysis confidence threshold reconciliation", La
 		deployment := &appsv1.Deployment{}
 		err = k8sClient.Get(ctx, client.ObjectKey{Name: "aianalysis", Namespace: testNamespace}, deployment)
 		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "invalid configuration must not create the AIAnalysis Deployment")
+	})
+
+	It("rejects a non-numeric threshold at CRD admission", func() {
+		kn := newMinimalCR()
+		object, err := runtime.DefaultUnstructuredConverter.ToUnstructured(kn)
+		Expect(err).NotTo(HaveOccurred())
+
+		spec, ok := object["spec"].(map[string]interface{})
+		Expect(ok).To(BeTrue())
+		aiAnalysis, ok := spec["aiAnalysis"].(map[string]interface{})
+		Expect(ok).To(BeTrue())
+		aiAnalysis["confidenceThreshold"] = "not-a-number"
+
+		invalid := &unstructured.Unstructured{Object: object}
+		invalid.SetGroupVersionKind(kubernautv1alpha2.GroupVersion.WithKind("Kubernaut"))
+		err = k8sClient.Create(ctx, invalid)
+		Expect(err).To(MatchError(ContainSubstring("confidenceThreshold")))
 	})
 })

@@ -662,10 +662,14 @@ type AIAnalysisSpec struct {
 	Policy PolicyConfigMapRef `json:"policy"`
 
 	// Optional confidence threshold override for the Rego policy.
-	// Expressed as a decimal string, e.g. "0.85". When omitted, the operator
-	// renders the runtime default of 0.8.
+	// Numeric value in the range (0, 1]. When omitted, the operator renders the
+	// runtime default of 0.8.
+	// +kubebuilder:default=0.8
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:ExclusiveMinimum=true
+	// +kubebuilder:validation:Maximum=1
 	// +optional
-	ConfidenceThreshold string `json:"confidenceThreshold,omitempty"`
+	ConfidenceThreshold *float64 `json:"confidenceThreshold,omitempty"`
 
 	// Optional floor for auto-proceeding with a Kubernaut Agent-selected
 	// workflow during investigation. Expressed as a decimal string, e.g.

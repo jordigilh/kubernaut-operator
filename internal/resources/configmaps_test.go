@@ -17,6 +17,7 @@ limitations under the License.
 package resources
 
 import (
+	"math"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -819,7 +820,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("renders confidence threshold as a numeric Rego value", func() {
 			kn := testKubernaut()
-			kn.Spec.AIAnalysis.ConfidenceThreshold = "0.85"
+			kn.Spec.AIAnalysis.ConfidenceThreshold = ptr.To(0.85)
 			cm, err := AIAnalysisConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
@@ -835,7 +836,7 @@ var _ = Describe("ConfigMaps", func() {
 
 		It("renders the upper confidence threshold boundary as a numeric Rego value", func() {
 			kn := testKubernaut()
-			kn.Spec.AIAnalysis.ConfidenceThreshold = "1.0"
+			kn.Spec.AIAnalysis.ConfidenceThreshold = ptr.To(1.0)
 			cm, err := AIAnalysisConfigMap(kn, testKnV2(kn))
 			Expect(err).NotTo(HaveOccurred())
 
@@ -883,19 +884,18 @@ var _ = Describe("ConfigMaps", func() {
 			Entry("above one", "1.01"),
 		)
 
-		DescribeTable("rejects invalid confidence threshold values", func(value string) {
+		DescribeTable("rejects invalid confidence threshold values", func(value float64) {
 			kn := testKubernaut()
-			kn.Spec.AIAnalysis.ConfidenceThreshold = value
+			kn.Spec.AIAnalysis.ConfidenceThreshold = ptr.To(value)
 
 			_, err := AIAnalysisConfigMap(kn, testKnV2(kn))
 			Expect(err).To(MatchError(ContainSubstring("confidenceThreshold")))
 		},
-			Entry("malformed", "not-a-number"),
-			Entry("negative", "-0.01"),
-			Entry("zero", "0"),
-			Entry("NaN", "NaN"),
-			Entry("positive infinity", "+Inf"),
-			Entry("above one", "1.01"),
+			Entry("negative", -0.01),
+			Entry("zero", 0.0),
+			Entry("NaN", math.NaN()),
+			Entry("positive infinity", math.Inf(1)),
+			Entry("above one", 1.01),
 		)
 
 		It("uses agent key and not legacy kubernautAgent key", func() {
