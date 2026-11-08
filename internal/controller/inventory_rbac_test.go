@@ -36,6 +36,7 @@ import (
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
+// inventoryWiringHasRule reports whether a projected role contains a match.
 func inventoryWiringHasRule(role *rbacv1.ClusterRole, apiGroup, resource string) bool {
 	for _, rule := range role.Rules {
 		if slices.Contains(rule.APIGroups, apiGroup) && slices.Contains(rule.Resources, resource) {
@@ -130,6 +131,61 @@ var _ = Describe("API Frontend inventory RBAC wiring (#623)", func() {
 		Expect(k8sClient.Get(ctx, roleKey, role)).To(Succeed())
 		Expect(inventoryWiringHasRule(role, "widgets.example.io", "widgets")).To(BeFalse())
 		Expect(inventoryWiringHasRule(role, "apps.example.io", "widgets")).To(BeTrue())
+	})
+
+	It("IT-RBAC-623-006 repairs managed role and binding field drift", func() {
+		createBYOSecrets(ctx)
+		cr := newMinimalCR()
+		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+		reconciler := reconcileToDeployPhase(ctx)
+
+		roleKey := types.NamespacedName{Name: resources.APIFrontendInventoryReadClusterRoleName(cr)}
+		role := &rbacv1.ClusterRole{}
+		Expect(k8sClient.Get(ctx, roleKey, role)).To(Succeed())
+		role.Rules = append(role.Rules, rbacv1.PolicyRule{
+			APIGroups: []string{"example.io"}, Resources: []string{"stale"}, Verbs: []string{"get", "list"},
+		})
+		Expect(k8sClient.Update(ctx, role)).To(Succeed())
+
+		bindingKey := types.NamespacedName{Name: resources.APIFrontendInventoryReadClusterRoleBindingName(cr)}
+		binding := &rbacv1.ClusterRoleBinding{}
+		Expect(k8sClient.Get(ctx, bindingKey, binding)).To(Succeed())
+		binding.Subjects = []rbacv1.Subject{{
+			Kind:      rbacv1.ServiceAccountKind,
+			Name:      "stale-service-account",
+			Namespace: testNamespace,
+		}}
+		Expect(k8sClient.Update(ctx, binding)).To(Succeed())
+
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, roleKey, role)).To(Succeed())
+		Expect(role.Rules).To(Equal(resources.APIFrontendInventoryReadClusterRole(cr, nil).Rules))
+		Expect(k8sClient.Get(ctx, bindingKey, binding)).To(Succeed())
+		Expect(binding.Subjects).To(Equal(resources.APIFrontendInventoryReadClusterRoleBinding(cr).Subjects))
+	})
+
+	It("IT-RBAC-623-007 recreates an owned inventory binding when its role reference drifts", func() {
+		createBYOSecrets(ctx)
+		cr := newMinimalCR()
+		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+		reconciler := reconcileToDeployPhase(ctx)
+
+		bindingKey := types.NamespacedName{Name: resources.APIFrontendInventoryReadClusterRoleBindingName(cr)}
+		binding := &rbacv1.ClusterRoleBinding{}
+		Expect(k8sClient.Get(ctx, bindingKey, binding)).To(Succeed())
+		binding.RoleRef.Name = "wrong-inventory-role"
+		binding.ResourceVersion = ""
+		binding.UID = ""
+		Expect(k8sClient.Delete(ctx, &rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: binding.Name}})).To(Succeed())
+		Expect(k8sClient.Create(ctx, binding)).To(Succeed())
+
+		_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(k8sClient.Get(ctx, bindingKey, binding)).To(Succeed())
+		Expect(binding.RoleRef).To(Equal(resources.APIFrontendInventoryReadClusterRoleBinding(cr).RoleRef))
 	})
 
 	It("IT-RBAC-623-003 prunes the projection when AF is disabled", func() {
@@ -278,10 +334,74 @@ var _ = Describe("API Frontend inventory RBAC unit decisions (#623)", Label("uni
 			}
 			return api.Get(ctx, key, object, options...)
 		}})
+		stale := resources.APIFrontendInventoryReadClusterRole(kn, []rbacv1.ClusterRole{{
+			Rules: []rbacv1.PolicyRule{{
+				APIGroups: []string{"widgets.example.io"}, Resources: []string{"widgets"}, Verbs: []string{"get", "list"},
+			}},
+		}})
+		Expect(r.Create(ctx, stale)).To(Succeed())
 
 		err := r.deployClusterScopedCoreRBAC(ctx, kn, kn)
 		Expect(err).To(MatchError(ContainSubstring("resolving AF inventory source ClusterRoles")))
 		role := &rbacv1.ClusterRole{}
 		Expect(r.Get(ctx, client.ObjectKey{Name: resources.APIFrontendInventoryReadClusterRoleName(kn)}, role)).To(Succeed())
+		Expect(role.Rules).To(Equal(resources.APIFrontendInventoryReadClusterRole(kn, nil).Rules))
+	})
+
+	It("recreates a managed inventory binding when its role reference is immutable drift", func() {
+		kn := newMinimalCR()
+		r := businessUnitReconciler(kn, interceptor.Funcs{})
+		desired := resources.APIFrontendInventoryReadClusterRoleBinding(kn)
+		stale := desired.DeepCopy()
+		stale.RoleRef.Name = "stale-inventory-role"
+		resources.StampOwnership(kn, stale)
+		Expect(r.Create(ctx, stale)).To(Succeed())
+
+		Expect(r.ensureUnowned(ctx, kn, desired)).To(Succeed())
+
+		live := &rbacv1.ClusterRoleBinding{}
+		Expect(r.Get(ctx, client.ObjectKeyFromObject(desired), live)).To(Succeed())
+		Expect(live.RoleRef).To(Equal(desired.RoleRef))
+	})
+
+	It("handles RBAC drift comparisons when the live object type does not match", func() {
+		drifted, handled := rbacContentDrifted(&rbacv1.ClusterRole{}, &rbacv1.ClusterRoleBinding{})
+		Expect(drifted).To(BeFalse())
+		Expect(handled).To(BeTrue())
+
+		drifted, handled = rbacContentDrifted(&rbacv1.ClusterRoleBinding{}, &rbacv1.ClusterRole{})
+		Expect(drifted).To(BeFalse())
+		Expect(handled).To(BeTrue())
+	})
+
+	It("surfaces immutable binding delete and recreate failures", func() {
+		for _, operation := range []string{policyDeleteOperation, "create"} {
+			kn := newMinimalCR()
+			r := businessUnitReconciler(kn, interceptor.Funcs{})
+			desired := resources.APIFrontendInventoryReadClusterRoleBinding(kn)
+			stale := desired.DeepCopy()
+			stale.RoleRef.Name = "stale-inventory-role"
+			resources.StampOwnership(kn, stale)
+			Expect(r.Create(ctx, stale)).To(Succeed())
+
+			faults := interceptor.Funcs{}
+			if operation == policyDeleteOperation {
+				faults.Delete = func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error {
+					return fmt.Errorf("inventory binding delete denied")
+				}
+			} else {
+				faults.Create = func(context.Context, client.WithWatch, client.Object, ...client.CreateOption) error {
+					return fmt.Errorf("inventory binding recreate denied")
+				}
+			}
+			r.Client = interceptor.NewClient(r.Client.(client.WithWatch), faults)
+
+			err := r.ensureUnowned(ctx, kn, desired)
+			if operation == policyDeleteOperation {
+				Expect(err).To(MatchError(ContainSubstring("deleting immutable ClusterRoleBinding")))
+			} else {
+				Expect(err).To(MatchError(ContainSubstring("recreating immutable ClusterRoleBinding")))
+			}
+		}
 	})
 })

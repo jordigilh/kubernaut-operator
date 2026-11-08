@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// inventoryRulesFor selects normalized rules matching a group/resource pair.
 func inventoryRulesFor(role *rbacv1.ClusterRole, apiGroup, resource string) []rbacv1.PolicyRule {
 	rules := make([]rbacv1.PolicyRule, 0)
 	for _, rule := range role.Rules {
@@ -36,6 +37,7 @@ func inventoryRulesFor(role *rbacv1.ClusterRole, apiGroup, resource string) []rb
 	return rules
 }
 
+// inventoryRuleFor returns the single normalized rule for a group/resource.
 func inventoryRuleFor(role *rbacv1.ClusterRole, apiGroup, resource string) rbacv1.PolicyRule {
 	rules := inventoryRulesFor(role, apiGroup, resource)
 	Expect(rules).To(HaveLen(1), "expected one inventory rule for %s/%s", apiGroup, resource)
