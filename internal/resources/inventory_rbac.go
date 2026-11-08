@@ -97,14 +97,17 @@ func APIFrontendInventoryReadClusterRoleBinding(kn *kubernautv1alpha2.Kubernaut)
 // TokenReview, and SubjectAccessReview rules remain operational permissions
 // and are intentionally not part of inventory.
 func gatewayTargetResourceReadRules() []rbacv1.PolicyRule {
-	rules := []rbacv1.PolicyRule{
+	baseRules := []rbacv1.PolicyRule{
 		{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{""}, Resources: []string{"nodes", "pods", "services", "persistentvolumes", "persistentvolumeclaims"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"autoscaling"}, Resources: []string{"horizontalpodautoscalers"}, Verbs: []string{"get", "list", "watch"}},
 	}
-	return append(rules, ownerChainResolutionRules()...)
+	ownerChainRules := ownerChainResolutionRules()
+	rules := make([]rbacv1.PolicyRule, 0, len(baseRules)+len(ownerChainRules))
+	rules = append(rules, baseRules...)
+	return append(rules, ownerChainRules...)
 }
 
 func inventoryReadRules(additionalRoles []rbacv1.ClusterRole) []rbacv1.PolicyRule {
