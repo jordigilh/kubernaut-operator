@@ -4585,6 +4585,16 @@ func (r *KubernautReconciler) ensureResourceChanged(ctx context.Context, kn *kub
 	if err := r.checkResourceOwnership(ctx, kn, existing, metav1.GetControllerOf(obj) != nil); err != nil {
 		return false, err
 	}
+	if clusterRoleBindingRoleRefChanged(obj, existing) {
+		if err := r.deleteObservedResource(ctx, existing); err != nil && !apierrors.IsNotFound(err) {
+			return false, fmt.Errorf("deleting immutable ClusterRoleBinding %s: %w", key, err)
+		}
+		if err := r.Create(ctx, obj); err != nil {
+			return false, fmt.Errorf("recreating immutable ClusterRoleBinding %s: %w", key, err)
+		}
+		r.resourceLogger(ctx, kn, obj).Info("immutable ClusterRoleBinding recreated")
+		return true, nil
+	}
 	if existing.GetAnnotations()[resources.AnnotationSpecHash] == desiredHash && !contentDrifted(obj, existing) && ownershipMetadataMatches(obj, existing) {
 		return false, nil
 	}
@@ -4627,6 +4637,9 @@ func (r *KubernautReconciler) createOrReadExisting(ctx context.Context, obj, exi
 // false positives. Services compare normalized operator-owned fields rather
 // than allocated addressing. See docs/design/PR-515-AUDIT-REMEDIATION.md.
 func contentDrifted(desired, existing client.Object) bool {
+	if drifted, handled := rbacContentDrifted(desired, existing); handled {
+		return drifted
+	}
 	if desiredService, ok := desired.(*corev1.Service); ok {
 		existingService, sameType := existing.(*corev1.Service)
 		return sameType && !equality.Semantic.DeepEqual(ownedServiceSpec(desiredService), ownedServiceSpec(existingService))
@@ -4654,6 +4667,38 @@ func contentDrifted(desired, existing client.Object) bool {
 	}
 
 	return false
+}
+
+// rbacContentDrifted compares mutable managed fields for RBAC objects while
+// leaving immutable ClusterRoleBinding RoleRef handling to the recreate path.
+func rbacContentDrifted(desired, existing client.Object) (bool, bool) {
+	switch desiredObject := desired.(type) {
+	case *rbacv1.ClusterRole:
+		existingObject, sameType := existing.(*rbacv1.ClusterRole)
+		if !sameType {
+			return false, true
+		}
+		return !equality.Semantic.DeepEqual(desiredObject.Rules, existingObject.Rules) ||
+			!equality.Semantic.DeepEqual(desiredObject.AggregationRule, existingObject.AggregationRule), true
+	case *rbacv1.ClusterRoleBinding:
+		existingObject, sameType := existing.(*rbacv1.ClusterRoleBinding)
+		if !sameType {
+			return false, true
+		}
+		return !equality.Semantic.DeepEqual(desiredObject.RoleRef, existingObject.RoleRef) ||
+			!equality.Semantic.DeepEqual(desiredObject.Subjects, existingObject.Subjects), true
+	default:
+		return false, false
+	}
+}
+
+// clusterRoleBindingRoleRefChanged reports the immutable field drift that
+// requires a managed ClusterRoleBinding to be deleted and recreated rather
+// than updated in place. Ownership is checked by the caller first.
+func clusterRoleBindingRoleRefChanged(desired, existing client.Object) bool {
+	desiredBinding, desiredOK := desired.(*rbacv1.ClusterRoleBinding)
+	existingBinding, existingOK := existing.(*rbacv1.ClusterRoleBinding)
+	return desiredOK && existingOK && !equality.Semantic.DeepEqual(desiredBinding.RoleRef, existingBinding.RoleRef)
 }
 
 func ownedServiceSpec(service *corev1.Service) corev1.ServiceSpec {
@@ -4930,12 +4975,8 @@ func (r *KubernautReconciler) inventorySourceClusterRoleToKubernaut(ctx context.
 	if object == nil {
 		return nil
 	}
-	reader := r.APIReader
-	if reader == nil {
-		reader = r.Client
-	}
 	instances := &kubernautv1alpha2.KubernautList{}
-	if err := reader.List(ctx, instances); err != nil {
+	if err := r.List(ctx, instances); err != nil {
 		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for inventory source role event",
 			"clusterRole", object.GetName())
 		return nil
@@ -4958,12 +4999,8 @@ func (r *KubernautReconciler) inventoryBindingToKubernaut(ctx context.Context, o
 	if object == nil {
 		return nil
 	}
-	reader := r.APIReader
-	if reader == nil {
-		reader = r.Client
-	}
 	instances := &kubernautv1alpha2.KubernautList{}
-	if err := reader.List(ctx, instances); err != nil {
+	if err := r.List(ctx, instances); err != nil {
 		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for inventory binding event",
 			"clusterRoleBinding", object.GetName())
 		return nil

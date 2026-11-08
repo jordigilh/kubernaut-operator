@@ -110,6 +110,8 @@ func gatewayTargetResourceReadRules() []rbacv1.PolicyRule {
 	return append(rules, ownerChainRules...)
 }
 
+// inventoryReadRules combines built-in and approved source rules into a
+// deterministic AF metadata-read projection.
 func inventoryReadRules(additionalRoles []rbacv1.ClusterRole) []rbacv1.PolicyRule {
 	sources := gatewayTargetResourceReadRules()
 	for _, role := range additionalRoles {
@@ -144,6 +146,10 @@ func inventoryReadRules(additionalRoles []rbacv1.ClusterRole) []rbacv1.PolicyRul
 	return rules
 }
 
+// inventoryReadRule removes non-metadata permissions while preserving the
+// administrator's literal API-group/resource wildcard and resource-name
+// boundaries. Kubernetes cannot express a top-level-only wildcard in RBAC;
+// the upstream AF metadata contract must reject subresource requests.
 func inventoryReadRule(source rbacv1.PolicyRule) (rbacv1.PolicyRule, bool) {
 	if len(source.NonResourceURLs) > 0 {
 		return rbacv1.PolicyRule{}, false
@@ -199,6 +205,7 @@ func inventoryReadRule(source rbacv1.PolicyRule) (rbacv1.PolicyRule, bool) {
 	}, true
 }
 
+// inventoryReadRuleKey provides a stable merge key for normalized read rules.
 func inventoryReadRuleKey(rule rbacv1.PolicyRule) string {
 	return strings.Join([]string{
 		strings.Join(rule.APIGroups, "\x00"),
@@ -207,6 +214,7 @@ func inventoryReadRuleKey(rule rbacv1.PolicyRule) string {
 	}, "\x00\x01")
 }
 
+// mergeSortedStrings returns the deterministic union of two string slices.
 func mergeSortedStrings(left, right []string) []string {
 	seen := make(map[string]struct{}, len(left)+len(right))
 	merged := make([]string, 0, len(left)+len(right))
