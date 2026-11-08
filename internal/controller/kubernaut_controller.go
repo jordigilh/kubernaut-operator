@@ -1046,11 +1046,44 @@ func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv
 	return r.deployAdditionalComponentRBAC(ctx, kn, knV2)
 }
 
+// inventoryReadSourceRoles resolves the administrator-approved Gateway source
+// ClusterRoles used to derive AF's separate metadata-inventory boundary. A
+// missing source is handled by the existing additional-RBAC status path; it is
+// deliberately omitted from the projection rather than represented by stale
+// rules. Other read failures are returned after the safe built-in projection
+// is reconciled by deployClusterScopedCoreRBAC.
+func (r *KubernautReconciler) inventoryReadSourceRoles(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) ([]rbacv1.ClusterRole, error) {
+	if kn == nil || knV2 == nil || !kn.Spec.APIFrontendEnabled() {
+		return nil, nil
+	}
+
+	roleNames := deduplicate(knV2.Spec.AdditionalClusterRoles)
+	roles := make([]rbacv1.ClusterRole, 0, len(roleNames))
+	for _, roleName := range roleNames {
+		role := &rbacv1.ClusterRole{}
+		if err := r.Get(ctx, types.NamespacedName{Name: roleName}, role); err != nil {
+			if apierrors.IsNotFound(err) {
+				logf.FromContext(ctx).Info("inventory source ClusterRole not found; omitting from projection",
+					"clusterRole", roleName, "namespace", kn.Namespace, "name", kn.Name,
+					"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+				continue
+			}
+			return nil, fmt.Errorf("reading inventory source ClusterRole %s: %w", roleName, err)
+		}
+		roles = append(roles, *role)
+	}
+	return roles, nil
+}
+
 // deployClusterScopedCoreRBAC ensures the always-computed ClusterRoles/
 // ClusterRoleBindings and prunes any orphaned by a feature toggle-off
 // (#341) in the same pass.
 func (r *KubernautReconciler) deployClusterScopedCoreRBAC(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
 	desiredCRs := resources.ClusterRoles(kn, knV2)
+	additionalRoles, sourceErr := r.inventoryReadSourceRoles(ctx, kn, knV2)
+	if inventoryRole := resources.APIFrontendInventoryReadClusterRole(kn, additionalRoles); inventoryRole != nil {
+		desiredCRs = append(desiredCRs, inventoryRole)
+	}
 	for _, cr := range desiredCRs {
 		if err := r.ensureUnowned(ctx, kn, cr); err != nil {
 			return fmt.Errorf("ensuring ClusterRole %s: %w", cr.Name, err)
@@ -1062,8 +1095,17 @@ func (r *KubernautReconciler) deployClusterScopedCoreRBAC(ctx context.Context, k
 			return fmt.Errorf("ensuring CRB %s: %w", crb.Name, err)
 		}
 	}
+	if inventoryBinding := resources.APIFrontendInventoryReadClusterRoleBinding(kn); inventoryBinding != nil {
+		if err := r.ensureUnowned(ctx, kn, inventoryBinding); err != nil {
+			return fmt.Errorf("ensuring AF inventory CRB %s: %w", inventoryBinding.Name, err)
+		}
+		desiredCRBs = append(desiredCRBs, inventoryBinding)
+	}
 	if errs := r.pruneOrphanedCoreClusterRBAC(ctx, kn, desiredCRs, desiredCRBs); len(errs) > 0 {
 		return fmt.Errorf("pruning orphaned core cluster RBAC: %w", errors.Join(errs...))
+	}
+	if sourceErr != nil {
+		return fmt.Errorf("resolving AF inventory source ClusterRoles: %w", sourceErr)
 	}
 	return nil
 }
@@ -4811,7 +4853,8 @@ func (r *KubernautReconciler) deleteIfExists(ctx context.Context, kn *kubernautv
 // SetupWithManager sets up the controller with the Manager.
 // Owns() watches trigger reconciliation when owned child resources change.
 // Cluster-scoped resources (ClusterRoles, CRBs, webhook configs) cannot be
-// owned, so they rely on the periodic requeue timer for drift detection.
+// owned, so inventory source/binding watches supplement the periodic requeue
+// timer for drift detection.
 func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.Client == nil {
 		r.Client = mgr.GetClient()
@@ -4856,6 +4899,8 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&policyv1.PodDisruptionBudget{}).
 		Owns(&rbacv1.Role{}).
 		Owns(&rbacv1.RoleBinding{}).
+		Watches(&rbacv1.ClusterRole{}, handler.EnqueueRequestsFromMapFunc(r.inventorySourceClusterRoleToKubernaut)).
+		Watches(&rbacv1.ClusterRoleBinding{}, handler.EnqueueRequestsFromMapFunc(r.inventoryBindingToKubernaut)).
 		Owns(&autoscalingv2.HorizontalPodAutoscaler{})
 	if openShiftAPIServerWatchSupported(mgr.GetRESTMapper()) {
 		b = b.Watches(&configv1.APIServer{},
@@ -4875,6 +4920,63 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return b.Named("kubernaut").
 		Complete(r)
+}
+
+// inventorySourceClusterRoleToKubernaut maps changes to explicitly configured
+// additional Gateway source roles. The source role itself is not owned by the
+// operator, so a direct watch closes the normal role-drift window while the
+// running-phase requeue remains the backstop.
+func (r *KubernautReconciler) inventorySourceClusterRoleToKubernaut(ctx context.Context, object client.Object) []reconcile.Request {
+	if object == nil {
+		return nil
+	}
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+	instances := &kubernautv1alpha2.KubernautList{}
+	if err := reader.List(ctx, instances); err != nil {
+		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for inventory source role event",
+			"clusterRole", object.GetName())
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(instances.Items))
+	for index := range instances.Items {
+		kn := &instances.Items[index]
+		if !kn.Spec.APIFrontendEnabled() || !slices.Contains(kn.Spec.AdditionalClusterRoles, object.GetName()) {
+			continue
+		}
+		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)})
+	}
+	return requests
+}
+
+// inventoryBindingToKubernaut maps drift on the generated inventory binding
+// back to its Kubernaut instance. The object may be a delete event, so the
+// stable name is used instead of relying only on labels.
+func (r *KubernautReconciler) inventoryBindingToKubernaut(ctx context.Context, object client.Object) []reconcile.Request {
+	if object == nil {
+		return nil
+	}
+	reader := r.APIReader
+	if reader == nil {
+		reader = r.Client
+	}
+	instances := &kubernautv1alpha2.KubernautList{}
+	if err := reader.List(ctx, instances); err != nil {
+		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for inventory binding event",
+			"clusterRoleBinding", object.GetName())
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(instances.Items))
+	for index := range instances.Items {
+		kn := &instances.Items[index]
+		if object.GetName() != resources.APIFrontendInventoryReadClusterRoleBindingName(kn) {
+			continue
+		}
+		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)})
+	}
+	return requests
 }
 
 // auditHashKeyStateToKubernaut maps changes to the persistent non-secret audit
