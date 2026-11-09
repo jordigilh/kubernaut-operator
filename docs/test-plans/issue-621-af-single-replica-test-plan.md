@@ -56,9 +56,8 @@ and belong to `kubernaut#2606`. Console `#168` is separate.
 
 ## Verification record
 
-Tested source: baseline `HEAD`
-`9e3d8e6949f6de4d35bae47fa03f11069307c2db` plus the uncommitted issue #621
-working-tree changes.
+Tested source: PR branch commit
+`a3c8e2bcd15bbc47ec301f8d376973ecf31e0e16`.
 
 - `make test-unit`: passed; 100.0% internal unit coverage and zero missed
   business statements.
