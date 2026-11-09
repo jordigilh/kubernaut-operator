@@ -45,13 +45,14 @@ import (
 )
 
 const (
-	testNamespace         = "default"
-	pgSecretName          = "postgresql-secret"
-	vkSecretName          = "valkey-secret"
-	llmSecretName         = "llm-credentials"
-	consoleOIDCSecretName = "console-oidc"
-	timeout               = 10 * time.Second
-	interval              = 250 * time.Millisecond
+	testNamespace          = "default"
+	preservedMetadataValue = "preserve"
+	pgSecretName           = "postgresql-secret"
+	vkSecretName           = "valkey-secret"
+	llmSecretName          = "llm-credentials"
+	consoleOIDCSecretName  = "console-oidc"
+	timeout                = 10 * time.Second
+	interval               = 250 * time.Millisecond
 
 	// testWEFleetOAuth2SecretRef is WorkflowExecution's own write-scoped
 	// fleet OAuth2 credential (#235, DD-235). Any test that enables
@@ -848,7 +849,7 @@ var _ = Describe("contentDrifted", Label("unit"), func() {
 		live.Spec.ClusterIP = "10.96.0.12"
 		live.Spec.ClusterIPs = []string{"10.96.0.12"}
 		live.Spec.Ports = live.Spec.Ports[:1]
-		live.Annotations["platform.example/marker"] = "preserve"
+		live.Annotations["platform.example/marker"] = preservedMetadataValue
 		api := fake.NewClientBuilder().WithScheme(k8sClient.Scheme()).WithObjects(live).Build()
 		r := &KubernautReconciler{Client: api}
 		Expect(r.ensureResource(ctx, newMinimalCR(), desired)).To(Succeed())
@@ -857,7 +858,74 @@ var _ = Describe("contentDrifted", Label("unit"), func() {
 		Expect(updated.Spec.Ports).To(Equal(desired.Spec.Ports))
 		Expect(updated.Spec.ClusterIP).To(Equal("10.96.0.12"))
 		Expect(updated.Spec.ClusterIPs).To(Equal([]string{"10.96.0.12"}))
-		Expect(updated.Annotations).To(HaveKeyWithValue("platform.example/marker", "preserve"))
+		Expect(updated.Annotations).To(HaveKeyWithValue("platform.example/marker", preservedMetadataValue))
+	})
+
+	It("UT-AF-621-002 repairs hash-preserved AF Deployment drift without changing DataStorage scale", Label("unit"), func() {
+		kn := newMinimalCR()
+		kn.UID = types.UID("issue-621-test-uid")
+		api := fake.NewClientBuilder().WithScheme(k8sClient.Scheme()).Build()
+		r := &KubernautReconciler{Client: api, Scheme: k8sClient.Scheme()}
+
+		afDesired, err := resources.APIFrontendDeployment(kn, kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.ensureNamespaced(ctx, kn, afDesired)).To(Succeed())
+
+		afLive := &appsv1.Deployment{}
+		Expect(api.Get(ctx, client.ObjectKeyFromObject(afDesired), afLive)).To(Succeed())
+		ownerReferences := append([]metav1.OwnerReference(nil), afLive.OwnerReferences...)
+		afLive.Spec.Replicas = ptr.To(int32(3))
+		afLive.Spec.Strategy.Type = appsv1.RollingUpdateDeploymentStrategyType
+		afLive.Annotations["platform.example/marker"] = preservedMetadataValue
+		afLive.Labels["platform.example/label"] = preservedMetadataValue
+		afLive.Spec.Template.Annotations["platform.example/pod-marker"] = preservedMetadataValue
+		afLive.Spec.Template.Labels["platform.example/pod-label"] = preservedMetadataValue
+		afLive.Finalizers = []string{"platform.example/finalizer"}
+		revisionHistoryLimit := int32(7)
+		progressDeadlineSeconds := int32(123)
+		afLive.Spec.RevisionHistoryLimit = &revisionHistoryLimit
+		afLive.Spec.ProgressDeadlineSeconds = &progressDeadlineSeconds
+		Expect(api.Update(ctx, afLive)).To(Succeed())
+
+		afDesired, err = resources.APIFrontendDeployment(kn, kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.ensureNamespaced(ctx, kn, afDesired)).To(Succeed())
+
+		updatedAF := &appsv1.Deployment{}
+		Expect(api.Get(ctx, client.ObjectKeyFromObject(afDesired), updatedAF)).To(Succeed())
+		Expect(*updatedAF.Spec.Replicas).To(Equal(int32(1)))
+		Expect(updatedAF.Spec.Strategy.Type).To(Equal(appsv1.RecreateDeploymentStrategyType))
+		Expect(updatedAF.Annotations).To(HaveKeyWithValue("platform.example/marker", preservedMetadataValue))
+		Expect(updatedAF.Labels).To(HaveKeyWithValue("platform.example/label", preservedMetadataValue))
+		Expect(updatedAF.Spec.Template.Annotations).To(HaveKeyWithValue("platform.example/pod-marker", preservedMetadataValue))
+		Expect(updatedAF.Spec.Template.Labels).To(HaveKeyWithValue("platform.example/pod-label", preservedMetadataValue))
+		Expect(updatedAF.Finalizers).To(Equal([]string{"platform.example/finalizer"}))
+		Expect(updatedAF.Spec.RevisionHistoryLimit).NotTo(BeNil())
+		Expect(*updatedAF.Spec.RevisionHistoryLimit).To(Equal(revisionHistoryLimit))
+		Expect(updatedAF.Spec.ProgressDeadlineSeconds).NotTo(BeNil())
+		Expect(*updatedAF.Spec.ProgressDeadlineSeconds).To(Equal(progressDeadlineSeconds))
+		Expect(updatedAF.OwnerReferences).To(Equal(ownerReferences))
+
+		afDesired, err = resources.APIFrontendDeployment(kn, kn)
+		Expect(err).NotTo(HaveOccurred())
+		changed, err := r.ensureNamespacedChanged(ctx, kn, afDesired)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(changed).To(BeFalse(), "a second reconcile should not update an already repaired AF Deployment")
+
+		dsDesired, err := resources.DataStorageDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.ensureNamespaced(ctx, kn, dsDesired)).To(Succeed())
+		dsLive := &appsv1.Deployment{}
+		Expect(api.Get(ctx, client.ObjectKeyFromObject(dsDesired), dsLive)).To(Succeed())
+		dsLive.Spec.Replicas = ptr.To(int32(4))
+		Expect(api.Update(ctx, dsLive)).To(Succeed())
+
+		dsDesired, err = resources.DataStorageDeployment(kn)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(r.ensureNamespaced(ctx, kn, dsDesired)).To(Succeed())
+		preservedDS := &appsv1.Deployment{}
+		Expect(api.Get(ctx, client.ObjectKeyFromObject(dsDesired), preservedDS)).To(Succeed())
+		Expect(*preservedDS.Spec.Replicas).To(Equal(int32(4)))
 	})
 
 	It("D1: should return true when a desired key has a different value in the live ConfigMap", func() {

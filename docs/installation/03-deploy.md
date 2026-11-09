@@ -630,6 +630,28 @@ user isn't actually a member of, or the OIDC client's tokens don't carry a
 protocol mapper (`oidc-group-membership-mapper`) on a default client scope;
 it is not automatic just because the user belongs to a Keycloak group.
 
+**API Frontend has a brief outage during an upgrade or template change:**
+
+This is expected. AF uses one replica and a `Recreate` strategy to prevent old
+and new AF pods from overlapping. The old pod is terminated before the
+replacement becomes ready, so active connections or sessions can be dropped.
+Schedule planned upgrades during a low-traffic window and verify the new pod's
+readiness probe before restoring dependent traffic.
+
+**API Frontend runs above one replica:**
+
+The operator does not create an AF HPA and repairs operator-managed Deployment
+replica/strategy drift. Check for a foreign or manually managed HPA:
+
+```bash
+oc get hpa -n kubernaut-system apifrontend-hpa -o yaml
+oc get events -n kubernaut-system --field-selector reason=OwnershipConflict
+```
+
+Foreign HPAs are preserved by design and can scale AF above one. Identify their
+administrator and remove or reconfigure them through the owning change process;
+the operator will not adopt or delete them. Do not use a label-wide cleanup.
+
 **Console shows "Access Denied — You don't have permission to use Kubernaut":**
 
 This is a separate, coarse-grained authorization gate from per-tool RBAC (AF v1.5.6+ / operator v1.5.8+): the Console's pre-flight check calls `GET /a2a/access` on AF, which runs a SubjectAccessReview against a synthetic `kubernaut.ai/console` resource. See [Additional RBAC for API Frontend](02-configure-services.md#additional-rbac-for-api-frontend) for how this is configured, and this dedicated writeup for full diagnosis (Keycloak group-claim verification, AF debug-log inspection): [Kubernaut Console: troubleshooting "Access Denied"](https://gist.github.com/jordigilh/5984f65c88da042f2207825a9e57df62).

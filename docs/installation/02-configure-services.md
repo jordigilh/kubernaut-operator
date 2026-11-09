@@ -552,6 +552,25 @@ spec:
     enabled: false
 ```
 
+### API Frontend scaling and availability
+
+API Frontend is intentionally a **single-replica** workload. The operator sets
+`replicas: 1` and uses a Kubernetes `Recreate` rollout, so the old pod is
+terminated before its replacement starts. An upgrade or AF template change can
+therefore cause a short AF outage; schedule planned changes during a suitable
+maintenance window and expect active AF connections or sessions to terminate.
+
+The operator does not create an API Frontend HPA. DataStorage is the only
+operator-managed HPA and remains bounded at `minReplicas: 1` and
+`maxReplicas: 5`. Do not add a second autoscaler if the single-replica AF
+contract is required.
+
+If a pre-existing or manually created HPA named `apifrontend-hpa` is owned by
+another controller, the operator preserves it and emits an `OwnershipConflict`
+warning rather than adopting or deleting it. Such an HPA can still scale AF
+above one replica; resolve that external ownership conflict explicitly before
+relying on the operator-managed single-replica guarantee.
+
 ## Console (optional)
 
 The standalone web Console (A2A chat UI, `spec.console.enabled`) is fronted by an oauth2-proxy sidecar that needs its own OIDC client -- distinct from the Fleet client-credentials clients above and from AF's own OIDC config. Provision a **confidential, Authorization Code flow** client (`standardFlowEnabled`, not a service-account/client-credentials client) on your OIDC provider:

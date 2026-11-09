@@ -84,14 +84,3 @@ func DataStorageHPA(kn *kubernautv1alpha2.Kubernaut) *autoscalingv2.HorizontalPo
 		MemoryTargetPercent: 80,
 	})
 }
-
-// APIFrontendHPA builds the HPA for the APIFrontend component.
-func APIFrontendHPA(kn *kubernautv1alpha2.Kubernaut) *autoscalingv2.HorizontalPodAutoscaler {
-	return buildHPA(kn, HPASpec{
-		Component:           ComponentAPIFrontend,
-		MinReplicas:         1,
-		MaxReplicas:         5,
-		CPUTargetPercent:    75,
-		MemoryTargetPercent: 80,
-	})
-}

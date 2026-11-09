@@ -2187,6 +2187,9 @@ func (r *KubernautReconciler) ensureDeployments(
 }
 
 func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, cmHashes map[string]string, telemetryRevisions telemetryMaterialRevisionSet) error {
+	if err := r.pruneLegacyAPIFrontendHPAs(ctx, kn); err != nil {
+		return err
+	}
 	if err := r.reconcileNetworkPolicies(ctx, kn, knV2); err != nil {
 		return err
 	}
@@ -2530,12 +2533,28 @@ func (r *KubernautReconciler) pruneLegacyAuthWebhookServiceMonitor(ctx context.C
 	return nil
 }
 
-func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
-	afHPA := resources.APIFrontendHPA(kn)
-	if err := r.ensureNamespaced(ctx, kn, afHPA); err != nil {
-		return fmt.Errorf("ensuring AF HPA: %w", err)
+// pruneLegacyAPIFrontendHPAs removes the operator-managed AF HPA rendered by
+// releases that allowed AF to scale above one replica. The exact-name list is
+// intentionally narrow: foreign HPAs, including same-target HPAs with other
+// names, are administrator-owned and must remain untouched.
+func (r *KubernautReconciler) pruneLegacyAPIFrontendHPAs(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	for _, name := range []string{"apifrontend-hpa"} {
+		hpa := &autoscalingv2.HorizontalPodAutoscaler{}
+		key := client.ObjectKey{Namespace: kn.Namespace, Name: name}
+		if err := r.Get(ctx, key, hpa); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return fmt.Errorf("getting legacy api frontend HPA %s: %w", name, err)
+		}
+		if err := r.deleteIfExists(ctx, kn, hpa); err != nil {
+			return fmt.Errorf("deleting legacy api frontend HPA %s: %w", name, err)
+		}
 	}
+	return nil
+}
 
+func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
 	if err := r.ensureAPIFrontendMonitoring(ctx, kn); err != nil {
 		return err
 	}
@@ -4554,8 +4573,9 @@ func (r *KubernautReconciler) ensureUnowned(ctx context.Context, kn *kubernautv1
 // falling through to the update path.
 //
 // When the spec-hash annotation matches (no spec change), ensureResource
-// additionally checks for content drift on ConfigMaps — detecting external
-// modifications that preserved the annotation but altered the data.
+// additionally checks for content drift on managed Services and the
+// API Frontend Deployment — detecting external modifications that preserved
+// the annotation but altered reconciled fields.
 func (r *KubernautReconciler) ensureResource(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, obj client.Object) error {
 	_, err := r.ensureResourceChanged(ctx, kn, obj)
 	return err
@@ -4599,10 +4619,7 @@ func (r *KubernautReconciler) ensureResourceChanged(ctx context.Context, kn *kub
 		return false, nil
 	}
 
-	obj.SetResourceVersion(existing.GetResourceVersion())
-	if service, ok := obj.(*corev1.Service); ok {
-		preserveServiceFields(service, existing.(*corev1.Service))
-	}
+	preserveResourceFields(obj, existing)
 	if err := r.Update(ctx, obj); err != nil {
 		r.resourceLogger(ctx, kn, obj).Error(err, "resource update failed")
 		return false, fmt.Errorf("updating %s: %w", key, err)
@@ -4639,6 +4656,14 @@ func (r *KubernautReconciler) createOrReadExisting(ctx context.Context, obj, exi
 func contentDrifted(desired, existing client.Object) bool {
 	if drifted, handled := rbacContentDrifted(desired, existing); handled {
 		return drifted
+	}
+	if desiredDeployment, ok := desired.(*appsv1.Deployment); ok {
+		existingDeployment, sameType := existing.(*appsv1.Deployment)
+		if !sameType || desiredDeployment.Labels["app"] != resources.ComponentAPIFrontend {
+			return false
+		}
+		return !equality.Semantic.DeepEqual(desiredDeployment.Spec.Replicas, existingDeployment.Spec.Replicas) ||
+			!equality.Semantic.DeepEqual(desiredDeployment.Spec.Strategy, existingDeployment.Spec.Strategy)
 	}
 	if desiredService, ok := desired.(*corev1.Service); ok {
 		existingService, sameType := existing.(*corev1.Service)
@@ -4749,6 +4774,43 @@ func preserveServiceFields(desired, existing *corev1.Service) {
 	}
 	maps.Copy(labels, desired.Labels)
 	desired.Labels = labels
+}
+
+func preserveResourceFields(desired, existing client.Object) {
+	desired.SetResourceVersion(existing.GetResourceVersion())
+	switch desiredObject := desired.(type) {
+	case *corev1.Service:
+		if existingObject, ok := existing.(*corev1.Service); ok {
+			preserveServiceFields(desiredObject, existingObject)
+		}
+	case *appsv1.Deployment:
+		if existingObject, ok := existing.(*appsv1.Deployment); ok {
+			preserveDeploymentFields(desiredObject, existingObject)
+		}
+	}
+}
+
+func preserveDeploymentFields(desired, existing *appsv1.Deployment) {
+	desired.SetFinalizers(append([]string(nil), existing.GetFinalizers()...))
+	desired.Annotations = mergePreservedMetadata(existing.Annotations, desired.Annotations)
+	desired.Labels = mergePreservedMetadata(existing.Labels, desired.Labels)
+	desired.Spec.Template.Annotations = mergePreservedMetadata(existing.Spec.Template.Annotations, desired.Spec.Template.Annotations)
+	desired.Spec.Template.Labels = mergePreservedMetadata(existing.Spec.Template.Labels, desired.Spec.Template.Labels)
+	if desired.Spec.RevisionHistoryLimit == nil {
+		desired.Spec.RevisionHistoryLimit = existing.Spec.RevisionHistoryLimit
+	}
+	if desired.Spec.ProgressDeadlineSeconds == nil {
+		desired.Spec.ProgressDeadlineSeconds = existing.Spec.ProgressDeadlineSeconds
+	}
+}
+
+func mergePreservedMetadata(existing, desired map[string]string) map[string]string {
+	merged := maps.Clone(existing)
+	if merged == nil {
+		merged = make(map[string]string, len(desired))
+	}
+	maps.Copy(merged, desired)
+	return merged
 }
 
 // setHashAnnotation merges the spec-hash annotation into the object's

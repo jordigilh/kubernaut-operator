@@ -29,6 +29,7 @@ import (
 	configv1 "github.com/openshift/api/config/v1"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -192,6 +193,29 @@ func testKnV2(kn *kubernautv1alpha2.Kubernaut) *kubernautv1alpha2.Kubernaut {
 	return kn.DeepCopy()
 }
 
+func testAPIFrontendHPA(kn *kubernautv1alpha2.Kubernaut, owned bool) *autoscalingv2.HorizontalPodAutoscaler {
+	hpa := &autoscalingv2.HorizontalPodAutoscaler{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      resources.ComponentAPIFrontend + "-hpa",
+			Namespace: kn.Namespace,
+		},
+		Spec: autoscalingv2.HorizontalPodAutoscalerSpec{
+			ScaleTargetRef: autoscalingv2.CrossVersionObjectReference{
+				APIVersion: "apps/v1",
+				Kind:       "Deployment",
+				Name:       resources.DeploymentName(resources.ComponentAPIFrontend),
+			},
+			MinReplicas: ptr.To(int32(1)),
+			MaxReplicas: 5,
+		},
+	}
+	if owned {
+		resources.StampOwnership(kn, hpa)
+		Expect(resources.SetOwnerReference(kn, hpa, k8sClient.Scheme())).To(Succeed())
+	}
+	return hpa
+}
+
 // setAllDeploymentsReady marks every active service Deployment as ready.
 // Uses ActiveComponents rather than AllComponents: opt-in components
 // (Gateway, APIFrontend, FleetMetadataCache) don't get a Deployment at all
@@ -332,6 +356,14 @@ func cleanupNamespacedResources(ctx context.Context) {
 	_ = k8sClient.List(ctx, depList, client.InNamespace(testNamespace), client.MatchingLabels{"app.kubernetes.io/managed-by": "kubernaut-operator"})
 	for i := range depList.Items {
 		_ = k8sClient.Delete(ctx, &depList.Items[i], &client.DeleteOptions{PropagationPolicy: &propagation})
+	}
+
+	// HPAs are not included in the operator-managed label sweep because the
+	// lifecycle specs also exercise preservation of foreign HPAs.
+	hpaList := &autoscalingv2.HorizontalPodAutoscalerList{}
+	_ = k8sClient.List(ctx, hpaList, client.InNamespace(testNamespace))
+	for i := range hpaList.Items {
+		_ = k8sClient.Delete(ctx, &hpaList.Items[i])
 	}
 
 	// ConfigMaps
@@ -3161,7 +3193,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	// ======================================================================
 
 	Context("API Frontend Lifecycle", func() {
-		It("creates AF Deployment, ConfigMap, Service, and ClusterRole when AF is enabled (default)", func() {
+		It("IT-AF-621-001 creates a one-replica Recreate AF Deployment without an AF HPA", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToDeployPhase(ctx)
@@ -3171,6 +3203,23 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				Name: resources.DeploymentName(resources.ComponentAPIFrontend), Namespace: testNamespace,
 			}, dep)
 			Expect(err).NotTo(HaveOccurred(), "AF Deployment should be created")
+			Expect(dep.Spec.Replicas).NotTo(BeNil())
+			Expect(*dep.Spec.Replicas).To(Equal(int32(1)))
+			Expect(dep.Spec.Strategy.Type).To(Equal(appsv1.RecreateDeploymentStrategyType))
+
+			hpa := &autoscalingv2.HorizontalPodAutoscaler{}
+			err = k8sClient.Get(ctx, types.NamespacedName{
+				Name: resources.ComponentAPIFrontend + "-hpa", Namespace: testNamespace,
+			}, hpa)
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "AF HPA should not be created")
+
+			dsHPA := &autoscalingv2.HorizontalPodAutoscaler{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: resources.ComponentDataStorage + "-hpa", Namespace: testNamespace,
+			}, dsHPA)).To(Succeed(), "DataStorage HPA should remain managed")
+			Expect(dsHPA.Spec.MinReplicas).NotTo(BeNil())
+			Expect(*dsHPA.Spec.MinReplicas).To(Equal(int32(1)))
+			Expect(dsHPA.Spec.MaxReplicas).To(Equal(int32(5)))
 
 			cm := &corev1.ConfigMap{}
 			err = k8sClient.Get(ctx, types.NamespacedName{Name: "apifrontend-config", Namespace: testNamespace}, cm)
@@ -3186,6 +3235,148 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			crName := testNamespace + "-apifrontend-role"
 			err = k8sClient.Get(ctx, types.NamespacedName{Name: crName}, cr)
 			Expect(err).NotTo(HaveOccurred(), "AF ClusterRole should be created")
+		})
+
+		It("IT-AF-621-002 repairs hash-preserved AF Deployment drift through Reconcile", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+			r := reconcileToDeployPhase(ctx)
+
+			key := types.NamespacedName{
+				Name: resources.DeploymentName(resources.ComponentAPIFrontend), Namespace: testNamespace,
+			}
+			dep := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, key, dep)).To(Succeed())
+			originalSpecHash := dep.Annotations[resources.AnnotationSpecHash]
+			Expect(originalSpecHash).NotTo(BeEmpty())
+			dep.Spec.Replicas = ptr.To(int32(3))
+			dep.Spec.Strategy.Type = appsv1.RollingUpdateDeploymentStrategyType
+			dep.Annotations["platform.example/live-marker"] = preservedMetadataValue
+			dep.Labels["platform.example/live-label"] = preservedMetadataValue
+			dep.Spec.Template.Annotations["platform.example/live-pod-marker"] = preservedMetadataValue
+			dep.Spec.Template.Labels["platform.example/live-pod-label"] = preservedMetadataValue
+			dep.Finalizers = []string{"platform.example/finalizer"}
+			revisionHistoryLimit := int32(7)
+			progressDeadlineSeconds := int32(123)
+			dep.Spec.RevisionHistoryLimit = &revisionHistoryLimit
+			dep.Spec.ProgressDeadlineSeconds = &progressDeadlineSeconds
+			DeferCleanup(func() {
+				live := &appsv1.Deployment{}
+				err := k8sClient.Get(ctx, key, live)
+				if errors.IsNotFound(err) {
+					return
+				}
+				Expect(err).NotTo(HaveOccurred())
+				live.Finalizers = nil
+				Expect(k8sClient.Update(ctx, live)).To(Succeed())
+			})
+			Expect(k8sClient.Update(ctx, dep)).To(Succeed())
+			Expect(dep.Annotations[resources.AnnotationSpecHash]).To(Equal(originalSpecHash))
+
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			repaired := &appsv1.Deployment{}
+			Eventually(func() error { return k8sClient.Get(ctx, key, repaired) }, timeout, interval).Should(Succeed())
+			Expect(*repaired.Spec.Replicas).To(Equal(int32(1)))
+			Expect(repaired.Spec.Strategy.Type).To(Equal(appsv1.RecreateDeploymentStrategyType))
+			Expect(repaired.Annotations).To(HaveKeyWithValue("platform.example/live-marker", preservedMetadataValue))
+			Expect(repaired.Labels).To(HaveKeyWithValue("platform.example/live-label", preservedMetadataValue))
+			Expect(repaired.Spec.Template.Annotations).To(HaveKeyWithValue("platform.example/live-pod-marker", preservedMetadataValue))
+			Expect(repaired.Spec.Template.Labels).To(HaveKeyWithValue("platform.example/live-pod-label", preservedMetadataValue))
+			Expect(repaired.Finalizers).To(ConsistOf("platform.example/finalizer"))
+			Expect(repaired.Spec.RevisionHistoryLimit).NotTo(BeNil())
+			Expect(*repaired.Spec.RevisionHistoryLimit).To(Equal(revisionHistoryLimit))
+			Expect(repaired.Spec.ProgressDeadlineSeconds).NotTo(BeNil())
+			Expect(*repaired.Spec.ProgressDeadlineSeconds).To(Equal(progressDeadlineSeconds))
+			repairedResourceVersion := repaired.ResourceVersion
+
+			_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			unchanged := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, key, unchanged)).To(Succeed())
+			Expect(unchanged.ResourceVersion).To(Equal(repairedResourceVersion), "second reconcile should not update the repaired AF Deployment")
+		})
+
+		It("IT-AF-621-003 prunes an owned legacy AF HPA during enabled reconciliation", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+			r := reconcileToDeployPhase(ctx)
+
+			kn := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(k8sClient.Create(ctx, testAPIFrontendHPA(kn, true))).To(Succeed())
+
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name: resources.ComponentAPIFrontend + "-hpa", Namespace: testNamespace,
+				}, &autoscalingv2.HorizontalPodAutoscaler{})
+			}, timeout, interval).Should(MatchError(ContainSubstring("not found")))
+		})
+
+		It("IT-AF-621-004 preserves a foreign AF HPA and reports an ownership conflict", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+			r := reconcileToDeployPhase(ctx)
+
+			kn := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			foreign := testAPIFrontendHPA(kn, false)
+			Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
+			foreignBefore := &autoscalingv2.HorizontalPodAutoscaler{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(foreign), foreignBefore)).To(Succeed())
+			recorder := r.Recorder.(*events.FakeRecorder)
+			for len(recorder.Events) > 0 {
+				<-recorder.Events
+			}
+
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			live := &autoscalingv2.HorizontalPodAutoscaler{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(foreign), live)).To(Succeed())
+			Expect(live.ObjectMeta).To(Equal(foreignBefore.ObjectMeta))
+			Expect(live.Spec).To(Equal(foreignBefore.Spec))
+			Expect(live.Status).To(Equal(foreignBefore.Status))
+			foundConflict := false
+			for len(recorder.Events) > 0 {
+				if strings.Contains(<-recorder.Events, "OwnershipConflict") {
+					foundConflict = true
+				}
+			}
+			Expect(foundConflict).To(BeTrue(), "foreign HPA cleanup should emit an OwnershipConflict warning event")
+		})
+
+		It("IT-AF-621-005 prunes an owned legacy AF HPA when AF is disabled after enablement", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+			r := reconcileToDeployPhase(ctx)
+
+			kn := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(k8sClient.Create(ctx, testAPIFrontendHPA(kn, true))).To(Succeed())
+			foreign := testAPIFrontendHPA(kn, false)
+			foreign.Name = "external-apifrontend-hpa"
+			Expect(k8sClient.Create(ctx, foreign)).To(Succeed())
+			foreignBefore := &autoscalingv2.HorizontalPodAutoscaler{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(foreign), foreignBefore)).To(Succeed())
+			disabled := false
+			kn.Spec.APIFrontend.Enabled = &disabled
+			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
+
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+			Eventually(func() error {
+				return k8sClient.Get(ctx, types.NamespacedName{
+					Name: resources.ComponentAPIFrontend + "-hpa", Namespace: testNamespace,
+				}, &autoscalingv2.HorizontalPodAutoscaler{})
+			}, timeout, interval).Should(MatchError(ContainSubstring("not found")))
+			foreignAfter := &autoscalingv2.HorizontalPodAutoscaler{}
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(foreign), foreignAfter)).To(Succeed())
+			Expect(foreignAfter.ObjectMeta).To(Equal(foreignBefore.ObjectMeta))
+			Expect(foreignAfter.Spec).To(Equal(foreignBefore.Spec))
+			Expect(foreignAfter.Status).To(Equal(foreignBefore.Status))
 		})
 
 		// Proves Reconcile publishes the corrected role and binding.
