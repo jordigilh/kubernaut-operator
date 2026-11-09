@@ -633,24 +633,34 @@ it is not automatic just because the user belongs to a Keycloak group.
 **API Frontend has a brief outage during an upgrade or template change:**
 
 This is expected. AF uses one replica and a `Recreate` strategy to prevent old
-and new AF pods from overlapping. The old pod is terminated before the
-replacement becomes ready, so active connections or sessions can be dropped.
+and new AF pods from overlapping during a Deployment rollout. The old pod is
+terminated before the replacement becomes ready, so active connections or
+sessions can be dropped. This rollout-ordering guarantee does not cover manual
+pod deletion: Kubernetes may start a replacement while the deleted pod is
+still terminating.
 Schedule planned upgrades during a low-traffic window and verify the new pod's
 readiness probe before restoring dependent traffic.
 
 **API Frontend runs above one replica:**
 
 The operator does not create an AF HPA and repairs operator-managed Deployment
-replica/strategy drift. Check for a foreign or manually managed HPA:
+replica/strategy drift. List every HPA in the namespace, then inspect each
+`spec.scaleTargetRef` for the API Frontend Deployment (`apifrontend`):
 
 ```bash
+oc get hpa -n kubernaut-system
+oc get hpa -n kubernaut-system \
+  -o custom-columns='NAME:.metadata.name,TARGET_KIND:.spec.scaleTargetRef.kind,TARGET_NAME:.spec.scaleTargetRef.name,MIN:.spec.minReplicas,MAX:.spec.maxReplicas'
 oc get hpa -n kubernaut-system apifrontend-hpa -o yaml
 oc get events -n kubernaut-system --field-selector reason=OwnershipConflict
 ```
 
-Foreign HPAs are preserved by design and can scale AF above one. Identify their
-administrator and remove or reconfigure them through the owning change process;
-the operator will not adopt or delete them. Do not use a label-wide cleanup.
+The exact-name `apifrontend-hpa` check and `OwnershipConflict` events are
+supplementary diagnostics for the legacy operator-owned name. Foreign HPAs,
+including differently named HPAs that target `apifrontend`, are preserved by
+design and can scale AF above one. Identify their administrator and remove or
+reconfigure them through the owning change process; the operator will not adopt
+or delete them. Do not use a label-wide or target-wide cleanup.
 
 **Console shows "Access Denied — You don't have permission to use Kubernaut":**
 

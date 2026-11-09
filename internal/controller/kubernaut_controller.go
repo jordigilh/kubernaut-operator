@@ -2186,6 +2186,8 @@ func (r *KubernautReconciler) ensureDeployments(
 	return nil
 }
 
+// deployWorkloads reconciles namespaced workloads and removes the legacy
+// operator-owned API Frontend HPA before handling enabled or disabled extras.
 func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, cmHashes map[string]string, telemetryRevisions telemetryMaterialRevisionSet) error {
 	if err := r.pruneLegacyAPIFrontendHPAs(ctx, kn); err != nil {
 		return err
@@ -2554,6 +2556,8 @@ func (r *KubernautReconciler) pruneLegacyAPIFrontendHPAs(ctx context.Context, kn
 	return nil
 }
 
+// deployAPIFrontendExtras reconciles API Frontend monitoring and configuration
+// resources after the shared legacy-HPA cleanup has completed.
 func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
 	if err := r.ensureAPIFrontendMonitoring(ctx, kn); err != nil {
 		return err
@@ -4581,6 +4585,8 @@ func (r *KubernautReconciler) ensureResource(ctx context.Context, kn *kubernautv
 	return err
 }
 
+// ensureResourceChanged creates or updates a managed resource and reports
+// whether the API server object changed.
 func (r *KubernautReconciler) ensureResourceChanged(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, obj client.Object) (bool, error) {
 	resources.StampOwnership(kn, obj)
 	desiredHash := resources.SpecHash(obj)
@@ -4776,6 +4782,9 @@ func preserveServiceFields(desired, existing *corev1.Service) {
 	desired.Labels = labels
 }
 
+// preserveResourceFields carries server-owned fields into an update. Deployment
+// preservation is intentionally limited to API Frontend so unrelated workload
+// update behavior remains unchanged.
 func preserveResourceFields(desired, existing client.Object) {
 	desired.SetResourceVersion(existing.GetResourceVersion())
 	switch desiredObject := desired.(type) {
@@ -4784,12 +4793,14 @@ func preserveResourceFields(desired, existing client.Object) {
 			preserveServiceFields(desiredObject, existingObject)
 		}
 	case *appsv1.Deployment:
-		if existingObject, ok := existing.(*appsv1.Deployment); ok {
+		if existingObject, ok := existing.(*appsv1.Deployment); ok && desiredObject.Labels["app"] == resources.ComponentAPIFrontend {
 			preserveDeploymentFields(desiredObject, existingObject)
 		}
 	}
 }
 
+// preserveDeploymentFields keeps live API Frontend metadata, finalizers, and
+// API-defaulted fields when repairing hash-preserved replica or strategy drift.
 func preserveDeploymentFields(desired, existing *appsv1.Deployment) {
 	desired.SetFinalizers(append([]string(nil), existing.GetFinalizers()...))
 	desired.Annotations = mergePreservedMetadata(existing.Annotations, desired.Annotations)
@@ -4804,6 +4815,8 @@ func preserveDeploymentFields(desired, existing *appsv1.Deployment) {
 	}
 }
 
+// mergePreservedMetadata retains live metadata while allowing desired managed
+// keys to override stale values.
 func mergePreservedMetadata(existing, desired map[string]string) map[string]string {
 	merged := maps.Clone(existing)
 	if merged == nil {

@@ -7,8 +7,10 @@ at one replica, does not overlap old and new AF pods during a Deployment
 rollout, and does not allow the removed operator HPA to reintroduce scaling.
 DataStorage autoscaling is a regression boundary and remains unchanged.
 
-Future AF HA, coordination, failover, and live qualification are out of scope
-for this issue and belong to `kubernaut#2606`. Console `#168` is separate.
+Current AF Deployment-rollout qualification on live Kind/OCP remains a required
+residual check for this issue because envtest cannot prove pod ordering. Future
+AF HA, coordination, and failover qualification are out of scope for this issue
+and belong to `kubernaut#2606`. Console `#168` is separate.
 
 ## Acceptance matrix
 
@@ -18,7 +20,7 @@ for this issue and belong to `kubernaut#2606`. Console `#168` is separate.
 | AF replacement prevents old/new overlap | AF Deployment renders `strategy.type=Recreate`; actual pod ordering is reserved for live Kind/OCP qualification | Unit and envtest; live qualification residual |
 | Operator does not manage AF HPA | AF HPA builder/desire path is absent; enabled reconciliation has no `apifrontend-hpa` | Unit and envtest |
 | Legacy operator AF HPA is removed safely | Exact evidenced name `apifrontend-hpa` is pruned through `deleteIfExists` on enabled and disabled paths | Envtest |
-| Foreign AF HPA is preserved | Same-name foreign HPA remains unchanged and emits Warning `OwnershipConflict` | Envtest |
+| Foreign AF HPA is preserved | Same-name and differently named foreign HPAs targeting AF remain unchanged; the same-name case emits Warning `OwnershipConflict` | Envtest |
 | Hash-preserved AF Deployment drift repairs | Manual replica/strategy changes converge even with the original spec hash; metadata/defaults remain intact; second reconcile is a no-op | Controller unit and envtest |
 | DataStorage behavior is unchanged | DataStorage HPA remains `minReplicas=1`, `maxReplicas=5`; AF-only drift logic does not reset DataStorage scaling | Unit and controller unit/lifecycle |
 | Sensitive data remains excluded | Assertions/log checks use object metadata and resource fields only; no credentials, tokens, cookies, or Authorization headers are added | Review gate |
