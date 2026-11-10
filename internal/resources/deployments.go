@@ -966,6 +966,9 @@ func APIFrontendDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alp
 			{Name: "metrics", ContainerPort: metricsPort, Protocol: corev1.ProtocolTCP},
 		},
 		ProbePort: healthPort,
+		Strategy: &appsv1.DeploymentStrategy{
+			Type: appsv1.RecreateDeploymentStrategyType,
+		},
 		PodAnnotations: map[string]string{
 			"prometheus.io/scrape": "true",
 			"prometheus.io/port":   fmt.Sprintf("%d", metricsPort),

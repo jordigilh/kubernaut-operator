@@ -91,6 +91,20 @@ The AuthWebhook deployment uses a **Recreate** strategy to prevent TLS certifica
 
 **Recommendation:** schedule operator upgrades during low-activity windows.
 
+### API Frontend single-replica rollout
+
+API Frontend is intentionally limited to one operator-managed replica and uses
+`Recreate` during upgrades or template changes. The old pod is terminated before
+the replacement starts, creating a brief AF availability gap and potentially
+terminating active connections or sessions. The operator does not create an AF
+HPA; DataStorage autoscaling remains independent at one to five replicas.
+
+If a foreign HPA uses the legacy operator-managed name `apifrontend-hpa`, the
+operator preserves it and reports an `OwnershipConflict`; that external
+autoscaler can override the single-replica guarantee and must be resolved by
+its administrator. HPAs with other names are outside this exact-name cleanup
+contract and remain administrator-managed.
+
 ## Development
 
 ```bash

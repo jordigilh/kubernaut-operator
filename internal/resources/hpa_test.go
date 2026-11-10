@@ -66,26 +66,6 @@ var _ = Describe("HPA Builders", func() {
 		})
 	})
 
-	Describe("APIFrontendHPA", func() {
-		It("targets the apifrontend Deployment", func() {
-			hpa := APIFrontendHPA(kn())
-			Expect(hpa.Spec.ScaleTargetRef.Name).To(Equal(DeploymentName(ComponentAPIFrontend)))
-		})
-
-		It("sets MinReplicas=1 and MaxReplicas=5", func() {
-			hpa := APIFrontendHPA(kn())
-			Expect(*hpa.Spec.MinReplicas).To(Equal(int32(1)))
-			Expect(hpa.Spec.MaxReplicas).To(Equal(int32(5)))
-		})
-
-		It("includes CPU at 75% and memory at 80%", func() {
-			hpa := APIFrontendHPA(kn())
-			Expect(hpa.Spec.Metrics).To(HaveLen(2))
-			Expect(*hpa.Spec.Metrics[0].Resource.Target.AverageUtilization).To(Equal(int32(75)))
-			Expect(*hpa.Spec.Metrics[1].Resource.Target.AverageUtilization).To(Equal(int32(80)))
-		})
-	})
-
 	Describe("buildHPA without memory metric", func() {
 		It("omits memory metric when MemoryTargetPercent is 0", func() {
 			hpa := buildHPA(kn(), HPASpec{

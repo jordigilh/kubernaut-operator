@@ -1886,6 +1886,16 @@ var _ = Describe("APIFrontendDeployment", func() {
 		expectDeploymentBasics(dep, "apifrontend")
 	})
 
+	It("UT-AF-621-001 uses one replica and Recreate strategy", func() {
+		kn := testKubernautWithAF()
+		dep, err := APIFrontendDeployment(kn, testKnV2(kn))
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(dep.Spec.Replicas).NotTo(BeNil())
+		Expect(*dep.Spec.Replicas).To(Equal(int32(1)))
+		Expect(dep.Spec.Strategy.Type).To(Equal(appsv1.RecreateDeploymentStrategyType))
+	})
+
 	It("exposes HTTPS (8443), health (8081), and metrics (9090) ports", func() {
 		kn := testKubernautWithAF()
 		dep, err := APIFrontendDeployment(kn, testKnV2(kn))
