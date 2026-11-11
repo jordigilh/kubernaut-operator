@@ -426,6 +426,14 @@ var _ = Describe("API Frontend inventory RBAC unit decisions (#623)", Label("uni
 		drifted, handled = rbacContentDrifted(&rbacv1.ClusterRoleBinding{}, &rbacv1.ClusterRole{})
 		Expect(drifted).To(BeFalse())
 		Expect(handled).To(BeTrue())
+
+		drifted, handled = rbacContentDrifted(&rbacv1.Role{}, &rbacv1.RoleBinding{})
+		Expect(drifted).To(BeFalse())
+		Expect(handled).To(BeTrue())
+
+		drifted, handled = rbacContentDrifted(&rbacv1.RoleBinding{}, &rbacv1.Role{})
+		Expect(drifted).To(BeFalse())
+		Expect(handled).To(BeTrue())
 	})
 
 	It("surfaces immutable binding delete and recreate failures", func() {
