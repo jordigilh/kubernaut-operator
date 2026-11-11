@@ -1044,23 +1044,10 @@ func ConsoleAccessClusterRoleBinding(kn *kubernautv1alpha2.Kubernaut) *rbacv1.Cl
 	}
 }
 
-// ownerChainResolutionRules returns the read-only PolicyRules needed for
-// traversing Kubernetes owner-reference chains. Used by Gateway and EM to
-// correlate workloads with their higher-order controllers.
-//
-// #277: shrunk to only genuinely universal, non-ecosystem-specific kinds
-// (PDB + Ingress networking). This previously also unconditionally granted
-// read access to OLM, Istio, cert-manager, ArgoCD, OpenShift Routes, and
-// KubeVirt/CDI CRDs regardless of whether a cluster actually ran any of
-// those ecosystems -- an unbounded, ever-growing list (every new ecosystem
-// needed a code change here) that also violated least-privilege (SC-7/AC-6)
-// by forcing permission surface onto clusters that don't run them. Clusters
-// that do run one of those ecosystems and want Kubernaut's owner-chain
-// correlation to see it now supply their own ClusterRole and reference its
-// name via spec.additionalClusterRoles -- the same mechanism KA already
-// used pre-#277, generalized to Gateway/EM too. See
-// docs/architecture/decisions (kubernaut DD-GATEWAY-018) for the full
-// alternatives analysis.
+// ownerChainResolutionRules returns the universal, non-ecosystem-specific
+// reads shared by Gateway and EffectivenessMonitor while resolving owner
+// references. Ecosystem-specific owner-chain reads remain administrator-
+// supplied through spec.additionalClusterRoles.
 func ownerChainResolutionRules() []rbacv1.PolicyRule {
 	return []rbacv1.PolicyRule{
 		{APIGroups: []string{"policy"}, Resources: []string{"poddisruptionbudgets"}, Verbs: []string{"get", "list", "watch"}},
@@ -1105,21 +1092,16 @@ func groupClusterRoleBinding(name, roleName, groupName string, labels map[string
 // --- ClusterRole definitions (namespace-prefixed for multi-instance safety) ---
 
 func gatewayClusterRole(kn *kubernautv1alpha2.Kubernaut, labels map[string]string) *rbacv1.ClusterRole {
-	ocr := ownerChainResolutionRules()
-	rules := make([]rbacv1.PolicyRule, 0, 10+len(ocr)) //nolint:mnd
+	targetReads := gatewayTargetResourceReadRules()
+	rules := make([]rbacv1.PolicyRule, 0, len(targetReads)+5)
 	rules = append(rules, []rbacv1.PolicyRule{
 		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests"}, Verbs: []string{"create", "get", "list", "watch", "update", "patch"}},
 		{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationrequests/status"}, Verbs: []string{"update", "patch"}},
-		{APIGroups: []string{""}, Resources: []string{"namespaces"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{""}, Resources: []string{"nodes", "pods", "services", "persistentvolumes", "persistentvolumeclaims"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{"apps"}, Resources: []string{"deployments", "replicasets", "statefulsets", "daemonsets"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get", "list", "watch"}},
-		{APIGroups: []string{"autoscaling"}, Resources: []string{"horizontalpodautoscalers"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"coordination.k8s.io"}, Resources: []string{"leases"}, Verbs: []string{"get", "create", "update", "delete"}},
 		{APIGroups: []string{"authentication.k8s.io"}, Resources: []string{"tokenreviews"}, Verbs: []string{"create"}},
 		{APIGroups: []string{"authorization.k8s.io"}, Resources: []string{"subjectaccessreviews"}, Verbs: []string{"create"}},
 	}...)
-	rules = append(rules, ocr...)
+	rules = append(rules, targetReads...)
 	return &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{Name: clusterRoleName(kn, "gateway-role"), Labels: labels},
 		Rules:      rules,

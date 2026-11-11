@@ -1046,11 +1046,44 @@ func (r *KubernautReconciler) deployCoreRBAC(ctx context.Context, kn *kubernautv
 	return r.deployAdditionalComponentRBAC(ctx, kn, knV2)
 }
 
+// inventoryReadSourceRoles resolves the administrator-approved Gateway source
+// ClusterRoles used to derive AF's separate metadata-inventory boundary. A
+// missing source is handled by the existing additional-RBAC status path; it is
+// deliberately omitted from the projection rather than represented by stale
+// rules. Other read failures are returned after the safe built-in projection
+// is reconciled by deployClusterScopedCoreRBAC.
+func (r *KubernautReconciler) inventoryReadSourceRoles(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) ([]rbacv1.ClusterRole, error) {
+	if kn == nil || knV2 == nil || !kn.Spec.APIFrontendEnabled() {
+		return nil, nil
+	}
+
+	roleNames := deduplicate(knV2.Spec.AdditionalClusterRoles)
+	roles := make([]rbacv1.ClusterRole, 0, len(roleNames))
+	for _, roleName := range roleNames {
+		role := &rbacv1.ClusterRole{}
+		if err := r.Get(ctx, types.NamespacedName{Name: roleName}, role); err != nil {
+			if apierrors.IsNotFound(err) {
+				logf.FromContext(ctx).Info("inventory source ClusterRole not found; omitting from projection",
+					"clusterRole", roleName, "namespace", kn.Namespace, "name", kn.Name,
+					"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+				continue
+			}
+			return nil, fmt.Errorf("reading inventory source ClusterRole %s: %w", roleName, err)
+		}
+		roles = append(roles, *role)
+	}
+	return roles, nil
+}
+
 // deployClusterScopedCoreRBAC ensures the always-computed ClusterRoles/
 // ClusterRoleBindings and prunes any orphaned by a feature toggle-off
 // (#341) in the same pass.
 func (r *KubernautReconciler) deployClusterScopedCoreRBAC(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) error {
 	desiredCRs := resources.ClusterRoles(kn, knV2)
+	additionalRoles, sourceErr := r.inventoryReadSourceRoles(ctx, kn, knV2)
+	if inventoryRole := resources.APIFrontendInventoryReadClusterRole(kn, additionalRoles); inventoryRole != nil {
+		desiredCRs = append(desiredCRs, inventoryRole)
+	}
 	for _, cr := range desiredCRs {
 		if err := r.ensureUnowned(ctx, kn, cr); err != nil {
 			return fmt.Errorf("ensuring ClusterRole %s: %w", cr.Name, err)
@@ -1062,8 +1095,17 @@ func (r *KubernautReconciler) deployClusterScopedCoreRBAC(ctx context.Context, k
 			return fmt.Errorf("ensuring CRB %s: %w", crb.Name, err)
 		}
 	}
+	if inventoryBinding := resources.APIFrontendInventoryReadClusterRoleBinding(kn); inventoryBinding != nil {
+		if err := r.ensureUnowned(ctx, kn, inventoryBinding); err != nil {
+			return fmt.Errorf("ensuring AF inventory CRB %s: %w", inventoryBinding.Name, err)
+		}
+		desiredCRBs = append(desiredCRBs, inventoryBinding)
+	}
 	if errs := r.pruneOrphanedCoreClusterRBAC(ctx, kn, desiredCRs, desiredCRBs); len(errs) > 0 {
 		return fmt.Errorf("pruning orphaned core cluster RBAC: %w", errors.Join(errs...))
+	}
+	if sourceErr != nil {
+		return fmt.Errorf("resolving AF inventory source ClusterRoles: %w", sourceErr)
 	}
 	return nil
 }
@@ -2148,7 +2190,12 @@ func (r *KubernautReconciler) ensureDeployments(
 	return nil
 }
 
+// deployWorkloads reconciles namespaced workloads and removes the legacy
+// operator-owned API Frontend HPA before handling enabled or disabled extras.
 func (r *KubernautReconciler) deployWorkloads(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut, cmHashes map[string]string, telemetryRevisions telemetryMaterialRevisionSet) error {
+	if err := r.pruneLegacyAPIFrontendHPAs(ctx, kn); err != nil {
+		return err
+	}
 	if err := r.reconcileNetworkPolicies(ctx, kn, knV2); err != nil {
 		return err
 	}
@@ -2492,12 +2539,30 @@ func (r *KubernautReconciler) pruneLegacyAuthWebhookServiceMonitor(ctx context.C
 	return nil
 }
 
-func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
-	afHPA := resources.APIFrontendHPA(kn)
-	if err := r.ensureNamespaced(ctx, kn, afHPA); err != nil {
-		return fmt.Errorf("ensuring AF HPA: %w", err)
+// pruneLegacyAPIFrontendHPAs removes the operator-managed AF HPA rendered by
+// releases that allowed AF to scale above one replica. The exact-name list is
+// intentionally narrow: foreign HPAs, including same-target HPAs with other
+// names, are administrator-owned and must remain untouched.
+func (r *KubernautReconciler) pruneLegacyAPIFrontendHPAs(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	for _, name := range []string{"apifrontend-hpa"} {
+		hpa := &autoscalingv2.HorizontalPodAutoscaler{}
+		key := client.ObjectKey{Namespace: kn.Namespace, Name: name}
+		if err := r.Get(ctx, key, hpa); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return fmt.Errorf("getting legacy api frontend HPA %s: %w", name, err)
+		}
+		if err := r.deleteIfExists(ctx, kn, hpa); err != nil {
+			return fmt.Errorf("deleting legacy api frontend HPA %s: %w", name, err)
+		}
 	}
+	return nil
+}
 
+// deployAPIFrontendExtras reconciles API Frontend monitoring and configuration
+// resources after the shared legacy-HPA cleanup has completed.
+func (r *KubernautReconciler) deployAPIFrontendExtras(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
 	if err := r.ensureAPIFrontendMonitoring(ctx, kn); err != nil {
 		return err
 	}
@@ -4516,13 +4581,16 @@ func (r *KubernautReconciler) ensureUnowned(ctx context.Context, kn *kubernautv1
 // falling through to the update path.
 //
 // When the spec-hash annotation matches (no spec change), ensureResource
-// additionally checks for content drift on ConfigMaps — detecting external
-// modifications that preserved the annotation but altered the data.
+// additionally checks for content drift on managed Services and the
+// API Frontend Deployment — detecting external modifications that preserved
+// the annotation but altered reconciled fields.
 func (r *KubernautReconciler) ensureResource(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, obj client.Object) error {
 	_, err := r.ensureResourceChanged(ctx, kn, obj)
 	return err
 }
 
+// ensureResourceChanged creates or updates a managed resource and reports
+// whether the API server object changed.
 func (r *KubernautReconciler) ensureResourceChanged(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, obj client.Object) (bool, error) {
 	resources.StampOwnership(kn, obj)
 	desiredHash := resources.SpecHash(obj)
@@ -4547,14 +4615,21 @@ func (r *KubernautReconciler) ensureResourceChanged(ctx context.Context, kn *kub
 	if err := r.checkResourceOwnership(ctx, kn, existing, metav1.GetControllerOf(obj) != nil); err != nil {
 		return false, err
 	}
+	if clusterRoleBindingRoleRefChanged(obj, existing) {
+		if err := r.deleteObservedResource(ctx, existing); err != nil && !apierrors.IsNotFound(err) {
+			return false, fmt.Errorf("deleting immutable ClusterRoleBinding %s: %w", key, err)
+		}
+		if err := r.Create(ctx, obj); err != nil {
+			return false, fmt.Errorf("recreating immutable ClusterRoleBinding %s: %w", key, err)
+		}
+		r.resourceLogger(ctx, kn, obj).Info("immutable ClusterRoleBinding recreated")
+		return true, nil
+	}
 	if existing.GetAnnotations()[resources.AnnotationSpecHash] == desiredHash && !contentDrifted(obj, existing) && ownershipMetadataMatches(obj, existing) {
 		return false, nil
 	}
 
-	obj.SetResourceVersion(existing.GetResourceVersion())
-	if service, ok := obj.(*corev1.Service); ok {
-		preserveServiceFields(service, existing.(*corev1.Service))
-	}
+	preserveResourceFields(obj, existing)
 	if err := r.Update(ctx, obj); err != nil {
 		r.resourceLogger(ctx, kn, obj).Error(err, "resource update failed")
 		return false, fmt.Errorf("updating %s: %w", key, err)
@@ -4589,6 +4664,17 @@ func (r *KubernautReconciler) createOrReadExisting(ctx context.Context, obj, exi
 // false positives. Services compare normalized operator-owned fields rather
 // than allocated addressing. See docs/design/PR-515-AUDIT-REMEDIATION.md.
 func contentDrifted(desired, existing client.Object) bool {
+	if drifted, handled := rbacContentDrifted(desired, existing); handled {
+		return drifted
+	}
+	if desiredDeployment, ok := desired.(*appsv1.Deployment); ok {
+		existingDeployment, sameType := existing.(*appsv1.Deployment)
+		if !sameType || desiredDeployment.Labels["app"] != resources.ComponentAPIFrontend {
+			return false
+		}
+		return !equality.Semantic.DeepEqual(desiredDeployment.Spec.Replicas, existingDeployment.Spec.Replicas) ||
+			!equality.Semantic.DeepEqual(desiredDeployment.Spec.Strategy, existingDeployment.Spec.Strategy)
+	}
 	if desiredService, ok := desired.(*corev1.Service); ok {
 		existingService, sameType := existing.(*corev1.Service)
 		return sameType && !equality.Semantic.DeepEqual(ownedServiceSpec(desiredService), ownedServiceSpec(existingService))
@@ -4616,6 +4702,38 @@ func contentDrifted(desired, existing client.Object) bool {
 	}
 
 	return false
+}
+
+// rbacContentDrifted compares mutable managed fields for RBAC objects while
+// leaving immutable ClusterRoleBinding RoleRef handling to the recreate path.
+func rbacContentDrifted(desired, existing client.Object) (bool, bool) {
+	switch desiredObject := desired.(type) {
+	case *rbacv1.ClusterRole:
+		existingObject, sameType := existing.(*rbacv1.ClusterRole)
+		if !sameType {
+			return false, true
+		}
+		return !equality.Semantic.DeepEqual(desiredObject.Rules, existingObject.Rules) ||
+			!equality.Semantic.DeepEqual(desiredObject.AggregationRule, existingObject.AggregationRule), true
+	case *rbacv1.ClusterRoleBinding:
+		existingObject, sameType := existing.(*rbacv1.ClusterRoleBinding)
+		if !sameType {
+			return false, true
+		}
+		return !equality.Semantic.DeepEqual(desiredObject.RoleRef, existingObject.RoleRef) ||
+			!equality.Semantic.DeepEqual(desiredObject.Subjects, existingObject.Subjects), true
+	default:
+		return false, false
+	}
+}
+
+// clusterRoleBindingRoleRefChanged reports the immutable field drift that
+// requires a managed ClusterRoleBinding to be deleted and recreated rather
+// than updated in place. Ownership is checked by the caller first.
+func clusterRoleBindingRoleRefChanged(desired, existing client.Object) bool {
+	desiredBinding, desiredOK := desired.(*rbacv1.ClusterRoleBinding)
+	existingBinding, existingOK := existing.(*rbacv1.ClusterRoleBinding)
+	return desiredOK && existingOK && !equality.Semantic.DeepEqual(desiredBinding.RoleRef, existingBinding.RoleRef)
 }
 
 func ownedServiceSpec(service *corev1.Service) corev1.ServiceSpec {
@@ -4666,6 +4784,50 @@ func preserveServiceFields(desired, existing *corev1.Service) {
 	}
 	maps.Copy(labels, desired.Labels)
 	desired.Labels = labels
+}
+
+// preserveResourceFields carries server-owned fields into an update. Deployment
+// preservation is intentionally limited to API Frontend so unrelated workload
+// update behavior remains unchanged.
+func preserveResourceFields(desired, existing client.Object) {
+	desired.SetResourceVersion(existing.GetResourceVersion())
+	switch desiredObject := desired.(type) {
+	case *corev1.Service:
+		if existingObject, ok := existing.(*corev1.Service); ok {
+			preserveServiceFields(desiredObject, existingObject)
+		}
+	case *appsv1.Deployment:
+		if existingObject, ok := existing.(*appsv1.Deployment); ok && desiredObject.Labels["app"] == resources.ComponentAPIFrontend {
+			preserveDeploymentFields(desiredObject, existingObject)
+		}
+	}
+}
+
+// preserveDeploymentFields keeps live API Frontend metadata, finalizers, and
+// API-defaulted fields when repairing hash-preserved replica or strategy drift.
+func preserveDeploymentFields(desired, existing *appsv1.Deployment) {
+	desired.SetFinalizers(append([]string(nil), existing.GetFinalizers()...))
+	desired.Annotations = mergePreservedMetadata(existing.Annotations, desired.Annotations)
+	desired.Labels = mergePreservedMetadata(existing.Labels, desired.Labels)
+	desired.Spec.Template.Annotations = mergePreservedMetadata(existing.Spec.Template.Annotations, desired.Spec.Template.Annotations)
+	desired.Spec.Template.Labels = mergePreservedMetadata(existing.Spec.Template.Labels, desired.Spec.Template.Labels)
+	if desired.Spec.RevisionHistoryLimit == nil {
+		desired.Spec.RevisionHistoryLimit = existing.Spec.RevisionHistoryLimit
+	}
+	if desired.Spec.ProgressDeadlineSeconds == nil {
+		desired.Spec.ProgressDeadlineSeconds = existing.Spec.ProgressDeadlineSeconds
+	}
+}
+
+// mergePreservedMetadata retains live metadata while allowing desired managed
+// keys to override stale values.
+func mergePreservedMetadata(existing, desired map[string]string) map[string]string {
+	merged := maps.Clone(existing)
+	if merged == nil {
+		merged = make(map[string]string, len(desired))
+	}
+	maps.Copy(merged, desired)
+	return merged
 }
 
 // setHashAnnotation merges the spec-hash annotation into the object's
@@ -4815,7 +4977,8 @@ func (r *KubernautReconciler) deleteIfExists(ctx context.Context, kn *kubernautv
 // SetupWithManager sets up the controller with the Manager.
 // Owns() watches trigger reconciliation when owned child resources change.
 // Cluster-scoped resources (ClusterRoles, CRBs, webhook configs) cannot be
-// owned, so they rely on the periodic requeue timer for drift detection.
+// owned, so inventory source/binding watches supplement the periodic requeue
+// timer for drift detection.
 func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.Client == nil {
 		r.Client = mgr.GetClient()
@@ -4860,6 +5023,8 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&policyv1.PodDisruptionBudget{}).
 		Owns(&rbacv1.Role{}).
 		Owns(&rbacv1.RoleBinding{}).
+		Watches(&rbacv1.ClusterRole{}, handler.EnqueueRequestsFromMapFunc(r.inventorySourceClusterRoleToKubernaut)).
+		Watches(&rbacv1.ClusterRoleBinding{}, handler.EnqueueRequestsFromMapFunc(r.inventoryBindingToKubernaut)).
 		Owns(&autoscalingv2.HorizontalPodAutoscaler{})
 	if openShiftAPIServerWatchSupported(mgr.GetRESTMapper()) {
 		b = b.Watches(&configv1.APIServer{},
@@ -4879,6 +5044,55 @@ func (r *KubernautReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return b.Named("kubernaut").
 		Complete(r)
+}
+
+// inventorySourceClusterRoleToKubernaut maps changes to explicitly configured
+// additional Gateway source roles. The source role itself is not owned by the
+// operator, so a direct watch closes the normal role-drift window while the
+// running-phase requeue remains the backstop.
+func (r *KubernautReconciler) inventorySourceClusterRoleToKubernaut(ctx context.Context, object client.Object) []reconcile.Request {
+	if object == nil {
+		return nil
+	}
+	instances := &kubernautv1alpha2.KubernautList{}
+	if err := r.List(ctx, instances); err != nil {
+		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for inventory source role event",
+			"clusterRole", object.GetName())
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(instances.Items))
+	for index := range instances.Items {
+		kn := &instances.Items[index]
+		if !kn.Spec.APIFrontendEnabled() || !slices.Contains(kn.Spec.AdditionalClusterRoles, object.GetName()) {
+			continue
+		}
+		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)})
+	}
+	return requests
+}
+
+// inventoryBindingToKubernaut maps drift on the generated inventory binding
+// back to its Kubernaut instance. The object may be a delete event, so the
+// stable name is used instead of relying only on labels.
+func (r *KubernautReconciler) inventoryBindingToKubernaut(ctx context.Context, object client.Object) []reconcile.Request {
+	if object == nil {
+		return nil
+	}
+	instances := &kubernautv1alpha2.KubernautList{}
+	if err := r.List(ctx, instances); err != nil {
+		logf.FromContext(ctx).Error(err, "failed to list Kubernaut resources for inventory binding event",
+			"clusterRoleBinding", object.GetName())
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(instances.Items))
+	for index := range instances.Items {
+		kn := &instances.Items[index]
+		if object.GetName() != resources.APIFrontendInventoryReadClusterRoleBindingName(kn) {
+			continue
+		}
+		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(kn)})
+	}
+	return requests
 }
 
 // auditHashKeyStateToKubernaut maps changes to the persistent non-secret audit
