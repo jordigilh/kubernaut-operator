@@ -407,6 +407,18 @@ var _ = Describe("API Frontend inventory RBAC unit decisions (#623)", Label("uni
 		live.RoleRef.Name = "stale-catalog-role"
 		Expect(r.Update(ctx, live)).To(Succeed())
 
+		deletes, creates := 0, 0
+		r.Client = interceptor.NewClient(r.Client.(client.WithWatch), interceptor.Funcs{
+			Delete: func(ctx context.Context, api client.WithWatch, object client.Object, options ...client.DeleteOption) error {
+				deletes++
+				return api.Delete(ctx, object, options...)
+			},
+			Create: func(ctx context.Context, api client.WithWatch, object client.Object, options ...client.CreateOption) error {
+				creates++
+				return api.Create(ctx, object, options...)
+			},
+		})
+
 		reconcileDesired := &rbacv1.RoleBinding{
 			ObjectMeta: metav1.ObjectMeta{Name: "catalog-binding", Namespace: kn.Namespace},
 			RoleRef:    desired.RoleRef,
@@ -416,6 +428,8 @@ var _ = Describe("API Frontend inventory RBAC unit decisions (#623)", Label("uni
 		repaired := &rbacv1.RoleBinding{}
 		Expect(r.Get(ctx, client.ObjectKeyFromObject(desired), repaired)).To(Succeed())
 		Expect(repaired.RoleRef).To(Equal(reconcileDesired.RoleRef))
+		Expect(deletes).To(Equal(1))
+		Expect(creates).To(Equal(1))
 	})
 
 	It("handles RBAC drift comparisons when the live object type does not match", func() {
