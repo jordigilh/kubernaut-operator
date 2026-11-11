@@ -364,12 +364,88 @@ var _ = Describe("API Frontend inventory RBAC unit decisions (#623)", Label("uni
 		Expect(live.RoleRef).To(Equal(desired.RoleRef))
 	})
 
+	It("detects drift in namespaced Role rules and RoleBinding subjects or role references", func() {
+		desiredRole := &rbacv1.Role{
+			ObjectMeta: metav1.ObjectMeta{Name: "catalog-role", Namespace: "default"},
+			Rules:      []rbacv1.PolicyRule{{APIGroups: []string{"kubernaut.ai"}, Resources: []string{"remediationworkflows"}, Verbs: []string{"list"}}},
+		}
+		liveRole := desiredRole.DeepCopy()
+		liveRole.Rules[0].Verbs = []string{"get"}
+		drifted, handled := rbacContentDrifted(desiredRole, liveRole)
+		Expect(drifted).To(BeTrue())
+		Expect(handled).To(BeTrue())
+
+		desiredBinding := &rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "catalog-binding", Namespace: "default"},
+			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: "catalog-role"},
+			Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: "catalog-reader", Namespace: "default"}},
+		}
+		for _, mutate := range []func(*rbacv1.RoleBinding){
+			func(binding *rbacv1.RoleBinding) { binding.Subjects[0].Name = "other-reader" },
+			func(binding *rbacv1.RoleBinding) { binding.RoleRef.Name = "other-role" },
+		} {
+			liveBinding := desiredBinding.DeepCopy()
+			mutate(liveBinding)
+			drifted, handled = rbacContentDrifted(desiredBinding, liveBinding)
+			Expect(drifted).To(BeTrue())
+			Expect(handled).To(BeTrue())
+		}
+	})
+
+	It("recreates a managed namespaced binding when its role reference is immutable drift", func() {
+		kn := newMinimalCR()
+		r := businessUnitReconciler(kn, interceptor.Funcs{})
+		desired := &rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "catalog-binding", Namespace: kn.Namespace},
+			RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: "catalog-role"},
+			Subjects:   []rbacv1.Subject{{Kind: rbacv1.ServiceAccountKind, Name: "catalog-reader", Namespace: kn.Namespace}},
+		}
+		Expect(r.ensureNamespaced(ctx, kn, desired)).To(Succeed())
+
+		live := &rbacv1.RoleBinding{}
+		Expect(r.Get(ctx, client.ObjectKeyFromObject(desired), live)).To(Succeed())
+		live.RoleRef.Name = "stale-catalog-role"
+		Expect(r.Update(ctx, live)).To(Succeed())
+
+		deletes, creates := 0, 0
+		r.Client = interceptor.NewClient(r.Client.(client.WithWatch), interceptor.Funcs{
+			Delete: func(ctx context.Context, api client.WithWatch, object client.Object, options ...client.DeleteOption) error {
+				deletes++
+				return api.Delete(ctx, object, options...)
+			},
+			Create: func(ctx context.Context, api client.WithWatch, object client.Object, options ...client.CreateOption) error {
+				creates++
+				return api.Create(ctx, object, options...)
+			},
+		})
+
+		reconcileDesired := &rbacv1.RoleBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "catalog-binding", Namespace: kn.Namespace},
+			RoleRef:    desired.RoleRef,
+			Subjects:   desired.Subjects,
+		}
+		Expect(r.ensureNamespaced(ctx, kn, reconcileDesired)).To(Succeed())
+		repaired := &rbacv1.RoleBinding{}
+		Expect(r.Get(ctx, client.ObjectKeyFromObject(desired), repaired)).To(Succeed())
+		Expect(repaired.RoleRef).To(Equal(reconcileDesired.RoleRef))
+		Expect(deletes).To(Equal(1))
+		Expect(creates).To(Equal(1))
+	})
+
 	It("handles RBAC drift comparisons when the live object type does not match", func() {
 		drifted, handled := rbacContentDrifted(&rbacv1.ClusterRole{}, &rbacv1.ClusterRoleBinding{})
 		Expect(drifted).To(BeFalse())
 		Expect(handled).To(BeTrue())
 
 		drifted, handled = rbacContentDrifted(&rbacv1.ClusterRoleBinding{}, &rbacv1.ClusterRole{})
+		Expect(drifted).To(BeFalse())
+		Expect(handled).To(BeTrue())
+
+		drifted, handled = rbacContentDrifted(&rbacv1.Role{}, &rbacv1.RoleBinding{})
+		Expect(drifted).To(BeFalse())
+		Expect(handled).To(BeTrue())
+
+		drifted, handled = rbacContentDrifted(&rbacv1.RoleBinding{}, &rbacv1.Role{})
 		Expect(drifted).To(BeFalse())
 		Expect(handled).To(BeTrue())
 	})

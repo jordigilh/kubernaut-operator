@@ -43,6 +43,8 @@ import (
 
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
 	. "github.com/onsi/gomega"    //nolint:revive,staticcheck
+
+	e2eimage "github.com/jordigilh/kubernaut-operator/test/e2e/internal/image"
 )
 
 func TestHelmE2E(t *testing.T) {
@@ -110,7 +112,7 @@ var _ = BeforeSuite(func() {
 		_, _ = run(cleanupCtx, "kind", "delete", "cluster", "--name", clusterName())
 	})
 
-	Expect(runChecked(ctx, "kind", "load", "docker-image", operatorImage(), "--name", clusterName())).To(Succeed())
+	Expect(e2eimage.Load(ctx, run, "docker", operatorImage(), clusterName())).To(Succeed())
 	if e2eDisconnected {
 		Expect(ensureDisconnectedBootstrapImage(ctx)).To(Succeed())
 	}
@@ -625,14 +627,19 @@ func ensureDisconnectedBootstrapImage(ctx context.Context) error {
 	if containerTool == "" {
 		containerTool = "docker"
 	}
-	if _, err := run(ctx, containerTool, "pull", helmCertBootstrapSourceImage); err != nil {
+	if _, err := run(
+		ctx,
+		containerTool,
+		"pull",
+		"--platform", e2eimage.Platform(),
+		helmCertBootstrapSourceImage,
+	); err != nil {
 		return fmt.Errorf("pulling the pinned bootstrap source image: %w", err)
 	}
 	if _, err := run(ctx, containerTool, "tag", helmCertBootstrapSourceImage, helmCertBootstrapLocalImage); err != nil {
 		return fmt.Errorf("tagging the disconnected bootstrap image: %w", err)
 	}
-	if _, err := run(ctx, "kind", "load", "docker-image", helmCertBootstrapLocalImage,
-		"--name", clusterName()); err != nil {
+	if err := e2eimage.Load(ctx, run, containerTool, helmCertBootstrapLocalImage, clusterName()); err != nil {
 		return fmt.Errorf("loading the disconnected bootstrap image into Kind: %w", err)
 	}
 	return nil

@@ -1137,12 +1137,16 @@ func (r *KubernautReconciler) deployNamespacedCoreRBAC(ctx context.Context, kn *
 		}
 	}
 	catalogRoles, catalogRoleBindings := resources.TrustedWorkflowCatalogRBAC(kn)
-	for _, role := range catalogRoles {
+	// Reconcile each catalog grant as a Role/RoleBinding pair. In addition to
+	// ensuring every binding references an already-created Role, this preserves
+	// the sequential failure boundary: AIA's complete grant remains usable when
+	// a later RO grant fails, while workloads remain blocked by the returned
+	// error until the same CR retries successfully.
+	for i, role := range catalogRoles {
 		if err := r.ensureNamespaced(ctx, kn, role); err != nil {
 			return fmt.Errorf("ensuring workflow catalog role %s: %w", role.Name, err)
 		}
-	}
-	for _, rb := range catalogRoleBindings {
+		rb := catalogRoleBindings[i]
 		if err := r.ensureNamespaced(ctx, kn, rb); err != nil {
 			return fmt.Errorf("ensuring workflow catalog rolebinding %s: %w", rb.Name, err)
 		}
@@ -4577,9 +4581,9 @@ func (r *KubernautReconciler) ensureUnowned(ctx context.Context, kn *kubernautv1
 // falling through to the update path.
 //
 // When the spec-hash annotation matches (no spec change), ensureResource
-// additionally checks for content drift on managed Services and the
-// API Frontend Deployment — detecting external modifications that preserved
-// the annotation but altered reconciled fields.
+// additionally checks for content drift on managed RBAC objects, Services,
+// and the API Frontend Deployment — detecting external modifications that
+// preserved the annotation but altered reconciled fields.
 func (r *KubernautReconciler) ensureResource(ctx context.Context, kn *kubernautv1alpha2.Kubernaut, obj client.Object) error {
 	_, err := r.ensureResourceChanged(ctx, kn, obj)
 	return err
@@ -4611,14 +4615,18 @@ func (r *KubernautReconciler) ensureResourceChanged(ctx context.Context, kn *kub
 	if err := r.checkResourceOwnership(ctx, kn, existing, metav1.GetControllerOf(obj) != nil); err != nil {
 		return false, err
 	}
-	if clusterRoleBindingRoleRefChanged(obj, existing) {
+	if roleBindingRoleRefChanged(obj, existing) {
+		bindingKind := "RoleBinding"
+		if _, ok := obj.(*rbacv1.ClusterRoleBinding); ok {
+			bindingKind = "ClusterRoleBinding"
+		}
 		if err := r.deleteObservedResource(ctx, existing); err != nil && !apierrors.IsNotFound(err) {
-			return false, fmt.Errorf("deleting immutable ClusterRoleBinding %s: %w", key, err)
+			return false, fmt.Errorf("deleting immutable %s %s: %w", bindingKind, key, err)
 		}
 		if err := r.Create(ctx, obj); err != nil {
-			return false, fmt.Errorf("recreating immutable ClusterRoleBinding %s: %w", key, err)
+			return false, fmt.Errorf("recreating immutable %s %s: %w", bindingKind, key, err)
 		}
-		r.resourceLogger(ctx, kn, obj).Info("immutable ClusterRoleBinding recreated")
+		r.resourceLogger(ctx, kn, obj).Info("immutable RBAC binding recreated")
 		return true, nil
 	}
 	if existing.GetAnnotations()[resources.AnnotationSpecHash] == desiredHash && !contentDrifted(obj, existing) && ownershipMetadataMatches(obj, existing) {
@@ -4700,10 +4708,17 @@ func contentDrifted(desired, existing client.Object) bool {
 	return false
 }
 
-// rbacContentDrifted compares mutable managed fields for RBAC objects while
-// leaving immutable ClusterRoleBinding RoleRef handling to the recreate path.
+// rbacContentDrifted compares managed fields for RBAC objects while leaving
+// immutable RoleBinding and ClusterRoleBinding RoleRef handling to the
+// recreate path.
 func rbacContentDrifted(desired, existing client.Object) (bool, bool) {
 	switch desiredObject := desired.(type) {
+	case *rbacv1.Role:
+		existingObject, sameType := existing.(*rbacv1.Role)
+		if !sameType {
+			return false, true
+		}
+		return !equality.Semantic.DeepEqual(desiredObject.Rules, existingObject.Rules), true
 	case *rbacv1.ClusterRole:
 		existingObject, sameType := existing.(*rbacv1.ClusterRole)
 		if !sameType {
@@ -4711,6 +4726,13 @@ func rbacContentDrifted(desired, existing client.Object) (bool, bool) {
 		}
 		return !equality.Semantic.DeepEqual(desiredObject.Rules, existingObject.Rules) ||
 			!equality.Semantic.DeepEqual(desiredObject.AggregationRule, existingObject.AggregationRule), true
+	case *rbacv1.RoleBinding:
+		existingObject, sameType := existing.(*rbacv1.RoleBinding)
+		if !sameType {
+			return false, true
+		}
+		return !equality.Semantic.DeepEqual(desiredObject.RoleRef, existingObject.RoleRef) ||
+			!equality.Semantic.DeepEqual(desiredObject.Subjects, existingObject.Subjects), true
 	case *rbacv1.ClusterRoleBinding:
 		existingObject, sameType := existing.(*rbacv1.ClusterRoleBinding)
 		if !sameType {
@@ -4723,13 +4745,20 @@ func rbacContentDrifted(desired, existing client.Object) (bool, bool) {
 	}
 }
 
-// clusterRoleBindingRoleRefChanged reports the immutable field drift that
-// requires a managed ClusterRoleBinding to be deleted and recreated rather
+// roleBindingRoleRefChanged reports immutable RoleRef drift that requires a
+// managed RoleBinding or ClusterRoleBinding to be deleted and recreated rather
 // than updated in place. Ownership is checked by the caller first.
-func clusterRoleBindingRoleRefChanged(desired, existing client.Object) bool {
-	desiredBinding, desiredOK := desired.(*rbacv1.ClusterRoleBinding)
-	existingBinding, existingOK := existing.(*rbacv1.ClusterRoleBinding)
-	return desiredOK && existingOK && !equality.Semantic.DeepEqual(desiredBinding.RoleRef, existingBinding.RoleRef)
+func roleBindingRoleRefChanged(desired, existing client.Object) bool {
+	switch desiredBinding := desired.(type) {
+	case *rbacv1.RoleBinding:
+		existingBinding, sameType := existing.(*rbacv1.RoleBinding)
+		return sameType && !equality.Semantic.DeepEqual(desiredBinding.RoleRef, existingBinding.RoleRef)
+	case *rbacv1.ClusterRoleBinding:
+		existingBinding, sameType := existing.(*rbacv1.ClusterRoleBinding)
+		return sameType && !equality.Semantic.DeepEqual(desiredBinding.RoleRef, existingBinding.RoleRef)
+	default:
+		return false
+	}
 }
 
 func ownedServiceSpec(service *corev1.Service) corev1.ServiceSpec {

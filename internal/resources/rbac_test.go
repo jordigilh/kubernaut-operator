@@ -821,15 +821,15 @@ var _ = Describe("NamespaceRoleBindings", func() {
 	})
 })
 
-var _ = Describe("TrustedWorkflowCatalogRBAC (#610)", func() {
-	It("renders catalog Roles and RoleBindings in the configured controller namespace", func() {
+var _ = Describe("TrustedWorkflowCatalogRBAC (#610, #624)", func() {
+	It("UT-RBAC-624-001 renders five exact catalog Roles and RoleBindings in the configured controller namespace", func() {
 		kn := testKubernaut()
 		kn.Namespace = "trusted-controller"
 		kn.Spec.WorkflowExecution.WorkflowNamespace = "workflow-execution"
 
 		roles, bindings := TrustedWorkflowCatalogRBAC(kn)
-		Expect(roles).To(HaveLen(3))
-		Expect(bindings).To(HaveLen(3))
+		Expect(roles).To(HaveLen(5))
+		Expect(bindings).To(HaveLen(5))
 
 		want := map[string]struct {
 			roleBase  string
@@ -854,6 +854,18 @@ var _ = Describe("TrustedWorkflowCatalogRBAC (#610)", func() {
 				saName:    ServiceAccountName(ComponentWorkflowExecution),
 				resources: []string{"remediationworkflows"},
 				verbs:     []string{"list"},
+			},
+			"aianalysis": {
+				roleBase:  "aianalysis-workflow-catalog",
+				saName:    ServiceAccountName(ComponentAIAnalysis),
+				resources: []string{"remediationworkflows"},
+				verbs:     []string{"list"},
+			},
+			"remediationorchestrator": {
+				roleBase:  "remediationorchestrator-workflow-catalog",
+				saName:    ServiceAccountName(ComponentRemediationOrchestrator),
+				resources: []string{"remediationworkflows"},
+				verbs:     []string{"get", "list"},
 			},
 		}
 
