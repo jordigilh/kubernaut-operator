@@ -62,8 +62,8 @@ var _ = Describe("Kind image loading", func() {
 		Expect(e2eimage.SaveArgs(
 			"podman", "linux/arm64", "/tmp/image.tar", "example/image:test",
 		)).To(Equal([]string{
-			"image", "save", "--format", "docker-archive", "--platform", "linux/arm64",
-			"--output", "/tmp/image.tar", "example/image:test",
+			"image", "save", "--format", "docker-archive", "--output", "/tmp/image.tar",
+			"example/image:test",
 		}))
 	})
 })

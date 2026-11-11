@@ -43,13 +43,14 @@ func Platform() string {
 	return "linux/" + runtime.GOARCH
 }
 
-// SaveArgs returns arguments for exporting one platform of an image as a
-// Docker-compatible archive. Podman needs an explicit archive format because
-// its default output is not guaranteed to be consumable by Kind.
+// SaveArgs returns arguments for exporting an image as a Docker-compatible
+// archive. Docker selects the target platform during save. Podman does not
+// support --platform on image save, so its platform is selected during pull or
+// retained from the already-local image without contacting the registry.
 func SaveArgs(containerTool, platform, archivePath, image string) []string {
 	args := []string{"image", "save"}
 	if strings.EqualFold(strings.TrimSpace(containerTool), "podman") {
-		args = append(args, "--format", "docker-archive")
+		return append(args, "--format", "docker-archive", "--output", archivePath, image)
 	}
 	return append(args, "--platform", platform, "--output", archivePath, image)
 }
