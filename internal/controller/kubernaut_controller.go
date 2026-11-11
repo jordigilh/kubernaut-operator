@@ -1095,12 +1095,16 @@ func (r *KubernautReconciler) deployNamespacedCoreRBAC(ctx context.Context, kn *
 		}
 	}
 	catalogRoles, catalogRoleBindings := resources.TrustedWorkflowCatalogRBAC(kn)
-	for _, role := range catalogRoles {
+	// Reconcile each catalog grant as a Role/RoleBinding pair. In addition to
+	// ensuring every binding references an already-created Role, this preserves
+	// the sequential failure boundary: AIA's complete grant remains usable when
+	// a later RO grant fails, while workloads remain blocked by the returned
+	// error until the same CR retries successfully.
+	for i, role := range catalogRoles {
 		if err := r.ensureNamespaced(ctx, kn, role); err != nil {
 			return fmt.Errorf("ensuring workflow catalog role %s: %w", role.Name, err)
 		}
-	}
-	for _, rb := range catalogRoleBindings {
+		rb := catalogRoleBindings[i]
 		if err := r.ensureNamespaced(ctx, kn, rb); err != nil {
 			return fmt.Errorf("ensuring workflow catalog rolebinding %s: %w", rb.Name, err)
 		}

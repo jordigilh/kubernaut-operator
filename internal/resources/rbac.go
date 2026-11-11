@@ -470,6 +470,18 @@ func TrustedWorkflowCatalogRBAC(kn *kubernautv1alpha2.Kubernaut) ([]*rbacv1.Role
 			resources: []string{"remediationworkflows"},
 			verbs:     []string{"list"},
 		},
+		{
+			roleBase:  "aianalysis-workflow-catalog",
+			component: ComponentAIAnalysis,
+			resources: []string{"remediationworkflows"},
+			verbs:     []string{"list"},
+		},
+		{
+			roleBase:  "remediationorchestrator-workflow-catalog",
+			component: ComponentRemediationOrchestrator,
+			resources: []string{"remediationworkflows"},
+			verbs:     []string{"get", "list"},
+		},
 	}
 
 	labels := CommonLabels(kn)
