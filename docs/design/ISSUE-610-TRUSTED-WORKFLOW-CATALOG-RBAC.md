@@ -15,12 +15,15 @@ RoleBindings in the configured Kubernaut controller namespace (`kn.Namespace`):
 
 The workflow-execution namespace is not used for this catalog access.
 
-The AIA and RO grants are intentionally asymmetric. AIA only discovers the
-catalog, so it receives `list` and no object reads or writes. RO performs both
-catalog discovery and trusted-workflow override resolution; the latter calls a
-`RemediationWorkflow` `Get`, so RO receives `get,list` and no watch, mutation,
-status, or finalizer access. Both grants are namespace-scoped to `kn.Namespace`;
-they do not grant cluster-wide or `actiontypes` access.
+The AIA and RO grants are intentionally asymmetric. AIA receives collection
+`list` access but no individual `get` or write verbs. Kubernetes list responses
+may still contain full `RemediationWorkflow` objects, so this is not a content-
+redaction boundary: AIA can receive workflow content from a list but cannot
+fetch an individual object. RO performs both catalog discovery and
+trusted-workflow override resolution; the latter calls a `RemediationWorkflow`
+`Get`, so RO receives `get,list` and no watch, mutation, status, or finalizer
+access. Both grants are namespace-scoped to `kn.Namespace`; they do not grant
+cluster-wide or `actiontypes` access.
 
 KA's obsolete cluster-wide `remediationworkflows` and `actiontypes` reads are
 removed from its investigator ClusterRole. AuthWebhook's existing broad
@@ -51,8 +54,8 @@ injected Role/RoleBinding failures, and SubjectAccessReview authorization:
 
 - KA and WorkflowExecution: trusted namespace allowed, foreign namespace denied
 - KA ActionType list/watch: trusted namespace allowed, foreign namespace denied
-- AIA: trusted workflow list allowed; get/watch/mutation/status/finalizer and
-  foreign or cluster-wide access denied
+- AIA: trusted workflow list allowed; individual get/watch/mutation/status/
+  finalizer and foreign or cluster-wide access denied
 - RO: trusted workflow get/list allowed; watch/mutation/status/finalizer and
   foreign or cluster-wide access denied
 - AuthWebhook: trusted and foreign workflow access explicitly allowed through

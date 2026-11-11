@@ -39,10 +39,12 @@ import (
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
 
+// serviceAccountUser returns the Kubernetes user string for a ServiceAccount.
 func serviceAccountUser(namespace, name string) string {
 	return fmt.Sprintf("system:serviceaccount:%s:%s", namespace, name)
 }
 
+// subjectAccessAllowed submits a SubjectAccessReview and returns its decision.
 func subjectAccessAllowed(ctx context.Context, user, namespace, group, resource, subresource, verb string) (bool, error) {
 	clientset, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
@@ -67,6 +69,7 @@ func subjectAccessAllowed(ctx context.Context, user, namespace, group, resource,
 	return result.Status.Allowed, nil
 }
 
+// eventuallySubjectAccess returns an Eventually predicate for an allowed SAR.
 func eventuallySubjectAccess(ctx context.Context, user, namespace, resource, subresource, verb string) func() bool {
 	return func() bool {
 		allowed, err := subjectAccessAllowed(ctx, user, namespace, "kubernaut.ai", resource, subresource, verb)
@@ -75,6 +78,7 @@ func eventuallySubjectAccess(ctx context.Context, user, namespace, resource, sub
 	}
 }
 
+// eventuallySubjectDenied returns an Eventually predicate for a denied SAR.
 func eventuallySubjectDenied(ctx context.Context, user, namespace, resource, subresource, verb string) func() bool {
 	return func() bool {
 		allowed, err := subjectAccessAllowed(ctx, user, namespace, "kubernaut.ai", resource, subresource, verb)
@@ -94,6 +98,7 @@ type issue624CatalogFaultClient struct {
 	fault *issue624CatalogFault
 }
 
+// shouldFail reports whether the configured fault targets the object.
 func (c *issue624CatalogFaultClient) shouldFail(object client.Object) bool {
 	if c.fault == nil || !c.fault.enabled || object.GetName() != c.fault.name {
 		return false
@@ -110,6 +115,7 @@ func (c *issue624CatalogFaultClient) shouldFail(object client.Object) bool {
 	}
 }
 
+// Create injects the configured catalog Create failure before delegating.
 func (c *issue624CatalogFaultClient) Create(ctx context.Context, object client.Object, options ...client.CreateOption) error {
 	if c.shouldFail(object) {
 		return fmt.Errorf("injected issue-624 %s create failure for %s", c.fault.objectType, c.fault.name)
@@ -117,6 +123,7 @@ func (c *issue624CatalogFaultClient) Create(ctx context.Context, object client.O
 	return c.Client.Create(ctx, object, options...)
 }
 
+// Update injects the configured catalog Update failure before delegating.
 func (c *issue624CatalogFaultClient) Update(ctx context.Context, object client.Object, options ...client.UpdateOption) error {
 	if c.shouldFail(object) {
 		return fmt.Errorf("injected issue-624 %s update failure for %s", c.fault.objectType, c.fault.name)
@@ -124,6 +131,7 @@ func (c *issue624CatalogFaultClient) Update(ctx context.Context, object client.O
 	return c.Client.Update(ctx, object, options...)
 }
 
+// issue624CatalogNames returns the desired catalog Role and RoleBinding names.
 func issue624CatalogNames(kn *kubernautv1alpha2.Kubernaut) (map[string]struct{}, map[string]struct{}) {
 	roles, bindings := resources.TrustedWorkflowCatalogRBAC(kn)
 	roleNames := make(map[string]struct{}, len(roles))
@@ -137,6 +145,7 @@ func issue624CatalogNames(kn *kubernautv1alpha2.Kubernaut) (map[string]struct{},
 	return roleNames, bindingNames
 }
 
+// ensureIssue624Namespace creates the named fixture namespace when absent.
 func ensureIssue624Namespace(ctx context.Context, name string) {
 	namespace := &corev1.Namespace{}
 	err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, namespace)
@@ -147,6 +156,7 @@ func ensureIssue624Namespace(ctx context.Context, name string) {
 	Expect(err).NotTo(HaveOccurred())
 }
 
+// deleteIssue624Namespace removes the named fixture namespace and its accounts.
 func deleteIssue624Namespace(ctx context.Context, name string) {
 	for _, serviceAccountName := range []string{
 		resources.ServiceAccountName(resources.ComponentAIAnalysis),
@@ -154,9 +164,15 @@ func deleteIssue624Namespace(ctx context.Context, name string) {
 		"issue-624-unrelated",
 	} {
 		serviceAccount := &corev1.ServiceAccount{}
-		if err := k8sClient.Get(ctx, types.NamespacedName{Name: serviceAccountName, Namespace: name}, serviceAccount); err == nil {
-			Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, serviceAccount))).To(Succeed())
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: serviceAccountName, Namespace: name}, serviceAccount)
+		if apierrors.IsNotFound(err) {
+			continue
 		}
+		if err != nil {
+			Expect(err).NotTo(HaveOccurred(), "getting ServiceAccount %s/%s during cleanup", name, serviceAccountName)
+			continue
+		}
+		Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, serviceAccount))).To(Succeed())
 	}
 
 	namespace := &corev1.Namespace{}
@@ -173,6 +189,7 @@ func deleteIssue624Namespace(ctx context.Context, name string) {
 	}, timeout, interval).Should(BeTrue(), "foreign fixture namespace %s should be deleted", name)
 }
 
+// startIssue624FaultedReconcile prepares a CR and injects one catalog failure.
 func startIssue624FaultedReconcile(ctx context.Context, objectType, name string) (*KubernautReconciler, *issue624CatalogFault) {
 	createBYOSecrets(ctx)
 	Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
@@ -189,10 +206,12 @@ func startIssue624FaultedReconcile(ctx context.Context, objectType, name string)
 	return r, fault
 }
 
+// reconcileRequest returns the singleton reconciliation request used by tests.
 func reconcileRequest() ctrl.Request {
 	return ctrl.Request{NamespacedName: singletonKey()}
 }
 
+// issue624LegacyKAFixture adds the pre-migration cluster catalog grant.
 func issue624LegacyKAFixture(kn *kubernautv1alpha2.Kubernaut) *rbacv1.ClusterRoleBinding {
 	var legacyRole *rbacv1.ClusterRole
 	for _, role := range resources.ClusterRoles(kn, kn) {
@@ -336,9 +355,15 @@ var _ = Describe("Trusted workflow catalog RBAC (#624)", func() {
 		deleteBYOSecrets(ctx)
 		cleanupClusterScoped(ctx)
 		unrelated := &corev1.ServiceAccount{}
-		if err := k8sClient.Get(ctx, types.NamespacedName{Name: "issue-624-unrelated", Namespace: testNamespace}, unrelated); err == nil {
-			Expect(k8sClient.Delete(ctx, unrelated)).To(Succeed())
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: "issue-624-unrelated", Namespace: testNamespace}, unrelated)
+		if apierrors.IsNotFound(err) {
+			return
 		}
+		if err != nil {
+			Expect(err).NotTo(HaveOccurred(), "getting ServiceAccount %s/%s during cleanup", testNamespace, "issue-624-unrelated")
+			return
+		}
+		Expect(k8sClient.Delete(ctx, unrelated)).To(Succeed())
 	})
 
 	It("IT-RBAC-624-001 [AC-3, AC-6, CM-6]: reconciles five catalog Roles and RoleBindings with exact namespace-scoped subjects and ownership", func() {
