@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -44,6 +45,24 @@ func serviceAccountUser(namespace, name string) string {
 	return fmt.Sprintf("system:serviceaccount:%s:%s", namespace, name)
 }
 
+// serviceAccountGroups returns the groups Kubernetes assigns to a ServiceAccount.
+func serviceAccountGroups(user string) []string {
+	const prefix = "system:serviceaccount:"
+	identity, ok := strings.CutPrefix(user, prefix)
+	if !ok {
+		return nil
+	}
+	namespace, _, ok := strings.Cut(identity, ":")
+	if !ok || namespace == "" {
+		return nil
+	}
+	return []string{
+		"system:serviceaccounts",
+		"system:serviceaccounts:" + namespace,
+		"system:authenticated",
+	}
+}
+
 // subjectAccessAllowed submits a SubjectAccessReview and returns its decision.
 func subjectAccessAllowed(ctx context.Context, user, namespace, group, resource, subresource, verb string) (bool, error) {
 	clientset, err := kubernetes.NewForConfig(cfg)
@@ -52,7 +71,8 @@ func subjectAccessAllowed(ctx context.Context, user, namespace, group, resource,
 	}
 	review := &authorizationv1.SubjectAccessReview{
 		Spec: authorizationv1.SubjectAccessReviewSpec{
-			User: user,
+			User:   user,
+			Groups: serviceAccountGroups(user),
 			ResourceAttributes: &authorizationv1.ResourceAttributes{
 				Group:       group,
 				Resource:    resource,
