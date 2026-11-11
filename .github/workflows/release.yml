@@ -22,6 +22,7 @@ env:
   IMAGE_REGISTRY: quay.io/kubernaut-ai
   STAGING_IMAGE_REGISTRY: quay.io/kubernaut-cicd
   IMAGE_NAME: kubernaut-operator-image
+  KUBERNAUT_KIND_IMAGE_PLATFORM: linux/amd64
 
 jobs:
   # ========================================
@@ -268,8 +269,8 @@ jobs:
 
       - name: Pull pinned dependency images
         run: |
-          docker pull docker.io/library/postgres:16.4
-          docker pull docker.io/valkey/valkey:8.0.2
+          docker pull --platform "${KUBERNAUT_KIND_IMAGE_PLATFORM}" docker.io/library/postgres:16.4
+          docker pull --platform "${KUBERNAUT_KIND_IMAGE_PLATFORM}" docker.io/valkey/valkey:8.0.2
 
       - name: Run contract-only Kind gate
         id: contract-e2e

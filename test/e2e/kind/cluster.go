@@ -30,6 +30,7 @@ import (
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
+	e2eimage "github.com/jordigilh/kubernaut-operator/test/e2e/internal/image"
 )
 
 type tlsSource string
@@ -200,7 +201,7 @@ func loadOperatorImage(ctx context.Context) error {
 	if qualificationLane {
 		return loadQualificationImage(ctx, qualificationContainerTool(), image, "operator")
 	}
-	if _, err := runCmd(ctx, "kind", "load", "docker-image", image, "--name", kindClusterName()); err != nil {
+	if err := e2eimage.Load(ctx, runCmd, "docker", image, kindClusterName()); err != nil {
 		return fmt.Errorf("loading operator image %q into Kind: %w", image, err)
 	}
 	return nil
@@ -214,7 +215,7 @@ func loadInfrastructureImages(ctx context.Context) error {
 	}
 	images := []string{contractImage(), postgresImage, valkeyImage}
 	for _, image := range images {
-		if _, err := runCmd(ctx, "kind", "load", "docker-image", image, "--name", kindClusterName()); err != nil {
+		if err := e2eimage.Load(ctx, runCmd, "docker", image, kindClusterName()); err != nil {
 			return fmt.Errorf("loading contract or dependency image %q into Kind: %w", image, err)
 		}
 	}
@@ -241,41 +242,22 @@ func loadQualificationImages(ctx context.Context) error {
 
 // loadQualificationImage imports one immutable qualification image without
 // contacting its registry when the selected container store already has it.
-// Podman uses a temporary Docker archive because Kind's Docker-image loader
-// cannot read Podman's image store directly.
+// The platform-specific archive path is used for both Docker and Podman so
+// Kind never imports an incomplete multi-platform index.
 func loadQualificationImage(ctx context.Context, containerTool, image, component string) error {
 	if _, err := runCmd(ctx, containerTool, "image", "inspect", image); err != nil {
-		if _, err := runCmd(ctx, containerTool, "pull", image); err != nil {
+		if _, err := runCmd(ctx, containerTool, "pull", "--platform", e2eimage.Platform(), image); err != nil {
 			return fmt.Errorf("pulling qualification image %q for %s: %w", image, component, err)
 		}
 	}
 
-	if QualificationImageLoadUsesArchive(containerTool) {
-		archiveDir, err := os.MkdirTemp("", "kubernaut-qualification-image-")
-		if err != nil {
-			return fmt.Errorf("creating temporary archive directory for qualification image %q: %w", image, err)
-		}
-		defer func() {
-			if removeErr := os.RemoveAll(archiveDir); removeErr != nil {
-				_, _ = fmt.Fprintf(GinkgoWriter,
-					"warning: removing qualification image archive directory %q failed: %v\n",
-					archiveDir, removeErr) //nolint:errcheck
-			}
-		}()
-		archivePath := filepath.Join(archiveDir, "image.tar")
-		if _, err := runCmd(ctx, containerTool, "save", "--format", "docker-archive",
-			"--output", archivePath, image); err != nil {
-			return fmt.Errorf("saving qualification image %q for %s: %w", image, component, err)
-		}
-		if _, err := runCmd(ctx, "kind", "load", "image-archive", archivePath, "--name", kindClusterName()); err != nil {
-			return fmt.Errorf("loading qualification image archive for %q and %s into Kind: %w",
+	archiveLoad := QualificationImageLoadUsesArchive(containerTool)
+	if err := e2eimage.Load(ctx, runCmd, containerTool, image, kindClusterName()); err != nil {
+		if archiveLoad {
+			return fmt.Errorf("loading qualification image archive for %q and %s into kind: %w",
 				image, component, err)
 		}
-		return nil
-	}
-
-	if _, err := runCmd(ctx, "kind", "load", "docker-image", image, "--name", kindClusterName()); err != nil {
-		return fmt.Errorf("loading qualification image %q for %s into Kind: %w", image, component, err)
+		return fmt.Errorf("loading qualification image %q for %s into kind: %w", image, component, err)
 	}
 	return nil
 }
