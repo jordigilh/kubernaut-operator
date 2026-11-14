@@ -18,7 +18,6 @@ package contract
 
 import (
 	"context"
-	"os"
 
 	. "github.com/onsi/ginkgo/v2" //nolint:revive,staticcheck
 	. "github.com/onsi/gomega"    //nolint:revive,staticcheck
@@ -28,16 +27,7 @@ import (
 
 var _ = Describe("Kind image loading", func() {
 	It("exports one platform before loading the archive into Kind", func() {
-		const platform = "linux/amd64"
-		previousPlatform, wasSet := os.LookupEnv(e2eimage.PlatformEnvironment)
-		Expect(os.Setenv(e2eimage.PlatformEnvironment, platform)).To(Succeed())
-		DeferCleanup(func() {
-			if wasSet {
-				Expect(os.Setenv(e2eimage.PlatformEnvironment, previousPlatform)).To(Succeed())
-				return
-			}
-			Expect(os.Unsetenv(e2eimage.PlatformEnvironment)).To(Succeed())
-		})
+		platform := e2eimage.Platform()
 
 		var calls [][]string
 		run := func(_ context.Context, command string, args ...string) (string, error) {
