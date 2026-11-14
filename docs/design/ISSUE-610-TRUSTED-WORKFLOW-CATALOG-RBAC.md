@@ -1,4 +1,4 @@
-# Issues #610 and #624 — Trusted workflow catalog RBAC
+# Issues #610, #624, and #634 — Trusted workflow catalog RBAC
 
 ## Decision
 
@@ -12,6 +12,7 @@ RoleBindings in the configured Kubernaut controller namespace (`kn.Namespace`):
 | `workflowexecution-controller` | `remediationworkflows` | `list` |
 | `aianalysis-controller` | `remediationworkflows` | `list` |
 | `remediationorchestrator-controller` | `remediationworkflows` | `get`, `list` |
+| `apifrontend` | `remediationworkflows` | `get`, `list` when APIFrontend is enabled |
 
 The workflow-execution namespace is not used for this catalog access.
 
@@ -24,6 +25,12 @@ trusted-workflow override resolution; the latter calls a `RemediationWorkflow`
 `Get`, so RO receives `get,list` and no watch, mutation, status, or finalizer
 access. Both grants are namespace-scoped to `kn.Namespace`; they do not grant
 cluster-wide or `actiontypes` access.
+
+APIFrontend's grant is conditional on `spec.apiFrontend.enabled=true`, matching
+the component's existing feature gate. When APIFrontend is disabled, the
+desired catalog set omits its Role/RoleBinding, and the reconciler removes the
+owned pair left by an enabled-to-disabled transition. The always-on catalog
+grants for the other components are unaffected.
 
 KA's obsolete cluster-wide `remediationworkflows` and `actiontypes` reads are
 removed from its investigator ClusterRole. AuthWebhook's existing broad
@@ -60,6 +67,9 @@ injected Role/RoleBinding failures, and SubjectAccessReview authorization:
   foreign or cluster-wide access denied
 - AuthWebhook: trusted and foreign workflow access explicitly allowed through
   the preserved ClusterRole
+- APIFrontend: trusted namespace get/list only when enabled; the Role and
+  RoleBinding are absent when disabled and are pruned after an enabled-to-
+  disabled transition
 
 ## Qualification boundary
 

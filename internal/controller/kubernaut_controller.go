@@ -1135,6 +1135,8 @@ func (r *KubernautReconciler) deployNamespacedCoreRBAC(ctx context.Context, kn *
 		if err := r.ensureNamespaced(ctx, kn, resources.KubernautAgentClientAPIfrontendRoleBinding(kn)); err != nil {
 			return err
 		}
+	} else if err := r.pruneStaleAPIFrontendWorkflowCatalogRBAC(ctx, kn); err != nil {
+		return err
 	}
 	catalogRoles, catalogRoleBindings := resources.TrustedWorkflowCatalogRBAC(kn)
 	// Reconcile each catalog grant as a Role/RoleBinding pair. In addition to
@@ -1150,6 +1152,23 @@ func (r *KubernautReconciler) deployNamespacedCoreRBAC(ctx context.Context, kn *
 		if err := r.ensureNamespaced(ctx, kn, rb); err != nil {
 			return fmt.Errorf("ensuring workflow catalog rolebinding %s: %w", rb.Name, err)
 		}
+	}
+	return nil
+}
+
+// pruneStaleAPIFrontendWorkflowCatalogRBAC removes the optional catalog grant
+// after APIFrontend is disabled. The desired catalog builder omits the grant
+// in that state, so this explicit name-based cleanup closes the enabled-to-
+// disabled transition without affecting the always-on catalog grants.
+func (r *KubernautReconciler) pruneStaleAPIFrontendWorkflowCatalogRBAC(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	roleName, bindingName := resources.APIFrontendWorkflowCatalogRBACNames(kn)
+	role := &rbacv1.Role{ObjectMeta: metav1.ObjectMeta{Name: roleName, Namespace: kn.Namespace}}
+	if err := r.deleteIfExists(ctx, kn, role); err != nil {
+		return fmt.Errorf("removing stale APIFrontend workflow catalog role: %w", err)
+	}
+	binding := &rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: bindingName, Namespace: kn.Namespace}}
+	if err := r.deleteIfExists(ctx, kn, binding); err != nil {
+		return fmt.Errorf("removing stale APIFrontend workflow catalog rolebinding: %w", err)
 	}
 	return nil
 }

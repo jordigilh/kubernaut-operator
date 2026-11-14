@@ -118,16 +118,21 @@ type issue624CatalogFaultClient struct {
 	fault *issue624CatalogFault
 }
 
+const (
+	catalogObjectRole        = "role"
+	catalogObjectRoleBinding = "rolebinding"
+)
+
 // shouldFail reports whether the configured fault targets the object.
 func (c *issue624CatalogFaultClient) shouldFail(object client.Object) bool {
 	if c.fault == nil || !c.fault.enabled || object.GetName() != c.fault.name {
 		return false
 	}
 	switch c.fault.objectType {
-	case "role":
+	case catalogObjectRole:
 		_, ok := object.(*rbacv1.Role)
 		return ok
-	case "rolebinding":
+	case catalogObjectRoleBinding:
 		_, ok := object.(*rbacv1.RoleBinding)
 		return ok
 	default:
@@ -386,7 +391,7 @@ var _ = Describe("Trusted workflow catalog RBAC (#624)", func() {
 		Expect(k8sClient.Delete(ctx, unrelated)).To(Succeed())
 	})
 
-	It("IT-RBAC-624-001 [AC-3, AC-6, CM-6]: reconciles five catalog Roles and RoleBindings with exact namespace-scoped subjects and ownership", func() {
+	It("IT-RBAC-624-001 [AC-3, AC-6, CM-6]: reconciles six catalog Roles and RoleBindings with exact namespace-scoped subjects and ownership", func() {
 		foreignNamespace := "issue-624-foreign"
 		ensureIssue624Namespace(ctx, foreignNamespace)
 		DeferCleanup(func() { deleteIssue624Namespace(context.Background(), foreignNamespace) })
@@ -405,11 +410,11 @@ var _ = Describe("Trusted workflow catalog RBAC (#624)", func() {
 
 		kn := fetchKnV2(ctx)
 		roles, bindings := resources.TrustedWorkflowCatalogRBAC(kn)
-		Expect(roles).To(HaveLen(5))
-		Expect(bindings).To(HaveLen(5))
+		Expect(roles).To(HaveLen(6))
+		Expect(bindings).To(HaveLen(6))
 		roleNames, bindingNames := issue624CatalogNames(kn)
-		Expect(roleNames).To(HaveLen(5))
-		Expect(bindingNames).To(HaveLen(5))
+		Expect(roleNames).To(HaveLen(6))
+		Expect(bindingNames).To(HaveLen(6))
 
 		for _, desired := range roles {
 			live := &rbacv1.Role{}
@@ -453,7 +458,7 @@ var _ = Describe("Trusted workflow catalog RBAC (#624)", func() {
 				catalogRoleCount++
 			}
 		}
-		Expect(catalogRoleCount).To(Equal(5), "all five catalog Roles must be reconciled without duplicate or raw fixture grants")
+		Expect(catalogRoleCount).To(Equal(6), "all six catalog Roles must be reconciled without duplicate or raw fixture grants")
 	})
 
 	It("IT-RBAC-624-002 [AC-3, AC-6, SC-7]: uses correctly formed admin SARs for the asymmetric trusted-catalog boundary", func() {
@@ -583,17 +588,17 @@ var _ = Describe("Trusted workflow catalog RBAC (#624)", func() {
 			Eventually(eventuallySubjectAccess(ctx, aiaUser, testNamespace, "remediationworkflows", "", "list"), timeout, interval).Should(BeTrue())
 			Eventually(eventuallySubjectAccess(ctx, roUser, testNamespace, "remediationworkflows", "", "list"), timeout, interval).Should(BeTrue())
 		},
-		Entry("AIA Role", "role", "aianalysis", testNamespace+"-aianalysis-workflow-catalog", false),
-		Entry("AIA RoleBinding", "rolebinding", "aianalysis", testNamespace+"-aianalysis-workflow-catalog-binding", false),
-		Entry("RO Role", "role", "remediationorchestrator", testNamespace+"-remediationorchestrator-workflow-catalog", true),
-		Entry("RO RoleBinding", "rolebinding", "remediationorchestrator", testNamespace+"-remediationorchestrator-workflow-catalog-binding", true),
+		Entry("AIA Role", catalogObjectRole, "aianalysis", testNamespace+"-aianalysis-workflow-catalog", false),
+		Entry("AIA RoleBinding", catalogObjectRoleBinding, "aianalysis", testNamespace+"-aianalysis-workflow-catalog-binding", false),
+		Entry("RO Role", catalogObjectRole, "remediationorchestrator", testNamespace+"-remediationorchestrator-workflow-catalog", true),
+		Entry("RO RoleBinding", catalogObjectRoleBinding, "remediationorchestrator", testNamespace+"-remediationorchestrator-workflow-catalog-binding", true),
 	)
 
 	It("IT-RBAC-624-004 [AC-3, AC-6, CM-6]: removes the obsolete KA cluster grant only after a successful same-CR retry", func() {
 		foreignNamespace := "issue-624-retry-foreign"
 		ensureIssue624Namespace(ctx, foreignNamespace)
 		DeferCleanup(func() { deleteIssue624Namespace(context.Background(), foreignNamespace) })
-		r, fault := startIssue624FaultedReconcile(ctx, "rolebinding", testNamespace+"-aianalysis-workflow-catalog-binding")
+		r, fault := startIssue624FaultedReconcile(ctx, catalogObjectRoleBinding, testNamespace+"-aianalysis-workflow-catalog-binding")
 		kn := fetchKnV2(ctx)
 		legacyBinding := issue624LegacyKAFixture(kn)
 		_, err := r.Reconcile(ctx, reconcileRequest())
@@ -624,6 +629,122 @@ var _ = Describe("Trusted workflow catalog RBAC (#624)", func() {
 	})
 })
 
+var _ = Describe("APIFrontend trusted workflow catalog RBAC (#634)", func() {
+	ctx := context.Background()
+
+	AfterEach(func() {
+		cleanupNamespacedResources(ctx)
+		deleteCRIfExists(ctx)
+		deleteBYOSecrets(ctx)
+		cleanupClusterScoped(ctx)
+	})
+
+	It("IT-RBAC-634-001 [AC-3, AC-6, CM-6; SOC2 CC6.1, CC6.6, CC8.1; ASVS v5.0.0-V8.2.1, v5.0.0-V8.3.1] reconciles read-only trusted catalog access for APIFrontend", func() {
+		createBYOSecrets(ctx)
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+		reconcileToDeployPhase(ctx)
+
+		kn := fetchKnV2(ctx)
+		role := &rbacv1.Role{}
+		roleName := testNamespace + "-apifrontend-workflow-catalog"
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: roleName, Namespace: testNamespace}, role)).To(Succeed())
+		Expect(role.Rules).To(ConsistOf(rbacv1.PolicyRule{
+			APIGroups: []string{kubernautv1alpha2.GroupVersion.Group},
+			Resources: []string{"remediationworkflows"},
+			Verbs:     []string{"get", "list"},
+		}))
+
+		binding := &rbacv1.RoleBinding{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: roleName + "-binding", Namespace: testNamespace}, binding)).To(Succeed())
+		Expect(binding.RoleRef).To(Equal(rbacv1.RoleRef{
+			APIGroup: rbacv1.GroupName,
+			Kind:     "Role",
+			Name:     roleName,
+		}))
+		Expect(binding.Subjects).To(ConsistOf(rbacv1.Subject{
+			Kind:      rbacv1.ServiceAccountKind,
+			Name:      resources.ServiceAccountName(resources.ComponentAPIFrontend),
+			Namespace: testNamespace,
+		}))
+		Expect(kn.Namespace).To(Equal(testNamespace), "trusted catalog access must follow the Kubernaut controller namespace")
+
+		afUser := serviceAccountUser(testNamespace, resources.ServiceAccountName(resources.ComponentAPIFrontend))
+		foreignNamespace := "issue-634-foreign"
+		checks := []struct {
+			namespace   string
+			subresource string
+			verb        string
+			allowed     bool
+		}{
+			{testNamespace, "", "get", true},
+			{testNamespace, "", "list", true},
+			{testNamespace, "", "watch", false},
+			{testNamespace, "", "create", false},
+			{testNamespace, "", "update", false},
+			{testNamespace, "", "patch", false},
+			{testNamespace, "", "delete", false},
+			{testNamespace, "status", "get", false},
+			{testNamespace, "status", "update", false},
+			{testNamespace, "status", "patch", false},
+			{testNamespace, "finalizers", "update", false},
+			{foreignNamespace, "", "get", false},
+			{foreignNamespace, "", "list", false},
+			{"", "", "get", false},
+			{"", "", "list", false},
+		}
+		for _, check := range checks {
+			description := fmt.Sprintf("APIFrontend user=%s namespace=%s subresource=%s verb=%s allowed=%t",
+				afUser, check.namespace, check.subresource, check.verb, check.allowed)
+			if check.allowed {
+				Eventually(eventuallySubjectAccess(ctx, afUser, check.namespace, "remediationworkflows", check.subresource, check.verb), timeout, interval).Should(BeTrue(), description)
+			} else {
+				Eventually(eventuallySubjectDenied(ctx, afUser, check.namespace, "remediationworkflows", check.subresource, check.verb), timeout, interval).Should(BeTrue(), description)
+			}
+		}
+	})
+
+	It("IT-RBAC-634-002 does not reconcile the APIFrontend catalog grant when APIFrontend is disabled", func() {
+		createBYOSecrets(ctx)
+		cr := newMinimalCR()
+		disabled := false
+		cr.Spec.APIFrontend.Enabled = &disabled
+		Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+		reconcileToDeployPhase(ctx)
+
+		roleName, bindingName := resources.APIFrontendWorkflowCatalogRBACNames(fetchKnV2(ctx))
+		role := &rbacv1.Role{}
+		err := k8sClient.Get(ctx, types.NamespacedName{Name: roleName, Namespace: testNamespace}, role)
+		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "disabled APIFrontend must not receive a catalog Role")
+		binding := &rbacv1.RoleBinding{}
+		err = k8sClient.Get(ctx, types.NamespacedName{Name: bindingName, Namespace: testNamespace}, binding)
+		Expect(apierrors.IsNotFound(err)).To(BeTrue(), "disabled APIFrontend must not receive a catalog RoleBinding")
+	})
+
+	It("IT-RBAC-634-003 prunes the APIFrontend catalog grant after an enabled-to-disabled transition", func() {
+		createBYOSecrets(ctx)
+		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+		r := reconcileToDeployPhase(ctx)
+
+		kn := fetchKnV2(ctx)
+		roleName, bindingName := resources.APIFrontendWorkflowCatalogRBACNames(kn)
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: roleName, Namespace: testNamespace}, &rbacv1.Role{})).To(Succeed())
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: bindingName, Namespace: testNamespace}, &rbacv1.RoleBinding{})).To(Succeed())
+
+		disabled := false
+		kn.Spec.APIFrontend.Enabled = &disabled
+		Expect(k8sClient.Update(ctx, kn)).To(Succeed())
+		_, err := r.Reconcile(ctx, reconcileRequest())
+		Expect(err).NotTo(HaveOccurred())
+
+		Eventually(func() error {
+			return k8sClient.Get(ctx, types.NamespacedName{Name: roleName, Namespace: testNamespace}, &rbacv1.Role{})
+		}, timeout, interval).Should(MatchError(ContainSubstring("not found")))
+		Eventually(func() error {
+			return k8sClient.Get(ctx, types.NamespacedName{Name: bindingName, Namespace: testNamespace}, &rbacv1.RoleBinding{})
+		}, timeout, interval).Should(MatchError(ContainSubstring("not found")))
+	})
+})
+
 var _ = Describe("Trusted workflow catalog RBAC failure handling (#610)", Label("unit"), func() {
 	It("keeps the legacy KA catalog grant until replacement Role or RoleBinding reconciliation succeeds", func() {
 		for _, test := range []struct {
@@ -633,12 +754,12 @@ var _ = Describe("Trusted workflow catalog RBAC failure handling (#610)", Label(
 		}{
 			{
 				name:       "catalog Role",
-				objectType: "role",
+				objectType: catalogObjectRole,
 				wantError:  "ensuring workflow catalog role",
 			},
 			{
 				name:       "catalog RoleBinding",
-				objectType: "rolebinding",
+				objectType: catalogObjectRoleBinding,
 				wantError:  "ensuring workflow catalog rolebinding",
 			},
 		} {
@@ -657,14 +778,14 @@ var _ = Describe("Trusted workflow catalog RBAC failure handling (#610)", Label(
 			}
 
 			faults := interceptor.Funcs{Create: func(ctx context.Context, api client.WithWatch, object client.Object, options ...client.CreateOption) error {
-				if test.objectType == "role" {
+				if test.objectType == catalogObjectRole {
 					if _, ok := catalogRoleNames[object.GetName()]; ok {
 						if _, ok := object.(*rbacv1.Role); ok {
 							return fmt.Errorf("injected catalog Role failure")
 						}
 					}
 				}
-				if test.objectType == "rolebinding" {
+				if test.objectType == catalogObjectRoleBinding {
 					if _, ok := catalogBindingNames[object.GetName()]; ok {
 						if _, ok := object.(*rbacv1.RoleBinding); ok {
 							return fmt.Errorf("injected catalog RoleBinding failure")
@@ -700,6 +821,95 @@ var _ = Describe("Trusted workflow catalog RBAC failure handling (#610)", Label(
 				HaveField("Resources", ConsistOf("remediationworkflows", "actiontypes")),
 				HaveField("Verbs", ConsistOf("get", "list", "watch")),
 			)), "the old cluster-wide KA catalog grant must remain while replacement RBAC is unavailable")
+		}
+	})
+})
+
+var _ = Describe("APIFrontend workflow catalog RBAC cleanup (#634)", Label("unit"), func() {
+	ctx := context.Background()
+
+	It("UT-RBAC-634-004 routes disabled APIFrontend through namespaced catalog cleanup", func() {
+		kn := newMinimalCR()
+		kn.UID = types.UID("unit-634-disabled")
+		disabled := false
+		kn.Spec.APIFrontend.Enabled = &disabled
+		r := businessUnitReconciler(kn, interceptor.Funcs{})
+
+		Expect(r.deployNamespacedCoreRBAC(ctx, kn, kn)).To(Succeed())
+		roleName, bindingName := resources.APIFrontendWorkflowCatalogRBACNames(kn)
+		Expect(r.Get(ctx, types.NamespacedName{Name: roleName, Namespace: kn.Namespace}, &rbacv1.Role{})).To(MatchError(ContainSubstring("not found")))
+		Expect(r.Get(ctx, types.NamespacedName{Name: bindingName, Namespace: kn.Namespace}, &rbacv1.RoleBinding{})).To(MatchError(ContainSubstring("not found")))
+
+		failingKn := newMinimalCR()
+		failingKn.UID = types.UID("unit-634-disabled-failure")
+		failingKn.Spec.APIFrontend.Enabled = &disabled
+		failingRoleName, _ := resources.APIFrontendWorkflowCatalogRBACNames(failingKn)
+		failingRole := &rbacv1.Role{}
+		catalogRoles, _ := resources.TrustedWorkflowCatalogRBAC(newMinimalCR())
+		for _, desired := range catalogRoles {
+			if desired.Name == failingRoleName {
+				failingRole = desired.DeepCopy()
+				break
+			}
+		}
+		faults := interceptor.Funcs{Delete: func(ctx context.Context, api client.WithWatch, object client.Object, options ...client.DeleteOption) error {
+			if object.GetName() == failingRoleName {
+				return fmt.Errorf("injected stale APIFrontend Role delete failure")
+			}
+			return api.Delete(ctx, object, options...)
+		}}
+		failing := businessUnitReconciler(failingKn, faults)
+		seedBusinessOwnedResources(failing, failingKn, failingRole)
+		Expect(failing.deployNamespacedCoreRBAC(ctx, failingKn, failingKn)).To(MatchError(ContainSubstring("removing stale APIFrontend workflow catalog role")))
+	})
+
+	It("UT-RBAC-634-003 removes owned catalog resources and reports delete failures", func() {
+		for _, test := range []struct {
+			name       string
+			objectType string
+			wantError  string
+		}{
+			{name: "successful cleanup"},
+			{name: "Role delete failure", objectType: catalogObjectRole, wantError: "removing stale APIFrontend workflow catalog role"},
+			{name: "RoleBinding delete failure", objectType: catalogObjectRoleBinding, wantError: "removing stale APIFrontend workflow catalog rolebinding"},
+		} {
+			By("testing " + test.name)
+			kn := newMinimalCR()
+			kn.UID = types.UID("unit-634-rbac-cleanup")
+			roleName, bindingName := resources.APIFrontendWorkflowCatalogRBACNames(kn)
+			faults := interceptor.Funcs{Delete: func(ctx context.Context, api client.WithWatch, object client.Object, options ...client.DeleteOption) error {
+				if (test.objectType == catalogObjectRole && object.GetName() == roleName) ||
+					(test.objectType == catalogObjectRoleBinding && object.GetName() == bindingName) {
+					return fmt.Errorf("injected APIFrontend catalog %s delete failure", test.objectType)
+				}
+				return api.Delete(ctx, object, options...)
+			}}
+			r := businessUnitReconciler(kn, faults)
+			catalogRoles, catalogBindings := resources.TrustedWorkflowCatalogRBAC(kn)
+			var catalogRole *rbacv1.Role
+			var catalogBinding *rbacv1.RoleBinding
+			for _, role := range catalogRoles {
+				if role.Name == roleName {
+					catalogRole = role.DeepCopy()
+				}
+			}
+			for _, binding := range catalogBindings {
+				if binding.Name == bindingName {
+					catalogBinding = binding.DeepCopy()
+				}
+			}
+			Expect(catalogRole).NotTo(BeNil())
+			Expect(catalogBinding).NotTo(BeNil())
+			seedBusinessOwnedResources(r, kn, catalogRole, catalogBinding)
+
+			err := r.pruneStaleAPIFrontendWorkflowCatalogRBAC(ctx, kn)
+			if test.wantError == "" {
+				Expect(err).NotTo(HaveOccurred())
+				Expect(r.Get(ctx, types.NamespacedName{Name: roleName, Namespace: kn.Namespace}, &rbacv1.Role{})).To(MatchError(ContainSubstring("not found")))
+				Expect(r.Get(ctx, types.NamespacedName{Name: bindingName, Namespace: kn.Namespace}, &rbacv1.RoleBinding{})).To(MatchError(ContainSubstring("not found")))
+				continue
+			}
+			Expect(err).To(MatchError(ContainSubstring(test.wantError)))
 		}
 	})
 })

@@ -73,6 +73,8 @@ const (
 
 	// maxK8sNameLen is the maximum length for a Kubernetes object name.
 	maxK8sNameLen = 253
+
+	trustedWorkflowCatalogAPIFrontendRoleBase = "apifrontend-workflow-catalog"
 )
 
 // markCoreClusterRBAC stamps LabelCoreClusterRBAC=true onto every object in
@@ -437,6 +439,53 @@ func NamespaceRoleBindings(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alp
 	return rbs
 }
 
+type trustedWorkflowCatalogGrant struct {
+	roleBase  string
+	component string
+	resources []string
+	verbs     []string
+}
+
+var trustedWorkflowCatalogGrants = []trustedWorkflowCatalogGrant{
+	{
+		roleBase:  "kubernaut-agent-workflow-catalog",
+		component: ComponentKubernautAgent,
+		resources: []string{"remediationworkflows", "actiontypes"},
+		verbs:     []string{"list", "watch"},
+	},
+	{
+		roleBase:  "authwebhook-workflow-catalog",
+		component: ComponentAuthWebhook,
+		resources: []string{"remediationworkflows"},
+		verbs:     []string{"list"},
+	},
+	{
+		roleBase:  "workflowexecution-workflow-catalog",
+		component: ComponentWorkflowExecution,
+		resources: []string{"remediationworkflows"},
+		verbs:     []string{"list"},
+	},
+	{
+		roleBase:  "aianalysis-workflow-catalog",
+		component: ComponentAIAnalysis,
+		resources: []string{"remediationworkflows"},
+		verbs:     []string{"list"},
+	},
+	{
+		roleBase:  "remediationorchestrator-workflow-catalog",
+		component: ComponentRemediationOrchestrator,
+		resources: []string{"remediationworkflows"},
+		verbs:     []string{"get", "list"},
+	},
+	{
+		// APIFrontend's approval workflow identity validation is read-only and namespaced (#634).
+		roleBase:  trustedWorkflowCatalogAPIFrontendRoleBase,
+		component: ComponentAPIFrontend,
+		resources: []string{"remediationworkflows"},
+		verbs:     []string{"get", "list"},
+	},
+}
+
 // TrustedWorkflowCatalogRBAC returns namespace-scoped catalog permissions for
 // the controller/service namespace (#610; decision documented in
 // docs/design/ISSUE-610-TRUSTED-WORKFLOW-CATALOG-RBAC.md). The
@@ -444,50 +493,13 @@ func NamespaceRoleBindings(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alp
 // trusted-workflow verification must use kn.Namespace regardless of
 // spec.workflowExecution.workflowNamespace.
 func TrustedWorkflowCatalogRBAC(kn *kubernautv1alpha2.Kubernaut) ([]*rbacv1.Role, []*rbacv1.RoleBinding) {
-	type catalogGrant struct {
-		roleBase  string
-		component string
-		resources []string
-		verbs     []string
-	}
-
-	grants := []catalogGrant{
-		{
-			roleBase:  "kubernaut-agent-workflow-catalog",
-			component: ComponentKubernautAgent,
-			resources: []string{"remediationworkflows", "actiontypes"},
-			verbs:     []string{"list", "watch"},
-		},
-		{
-			roleBase:  "authwebhook-workflow-catalog",
-			component: ComponentAuthWebhook,
-			resources: []string{"remediationworkflows"},
-			verbs:     []string{"list"},
-		},
-		{
-			roleBase:  "workflowexecution-workflow-catalog",
-			component: ComponentWorkflowExecution,
-			resources: []string{"remediationworkflows"},
-			verbs:     []string{"list"},
-		},
-		{
-			roleBase:  "aianalysis-workflow-catalog",
-			component: ComponentAIAnalysis,
-			resources: []string{"remediationworkflows"},
-			verbs:     []string{"list"},
-		},
-		{
-			roleBase:  "remediationorchestrator-workflow-catalog",
-			component: ComponentRemediationOrchestrator,
-			resources: []string{"remediationworkflows"},
-			verbs:     []string{"get", "list"},
-		},
-	}
-
 	labels := CommonLabels(kn)
-	roles := make([]*rbacv1.Role, 0, len(grants))
-	bindings := make([]*rbacv1.RoleBinding, 0, len(grants))
-	for _, grant := range grants {
+	roles := make([]*rbacv1.Role, 0, len(trustedWorkflowCatalogGrants))
+	bindings := make([]*rbacv1.RoleBinding, 0, len(trustedWorkflowCatalogGrants))
+	for _, grant := range trustedWorkflowCatalogGrants {
+		if grant.component == ComponentAPIFrontend && !kn.Spec.APIFrontendEnabled() {
+			continue
+		}
 		roleName := clusterRoleName(kn, grant.roleBase)
 		roles = append(roles, &rbacv1.Role{
 			ObjectMeta: metav1.ObjectMeta{
@@ -520,6 +532,15 @@ func TrustedWorkflowCatalogRBAC(kn *kubernautv1alpha2.Kubernaut) ([]*rbacv1.Role
 		})
 	}
 	return roles, bindings
+}
+
+// APIFrontendWorkflowCatalogRBACNames returns the names of the optional
+// APIFrontend trusted-workflow catalog Role and RoleBinding. The names are
+// available even when APIFrontend is disabled so reconciliation can remove a
+// grant left by an enabled-to-disabled transition.
+func APIFrontendWorkflowCatalogRBACNames(kn *kubernautv1alpha2.Kubernaut) (string, string) {
+	roleName := clusterRoleName(kn, trustedWorkflowCatalogAPIFrontendRoleBase)
+	return roleName, roleName + "-binding"
 }
 
 // WorkflowNamespaceRBAC returns the Roles and RoleBindings in the workflow namespace
