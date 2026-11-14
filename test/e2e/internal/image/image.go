@@ -27,11 +27,19 @@ import (
 	"strings"
 )
 
+// PlatformEnvironment overrides the platform exported into a Kind image
+// archive. It is set explicitly by hosted Linux CI and defaults to the
+// current Go runtime architecture for local runs.
+const PlatformEnvironment = "KUBERNAUT_KIND_IMAGE_PLATFORM"
+
 // Runner executes one external command and returns its combined output.
 type Runner func(context.Context, string, ...string) (string, error)
 
 // Platform returns the target Linux platform for images loaded into Kind.
 func Platform() string {
+	if platform := strings.TrimSpace(os.Getenv(PlatformEnvironment)); platform != "" {
+		return platform
+	}
 	return "linux/" + runtime.GOARCH
 }
 
