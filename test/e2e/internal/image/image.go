@@ -27,9 +27,9 @@ import (
 	"strings"
 )
 
-// PlatformEnvironment overrides the platform exported into a Kind image
-// archive. It is set explicitly by hosted Linux CI and defaults to the
-// current Go runtime architecture for local runs.
+// PlatformEnvironment optionally overrides the platform exported into a Kind
+// image archive. It defaults to the current Go runtime architecture for local
+// runs.
 const PlatformEnvironment = "KUBERNAUT_KIND_IMAGE_PLATFORM"
 
 // Runner executes one external command and returns its combined output.
