@@ -754,6 +754,7 @@ var _ = Describe("Fleet caller RBAC (#457)", func() {
 			Expect(binding.Name).NotTo(Equal(clusterRoleName(kn, "fleet-caller-execution-binding")))
 		}
 	})
+
 })
 
 var _ = Describe("DataStorageClientRoleBindings", func() {
@@ -821,15 +822,15 @@ var _ = Describe("NamespaceRoleBindings", func() {
 	})
 })
 
-var _ = Describe("TrustedWorkflowCatalogRBAC (#610, #624)", func() {
-	It("UT-RBAC-624-001 renders five exact catalog Roles and RoleBindings in the configured controller namespace", func() {
+var _ = Describe("TrustedWorkflowCatalogRBAC (#610, #624, #634)", func() {
+	It("UT-RBAC-624-001/634-001 renders six exact catalog Roles and RoleBindings in the configured controller namespace", func() {
 		kn := testKubernaut()
 		kn.Namespace = "trusted-controller"
 		kn.Spec.WorkflowExecution.WorkflowNamespace = "workflow-execution"
 
 		roles, bindings := TrustedWorkflowCatalogRBAC(kn)
-		Expect(roles).To(HaveLen(5))
-		Expect(bindings).To(HaveLen(5))
+		Expect(roles).To(HaveLen(6))
+		Expect(bindings).To(HaveLen(6))
 
 		want := map[string]struct {
 			roleBase  string
@@ -864,6 +865,12 @@ var _ = Describe("TrustedWorkflowCatalogRBAC (#610, #624)", func() {
 			"remediationorchestrator": {
 				roleBase:  "remediationorchestrator-workflow-catalog",
 				saName:    ServiceAccountName(ComponentRemediationOrchestrator),
+				resources: []string{"remediationworkflows"},
+				verbs:     []string{"get", "list"},
+			},
+			"apifrontend": {
+				roleBase:  "apifrontend-workflow-catalog",
+				saName:    ServiceAccountName(ComponentAPIFrontend),
 				resources: []string{"remediationworkflows"},
 				verbs:     []string{"get", "list"},
 			},
@@ -904,6 +911,22 @@ var _ = Describe("TrustedWorkflowCatalogRBAC (#610, #624)", func() {
 			Expect(binding).NotTo(BeNil(), "missing catalog RoleBinding for %q", roleName)
 			Expect(binding.RoleRef.Name).To(Equal(roleName))
 			Expect(binding.Subjects[0].Name).To(Equal(grant.saName))
+		}
+	})
+
+	It("UT-RBAC-634-002 omits the APIFrontend catalog grant when APIFrontend is disabled", func() {
+		kn := testKubernaut()
+		kn.Spec.APIFrontend.Enabled = ptr.To(false)
+
+		roles, bindings := TrustedWorkflowCatalogRBAC(kn)
+		Expect(roles).To(HaveLen(5))
+		Expect(bindings).To(HaveLen(5))
+		roleName, bindingName := APIFrontendWorkflowCatalogRBACNames(kn)
+		for _, role := range roles {
+			Expect(role.Name).NotTo(Equal(roleName))
+		}
+		for _, binding := range bindings {
+			Expect(binding.Name).NotTo(Equal(bindingName))
 		}
 	})
 })
