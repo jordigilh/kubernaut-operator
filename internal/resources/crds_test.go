@@ -140,31 +140,32 @@ var _ = Describe("EnsureCRDs embedded assets", func() {
 
 		aiAnalysis := embeddedCRDSchema("kubernaut.ai_aianalyses.yaml")
 		selectedWorkflow := schemaProperty(&aiAnalysis, "status", "rcaResult", "selectedWorkflow")
-		Expect(selectedWorkflow.Properties).To(HaveKey("parameterSchema"))
-		Expect(schemaProperty(&selectedWorkflow, "parameters").Description).
+		Expect(selectedWorkflow.Properties).NotTo(HaveKey("parameterSchema"))
+		selectedParameters := schemaProperty(&selectedWorkflow, "parameters")
+		Expect(selectedParameters.Description).
 			To(ContainSubstring("explicitly empty map is preserved"))
+		Expect(selectedParameters.AdditionalProperties).NotTo(BeNil())
+		Expect(selectedParameters.AdditionalProperties.Schema).NotTo(BeNil())
+		Expect(selectedParameters.AdditionalProperties.Schema.Properties).To(HaveKey("kind"))
+		Expect(selectedParameters.AdditionalProperties.Schema.Properties).To(HaveKey("stringValue"))
 		validationRules := make([]string, 0, len(selectedWorkflow.XValidations))
 		for _, validation := range selectedWorkflow.XValidations {
 			validationRules = append(validationRules, validation.Rule)
 		}
-		Expect(validationRules).To(ContainElement(ContainSubstring("parameterSchema")))
+		Expect(validationRules).NotTo(ContainElement(ContainSubstring("parameterSchema")))
 
 		approvalRequest := embeddedCRDSchema("kubernaut.ai_remediationapprovalrequests.yaml")
 		approvalSpec := schemaProperty(&approvalRequest, "spec")
-		Expect(approvalSpec.Properties).To(HaveKey("parameterSchema"))
+		Expect(approvalSpec.Properties).NotTo(HaveKey("parameterSchema"))
 		Expect(approvalSpec.Properties).To(HaveKey("parameters"))
 		Expect(approvalSpec.Properties).To(HaveKey("targetContext"))
 		Expect(approvalSpec.Properties).To(HaveKey("workflow"))
 		Expect(schemaProperty(&approvalRequest, "spec", "parameters").Description).
 			To(ContainSubstring("distinct from missing data"))
-		approvalParameterSchema := schemaProperty(&approvalRequest, "spec", "parameterSchema")
-		Expect(approvalParameterSchema.Items).NotTo(BeNil())
-		if approvalParameterSchema.Items != nil {
-			Expect(approvalParameterSchema.Items.Schema).NotTo(BeNil())
-			if approvalParameterSchema.Items.Schema != nil {
-				Expect(approvalParameterSchema.Items.Schema.Properties).To(HaveKey("name"))
-			}
-		}
+		approvalParameters := schemaProperty(&approvalRequest, "spec", "parameters")
+		Expect(approvalParameters.AdditionalProperties).NotTo(BeNil())
+		Expect(approvalParameters.AdditionalProperties.Schema).NotTo(BeNil())
+		Expect(approvalParameters.AdditionalProperties.Schema.Properties).To(HaveKey("kind"))
 		Expect(schemaProperty(&approvalRequest, "spec", "targetContext").Properties).
 			To(HaveKey("signalTarget"))
 		workflowSnapshot := schemaProperty(&approvalRequest, "spec", "workflow")
@@ -178,8 +179,12 @@ var _ = Describe("EnsureCRDs embedded assets", func() {
 			To(ContainSubstring("legacy field"))
 
 		workflowExecution := embeddedCRDSchema("kubernaut.ai_workflowexecutions.yaml")
-		Expect(schemaProperty(&workflowExecution, "spec", "workflowRef", "declaredParameterNames").Description).
-			To(ContainSubstring("missing schema, fail closed"))
+		workflowReference := schemaProperty(&workflowExecution, "spec", "workflowRef")
+		Expect(workflowReference.Properties).NotTo(HaveKey("declaredParameterNames"))
+		workflowParameters := schemaProperty(&workflowExecution, "spec", "parameters")
+		Expect(workflowParameters.AdditionalProperties).NotTo(BeNil())
+		Expect(workflowParameters.AdditionalProperties.Schema).NotTo(BeNil())
+		Expect(workflowParameters.AdditionalProperties.Schema.Properties).To(HaveKey("kind"))
 	})
 })
 

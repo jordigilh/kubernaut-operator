@@ -12,6 +12,7 @@ permissions:
 
 env:
   OPERATOR_IMAGE: localhost/kubernaut-operator:ci
+  KUBERNAUT_KIND_IMAGE_PLATFORM: linux/amd64
 
 jobs:
   test:
@@ -251,8 +252,8 @@ jobs:
 
       - name: Pull pinned dependency images
         run: |
-          docker pull docker.io/library/postgres:16.4
-          docker pull docker.io/valkey/valkey:8.0.2
+          docker pull --platform "${KUBERNAUT_KIND_IMAGE_PLATFORM}" docker.io/library/postgres:16.4
+          docker pull --platform "${KUBERNAUT_KIND_IMAGE_PLATFORM}" docker.io/valkey/valkey:8.0.2
 
       - name: Run Kind E2E
         env:
