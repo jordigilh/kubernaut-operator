@@ -473,27 +473,6 @@ var _ = Describe("Trusted workflow catalog RBAC (#624)", func() {
 			Expect(k8sClient.Create(ctx, serviceAccount)).To(Succeed())
 		}
 
-		Expect(resources.EnsureCRDs(ctx, cfg)).To(Succeed())
-		waitForIssue613SelectorCRD(ctx)
-		createIssue613Workflow(ctx, testNamespace, "issue-624-trusted-workflow", "issue-624-trusted")
-		createIssue613Workflow(ctx, foreignNamespace, "issue-624-foreign-workflow", "issue-624-foreign")
-		DeferCleanup(func() {
-			for _, fixture := range []struct {
-				namespace string
-				name      string
-			}{
-				{namespace: testNamespace, name: "issue-624-trusted-workflow"},
-				{namespace: foreignNamespace, name: "issue-624-foreign-workflow"},
-			} {
-				err := issue613RemediationWorkflowResource(fixture.namespace).Delete(
-					context.Background(), fixture.name, metav1.DeleteOptions{},
-				)
-				if !apierrors.IsNotFound(err) {
-					Expect(err).NotTo(HaveOccurred(), "deleting workflow fixture %s/%s", fixture.namespace, fixture.name)
-				}
-			}
-		})
-
 		createBYOSecrets(ctx)
 		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 		reconcileToDeployPhase(ctx)
