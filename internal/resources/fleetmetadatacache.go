@@ -232,7 +232,12 @@ func FleetMetadataCacheDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kuberna
 	// still scanned) to also trust this bundle, closing that gap without
 	// an upstream kubernaut-core code change. Tracked upstream for a proper
 	// fix (WithHTTPClient wiring in cmd/fleetmetadatacache/main.go).
-	env := []corev1.EnvVar{{Name: "SSL_CERT_FILE", Value: InterServiceTLSCAFileFor(tlsKn)}}
+	env := []corev1.EnvVar{
+		{Name: "POD_UID", ValueFrom: &corev1.EnvVarSource{
+			FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"},
+		}},
+		{Name: "SSL_CERT_FILE", Value: InterServiceTLSCAFileFor(tlsKn)},
+	}
 
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentFleetMetadataCache, ImageName: "fleetmetadatacache",

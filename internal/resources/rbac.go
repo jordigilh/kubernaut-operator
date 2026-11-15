@@ -386,7 +386,8 @@ func KubernautAgentClientAPIfrontendRoleBinding(kn *kubernautv1alpha2.Kubernaut)
 // per the kubernaut.nsRoleForSecrets pattern. Access is granted to ALL
 // secrets/configmaps in the operator namespace rather than per-resource names
 // because the namespace is dedicated to operator workloads and components
-// dynamically reference each other's ConfigMaps.
+// dynamically reference each other's ConfigMaps. FMC additionally receives the
+// namespace-scoped Lease verbs required by its writer-fencing coordinator.
 func NamespaceRoles(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) []*rbacv1.Role {
 	labels := CommonLabels(kn)
 	ns := kn.Namespace
@@ -394,17 +395,25 @@ func NamespaceRoles(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kub
 	active := ActiveComponents(kn, knV2)
 	roles := make([]*rbacv1.Role, 0, len(active))
 	for _, c := range active {
+		rules := []rbacv1.PolicyRule{{
+			APIGroups: []string{""},
+			Resources: []string{"configmaps", "secrets"},
+			Verbs:     []string{"get", "list", "watch"},
+		}}
+		if c == ComponentFleetMetadataCache {
+			rules = append(rules, rbacv1.PolicyRule{
+				APIGroups: []string{"coordination.k8s.io"},
+				Resources: []string{"leases"},
+				Verbs:     []string{"get", "create", "update"},
+			})
+		}
 		roles = append(roles, &rbacv1.Role{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      c + "-ns-role",
 				Namespace: ns,
 				Labels:    labels,
 			},
-			Rules: []rbacv1.PolicyRule{{
-				APIGroups: []string{""},
-				Resources: []string{"configmaps", "secrets"},
-				Verbs:     []string{"get", "list", "watch"},
-			}},
+			Rules: rules,
 		})
 	}
 	return roles

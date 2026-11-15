@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -145,6 +146,20 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				Name: resources.DeploymentName(resources.ComponentFleetMetadataCache), Namespace: testNamespace,
 			}, dep)).To(Succeed())
 
+			By("IT-FLEET-2593-003 [BR-INTEGRATION-065]: verifying the reconciled FMC Pod receives its UID")
+			var podUID *corev1.EnvVar
+			for i := range dep.Spec.Template.Spec.Containers[0].Env {
+				env := &dep.Spec.Template.Spec.Containers[0].Env[i]
+				if env.Name == "POD_UID" {
+					podUID = env
+					break
+				}
+			}
+			Expect(podUID).NotTo(BeNil())
+			Expect(podUID.ValueFrom).NotTo(BeNil())
+			Expect(podUID.ValueFrom.FieldRef).NotTo(BeNil())
+			Expect(podUID.ValueFrom.FieldRef.FieldPath).To(Equal("metadata.uid"))
+
 			svc := &corev1.Service{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
 				Name: "fleetmetadatacache-service", Namespace: testNamespace,
@@ -198,6 +213,20 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
 				Name: testNamespace + "-fleetmetadatacache-mcpgateway-binding", Namespace: testNamespace,
 			}, rb)).To(Succeed())
+
+			By("IT-FLEET-2593-004 [AC-6]: verifying the reconciled FMC Role grants writer Lease access")
+			leaseRole := &rbacv1.Role{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: resources.ComponentFleetMetadataCache + "-ns-role", Namespace: testNamespace,
+			}, leaseRole)).To(Succeed())
+			leaseRuleFound := false
+			for _, rule := range leaseRole.Rules {
+				if slices.Contains(rule.APIGroups, "coordination.k8s.io") && slices.Contains(rule.Resources, "leases") {
+					leaseRuleFound = true
+					Expect(rule.Verbs).To(ConsistOf("get", "create", "update"))
+				}
+			}
+			Expect(leaseRuleFound).To(BeTrue())
 		})
 
 		It("IT-FLEET-557-RECONCILE-MCP-CA: wires MCP Gateway CA rendering and read-only mounts through Reconcile", func() {

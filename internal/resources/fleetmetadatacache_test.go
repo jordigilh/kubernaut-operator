@@ -17,10 +17,13 @@ limitations under the License.
 package resources
 
 import (
+	"slices"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
@@ -302,6 +305,26 @@ var _ = Describe("FleetMetadataCacheDeployment", func() {
 		Expect(found).To(BeTrue(), "SSL_CERT_FILE env var not found")
 	})
 
+	It("UT-FLEET-2593-001 [BR-INTEGRATION-065]: injects POD_UID from the Pod metadata UID", func() {
+		kn, knV2 := testKubernautWithFMC()
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+
+		var podUID *corev1.EnvVar
+		for i := range dep.Spec.Template.Spec.Containers[0].Env {
+			env := &dep.Spec.Template.Spec.Containers[0].Env[i]
+			if env.Name == "POD_UID" {
+				podUID = env
+				break
+			}
+		}
+		Expect(podUID).NotTo(BeNil(), "FMC must receive its Pod UID for writer fencing")
+		Expect(podUID.Value).To(BeEmpty(), "POD_UID must come from the downward API")
+		Expect(podUID.ValueFrom).NotTo(BeNil())
+		Expect(podUID.ValueFrom.FieldRef).NotTo(BeNil())
+		Expect(podUID.ValueFrom.FieldRef.FieldPath).To(Equal("metadata.uid"))
+	})
+
 	It("#398 [SC-8]: mounts valkey-ca and valkey-client-cert when spec.valkey.tls is configured, mirroring DataStorageDeployment", func() {
 		kn, knV2 := testKubernautWithFMC()
 		kn.Spec.Valkey.TLS = &kubernautv1alpha2.ValkeyTLSSpec{
@@ -465,6 +488,27 @@ var _ = Describe("FleetMetadataCache RBAC", func() {
 		for _, cr := range ClusterRoles(disabledKn, testKnV2(disabledKn)) {
 			Expect(cr.Name).NotTo(Equal(disabledKn.Namespace + "-fleetmetadatacache"))
 		}
+	})
+
+	It("UT-FLEET-2593-002 [AC-6]: grants the FMC writer namespace-scoped Lease permissions", func() {
+		kn, knV2 := testKubernautWithFMC()
+		var role *rbacv1.Role
+		for _, candidate := range NamespaceRoles(kn, knV2) {
+			if candidate.Name == ComponentFleetMetadataCache+"-ns-role" {
+				role = candidate
+				break
+			}
+		}
+		Expect(role).NotTo(BeNil(), "FMC namespace Role should be generated when FMC is enabled")
+
+		found := false
+		for _, rule := range role.Rules {
+			if slices.Contains(rule.APIGroups, "coordination.k8s.io") && slices.Contains(rule.Resources, "leases") {
+				found = true
+				Expect(rule.Verbs).To(ConsistOf("get", "create", "update"))
+			}
+		}
+		Expect(found).To(BeTrue(), "FMC namespace Role must grant writer Lease access")
 	})
 })
 
