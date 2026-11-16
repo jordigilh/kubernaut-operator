@@ -87,7 +87,12 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 		// explicit GVK handoff contract.
 		expected := embeddedOperandCRD("kubernaut.ai_signalprocessings.yaml")
 		live := &apiextensionsv1.CustomResourceDefinition{}
-		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: expected.Name}, live)).To(Succeed())
+		Eventually(func(g Gomega) {
+			g.Expect(k8sClient.Get(ctx, client.ObjectKey{Name: expected.Name}, live)).To(Succeed())
+			g.Expect(live.Status.Conditions).To(ContainElement(And(
+				HaveField("Type", apiextensionsv1.Established), HaveField("Status", apiextensionsv1.ConditionTrue),
+			)))
+		}, timeout, interval).Should(Succeed())
 		Expect(live.Spec.Versions).NotTo(BeEmpty())
 		liveSchema := live.Spec.Versions[0].Schema.OpenAPIV3Schema
 		Expect(liveSchema).NotTo(BeNil())
