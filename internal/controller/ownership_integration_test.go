@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"io/fs"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -76,6 +77,64 @@ var _ = Describe("Issue 514 ownership safety through real reconciliation", func(
 				Expect(actual.Spec.Versions[index].Name).To(Equal(expectedVersion.Name), filename)
 				Expect(actual.Spec.Versions[index].Schema).To(Equal(expectedVersion.Schema), filename)
 			}
+		}
+	})
+
+	It("IT-SCHEMA-642-001 [AC-3, CM-3, SI-10; SOC2 CC6.1, CC7.2; ASVS v5.0.0-V5.1.4] installs a SignalProcessing CRD that declares and retains explicit targetResource.apiVersion", func() {
+		Expect(resources.EnsureCRDs(ctx, cfg)).To(Succeed())
+
+		// The installed (live) CRD -- not the upstream YAML file -- must declare the
+		// explicit GVK handoff contract.
+		expected := embeddedOperandCRD("kubernaut.ai_signalprocessings.yaml")
+		live := &apiextensionsv1.CustomResourceDefinition{}
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: expected.Name}, live)).To(Succeed())
+		Expect(live.Spec.Versions).NotTo(BeEmpty())
+		liveSchema := live.Spec.Versions[0].Schema.OpenAPIV3Schema
+		Expect(liveSchema).NotTo(BeNil())
+		liveTargetResource := liveSchema.Properties["spec"].Properties["signal"].Properties["targetResource"]
+		Expect(liveTargetResource.Properties).To(HaveKey("apiVersion"),
+			"installed SignalProcessing CRD lost spec.signal.targetResource.apiVersion (issue #642)")
+		Expect(liveTargetResource.Properties["apiVersion"].Type).To(Equal("string"))
+
+		// Real API-server persistence round trip: an explicit authoritative GVK
+		// must survive create-then-read without schema pruning.
+		for _, explicitAPIVersion := range []string{"apps/v1", "v1"} {
+			sp := &unstructured.Unstructured{}
+			sp.SetAPIVersion("kubernaut.ai/" + live.Spec.Versions[0].Name)
+			sp.SetKind("SignalProcessing")
+			sp.SetName("sp-642-roundtrip-" + strings.ReplaceAll(explicitAPIVersion, "/", "-"))
+			sp.SetNamespace(testNamespace)
+			Expect(unstructured.SetNestedField(sp.Object, map[string]any{
+				"remediationRequestRef": map[string]any{"name": "rr-642"},
+				"signal": map[string]any{
+					"targetType":   "kubernetes",
+					"type":         "alert",
+					"fingerprint":  strings.Repeat("a", 64),
+					"name":         "signal-642",
+					"severity":     "Sev1",
+					"receivedTime": "2026-11-16T12:00:00Z",
+					"targetResource": map[string]any{
+						"apiVersion": explicitAPIVersion,
+						"kind":       "Deployment",
+						"name":       "target-642",
+						"namespace":  testNamespace,
+					},
+				},
+			}, "spec")).To(Succeed())
+			Expect(k8sClient.Create(ctx, sp)).To(Succeed())
+			DeferCleanup(func() {
+				Expect(client.IgnoreNotFound(k8sClient.Delete(ctx, sp))).To(Succeed())
+			})
+
+			persisted := &unstructured.Unstructured{}
+			persisted.SetAPIVersion(sp.GetAPIVersion())
+			persisted.SetKind(sp.GetKind())
+			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(sp), persisted)).To(Succeed())
+			apiVersion, found, err := unstructured.NestedString(persisted.Object, "spec", "signal", "targetResource", "apiVersion")
+			Expect(err).NotTo(HaveOccurred())
+			Expect(found).To(BeTrue(),
+				"API server pruned the explicit spec.signal.targetResource.apiVersion %q on persist (issue #642)", explicitAPIVersion)
+			Expect(apiVersion).To(Equal(explicitAPIVersion))
 		}
 	})
 
