@@ -128,6 +128,23 @@ var _ = Describe("EnsureCRDs embedded assets", func() {
 			To(ContainElements("Cancelling", "Cancelled"))
 	})
 
+	It("declares the #642 explicit targetResource.apiVersion contract", func() {
+		// Remote SignalProcessing enrichment depends on the explicit GVK handoff:
+		// without apiVersion in the persisted schema the API server prunes the
+		// field and a Kind collision can select the wrong API group on remote reads.
+		// Keep this contract tied to the immutable upstream dependency in go.mod.
+		spSchema := embeddedCRDSchemaPointer("kubernaut.ai_signalprocessings.yaml")
+		targetResource := schemaProperty(spSchema, "spec", "signal", "targetResource")
+
+		apiVersion, ok := targetResource.Properties["apiVersion"]
+		Expect(ok).To(BeTrue(),
+			"embedded SignalProcessing CRD must declare spec.signal.targetResource.apiVersion (issue #642)")
+		Expect(apiVersion.Type).To(Equal("string"))
+
+		Expect(targetResource.Required).NotTo(ContainElement("apiVersion"),
+			"apiVersion must stay optional so existing SignalProcessing objects remain valid")
+	})
+
 	It("contains the #2601 trusted-dispatch and approval asset contract", func() {
 		// Keep this contract tied to the immutable upstream dependency in go.mod.
 		// A local CRD patch would make this test pass while leaving the
