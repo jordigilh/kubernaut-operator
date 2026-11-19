@@ -174,16 +174,10 @@ var _ = Describe("ClusterRoles", func() {
 
 			var coreRule *rbacv1.PolicyRule
 			for i := range ro.Rules {
-				if len(ro.Rules[i].APIGroups) == 1 && ro.Rules[i].APIGroups[0] == "" {
-					for _, r := range ro.Rules[i].Resources {
-						if r == "persistentvolumes" {
-							coreRule = &ro.Rules[i]
-							break
-						}
-					}
-					if coreRule != nil {
-						break
-					}
+				rule := &ro.Rules[i]
+				if len(rule.APIGroups) == 1 && rule.APIGroups[0] == "" && slices.Contains(rule.Resources, "persistentvolumes") {
+					coreRule = rule
+					break
 				}
 			}
 			Expect(coreRule).NotTo(BeNil(), "core resources rule not found")
