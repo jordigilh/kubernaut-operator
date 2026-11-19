@@ -19,8 +19,11 @@ package resources
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"sigs.k8s.io/yaml"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
@@ -595,6 +598,202 @@ var _ = Describe("PodDisruptionBudgets for FleetMetadataCache", func() {
 var _ = Describe("ServiceAccount for FleetMetadataCache", func() {
 	It("resolves to the fleetmetadatacache SA name", func() {
 		Expect(ServiceAccountName(ComponentFleetMetadataCache)).To(Equal("fleetmetadatacache"))
+	})
+})
+
+// #647 (DD-FLEET-017 v2 D4.1a): FMC's ACM Search source surface. The
+// rendered sources.acm YAML keys are a cross-repo contract with upstream
+// pkg/fleet/fmc/config (kubernaut#2661 increment 2) — upstream decodes
+// sources with known-fields-only strictness, so these tests pin the exact
+// key set, not just the values.
+var _ = Describe("FleetMetadataCache ACM source (#647, DD-FLEET-017 D4.1a)", func() {
+	withACMSource := func(mutate func(*kubernautv1alpha2.FleetACMSourceSpec)) (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Kubernaut) {
+		kn, knV2 := testKubernautWithFMC()
+		knV2.Spec.FleetMetadataCache.Sources = &kubernautv1alpha2.FleetMetadataCacheSourcesSpec{
+			ACM: &kubernautv1alpha2.FleetACMSourceSpec{
+				Endpoint:       "https://acm-search.example.com",
+				TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"},
+			},
+		}
+		if mutate != nil {
+			mutate(knV2.Spec.FleetMetadataCache.Sources.ACM)
+		}
+		return kn, knV2
+	}
+
+	findVolume := func(dep *appsv1.Deployment, name string) *corev1.Volume {
+		for i := range dep.Spec.Template.Spec.Volumes {
+			if dep.Spec.Template.Spec.Volumes[i].Name == name {
+				return &dep.Spec.Template.Spec.Volumes[i]
+			}
+		}
+		return nil
+	}
+
+	findMount := func(dep *appsv1.Deployment, name string) *corev1.VolumeMount {
+		for i := range dep.Spec.Template.Spec.Containers[0].VolumeMounts {
+			if dep.Spec.Template.Spec.Containers[0].VolumeMounts[i].Name == name {
+				return &dep.Spec.Template.Spec.Containers[0].VolumeMounts[i]
+			}
+		}
+		return nil
+	}
+
+	// Acceptance (a): the default (GitOps/MCP lane) rendering is
+	// byte-identical to today's — no sources key at all. Asserted both as
+	// a substring (byte-level) and by unmarshalling into the production
+	// YAML struct per the white-box convention (AGENTS.md).
+	It("UT-FLEET-647-SRC-001: omits sources entirely when no source is selected", func() {
+		kn, knV2 := testKubernautWithFMC()
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("sources:"))
+
+		var cfg fleetMetadataCacheConfigYAML
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &cfg)).To(Succeed())
+		Expect(cfg.Sources).To(BeNil())
+	})
+
+	It("UT-FLEET-647-SRC-002 [SC-8, SC-12; ASVS v5.0.0-V5.1.1]: renders exactly endpoint, tokenPath, and caFile with interService default trust", func() {
+		kn, knV2 := withACMSource(nil)
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+
+		var cfg fleetMetadataCacheConfigYAML
+		Expect(yaml.Unmarshal([]byte(data), &cfg)).To(Succeed())
+		Expect(cfg.Sources).NotTo(BeNil())
+		Expect(cfg.Sources.ACM).NotTo(BeNil())
+		Expect(cfg.Sources.ACM.Endpoint).To(Equal("https://acm-search.example.com"))
+		Expect(cfg.Sources.ACM.TokenPath).To(Equal(fleetTokenMountPath))
+		Expect(cfg.Sources.ACM.CAFile).To(Equal(InterServiceTLSCAFileFor(knV2)))
+
+		// Contract pin: upstream decodes sources.acm with
+		// known-fields-only strictness — exactly these three keys, no
+		// extras, or FMC fails startup by design.
+		var raw map[string]any
+		Expect(yaml.Unmarshal([]byte(data), &raw)).To(Succeed())
+		sources := raw["sources"].(map[string]any)
+		Expect(sources).To(HaveLen(1))
+		acm := sources["acm"].(map[string]any)
+		Expect(acm).To(HaveLen(3))
+		Expect(acm).To(HaveKey("endpoint"))
+		Expect(acm).To(HaveKey("tokenPath"))
+		Expect(acm).To(HaveKey("caFile"))
+	})
+
+	It("UT-FLEET-647-SRC-003 [SC-8]: omits caFile when the ACM source trust resolves to system", func() {
+		kn, knV2 := withACMSource(func(acm *kubernautv1alpha2.FleetACMSourceSpec) {
+			acm.TLS = &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSystem}
+		})
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).NotTo(ContainSubstring("caFile"))
+
+		var raw map[string]any
+		Expect(yaml.Unmarshal([]byte(data), &raw)).To(Succeed())
+		acm := raw["sources"].(map[string]any)["acm"].(map[string]any)
+		Expect(acm).To(HaveLen(2), "system trust must omit caFile entirely, not render it empty")
+	})
+
+	It("UT-FLEET-647-SRC-004 [SC-8]: passes an administrator file path through as caFile", func() {
+		kn, knV2 := withACMSource(func(acm *kubernautv1alpha2.FleetACMSourceSpec) {
+			acm.TLS = &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceFile, CAFile: "/etc/admin-ca/acm.pem"}
+		})
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cm.Data["config.yaml"]).To(ContainSubstring("caFile: /etc/admin-ca/acm.pem"))
+	})
+
+	It("UT-FLEET-647-SRC-005 [SC-8; ASVS v5.0.0-V9.1.1]: renders the secret-lane caFile and mounts the CA Secret read-only and keyed", func() {
+		kn, knV2 := withACMSource(func(acm *kubernautv1alpha2.FleetACMSourceSpec) {
+			acm.TLS = &kubernautv1alpha2.FleetTrustSpec{
+				Source:          kubernautv1alpha2.FleetTrustSourceSecret,
+				CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "acm-source-ca", Key: "bundle.pem"},
+			}
+		})
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cm.Data["config.yaml"]).To(ContainSubstring("caFile: " + fleetACMSourceCAMountPath))
+
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		volume := findVolume(dep, "fleet-acm-source-ca")
+		Expect(volume).NotTo(BeNil(), "secret-trust ACM source must mount its CA Secret")
+		Expect(volume.Secret.SecretName).To(Equal("acm-source-ca"))
+		Expect(volume.Secret.Items).To(HaveLen(1))
+		Expect(volume.Secret.Items[0].Key).To(Equal("bundle.pem"))
+		Expect(volume.Secret.Items[0].Path).To(Equal("ca.crt"))
+		mount := findMount(dep, "fleet-acm-source-ca")
+		Expect(mount).NotTo(BeNil())
+		Expect(mount.MountPath).To(Equal("/etc/fleet-tls/acm-source"))
+		Expect(mount.ReadOnly).To(BeTrue())
+	})
+
+	It("UT-FLEET-647-SRC-006 [SC-8; ASVS v5.0.0-V9.1.1]: mounts the ACM token Secret read-only and keyed, only when the source is selected", func() {
+		kn, knV2 := withACMSource(func(acm *kubernautv1alpha2.FleetACMSourceSpec) {
+			acm.TokenSecretRef.Key = "bearer"
+		})
+		dep, err := FleetMetadataCacheDeployment(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		volume := findVolume(dep, "fleet-acm-source-token")
+		Expect(volume).NotTo(BeNil(), "selected ACM source must mount its token Secret")
+		Expect(volume.Secret.SecretName).To(Equal("acm-search-token"))
+		Expect(volume.Secret.Items).To(HaveLen(1))
+		Expect(volume.Secret.Items[0].Key).To(Equal("bearer"))
+		Expect(volume.Secret.Items[0].Path).To(Equal("token"))
+		mount := findMount(dep, "fleet-acm-source-token")
+		Expect(mount).NotTo(BeNil())
+		Expect(mount.MountPath).To(Equal("/etc/fleet-token"))
+		Expect(mount.ReadOnly).To(BeTrue())
+
+		defaultKn, defaultKnV2 := testKubernautWithFMC()
+		defaultDep, err := FleetMetadataCacheDeployment(defaultKn, defaultKnV2)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(findVolume(defaultDep, "fleet-acm-source-token")).To(BeNil(),
+			"the token volume must not exist when no source is selected (default rendering unchanged)")
+		Expect(findVolume(defaultDep, "fleet-acm-source-ca")).To(BeNil())
+	})
+
+	// Acceptance (c): the FMC ServiceAccount gains no Search RBAC through
+	// this change. The ClusterRole's rules with sources.acm selected must
+	// equal the rules without it.
+	It("UT-FLEET-647-SRC-007 [AC-6]: leaves FMC's ClusterRole rules unchanged when the ACM source is selected", func() {
+		withSrcKn, withSrcKnV2 := withACMSource(nil)
+		withoutSrcKn, withoutSrcKnV2 := testKubernautWithFMC()
+
+		var withRules, withoutRules []rbacv1.PolicyRule
+		for _, cr := range ClusterRoles(withSrcKn, withSrcKnV2) {
+			if cr.Name == clusterRoleName(withSrcKn, "fleetmetadatacache") {
+				withRules = cr.Rules
+			}
+		}
+		for _, cr := range ClusterRoles(withoutSrcKn, withoutSrcKnV2) {
+			if cr.Name == clusterRoleName(withoutSrcKn, "fleetmetadatacache") {
+				withoutRules = cr.Rules
+			}
+		}
+		Expect(withRules).NotTo(BeNil())
+		Expect(withoutRules).NotTo(BeNil())
+		Expect(withRules).To(Equal(withoutRules),
+			"selecting the ACM source must not grant the FMC ServiceAccount any Search RBAC (AC-6)")
+		for _, rule := range withRules {
+			Expect(rule.APIGroups).NotTo(ContainElement("search.open-cluster-management.io"))
+		}
+	})
+
+	// Constraint: no token in logs, plaintext ConfigMap, status, or
+	// annotations. The rendered config carries only the mount path —
+	// never the Secret name or its contents.
+	It("UT-FLEET-647-SRC-008 [SOC2 CC6.1; ASVS v5.0.0-V9.1.1]: renders the token mount path, never the Secret name or contents", func() {
+		kn, knV2 := withACMSource(nil)
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		data := cm.Data["config.yaml"]
+		Expect(data).To(ContainSubstring("tokenPath: " + fleetTokenMountPath))
+		Expect(data).NotTo(ContainSubstring("acm-search-token"),
+			"the ConfigMap must reference the token by mount path only, never by Secret name")
 	})
 })
 

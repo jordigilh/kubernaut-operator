@@ -518,6 +518,48 @@ type FleetMetadataCacheSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Sources selects FMC's sync-time inventory sources
+	// (kubernaut-operator#647, DD-FLEET-017 v2 D4.1a). Omitted: FMC
+	// collects via the GitOps/MCP lane only and the rendered config is
+	// byte-identical to a deployment without this field. Selecting a
+	// source requires its complete configuration; absent configuration
+	// fails validation rather than silently falling back (FedRAMP CM-7).
+	// +optional
+	Sources *FleetMetadataCacheSourcesSpec `json:"sources,omitempty"`
+}
+
+// FleetMetadataCacheSourcesSpec selects FMC's inventory sources. At most
+// one source may be declared (upstream decodes `sources` with
+// known-fields-only strictness and rejects additional entries at startup);
+// the CRD shape guarantees this structurally — ACM is the only field.
+type FleetMetadataCacheSourcesSpec struct {
+	// ACM configures the ACM Search source (DD-FLEET-017 v2 D4.1a). Its
+	// presence selects the ACM source for this deployment.
+	// +optional
+	ACM *FleetACMSourceSpec `json:"acm,omitempty"`
+}
+
+// FleetACMSourceSpec configures FMC's ACM Search source. Deliberately a
+// distinct type from FleetACMScopeCheckSpec despite the identical field
+// shape: the source endpoint is a base URL with no path (the client appends
+// /searchapi/graphql), unlike the scope-check endpoint, so validation
+// semantics differ and the two are expected to diverge further.
+type FleetACMSourceSpec struct {
+	// ACM Search endpoint. Absolute HTTPS base URL without a path; the
+	// client appends the GraphQL route. No default, no fallback.
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+
+	// ACM Search endpoint trust source. Omitted defaults to interService.
+	// +optional
+	TLS *FleetTrustSpec `json:"tls,omitempty"`
+
+	// ACM Search bearer-token Secret for the configured hub Search
+	// principal. The default key is token; the Secret is mounted read-only
+	// and keyed, never rendered into the ConfigMap.
+	// +optional
+	TokenSecretRef *SecretKeyRef `json:"tokenSecretRef,omitempty"`
 }
 
 // FleetMetadataCacheEnabled returns true when the operator should deploy

@@ -334,6 +334,12 @@ const (
 	fleetMCPGatewayCAMountPath  = "/etc/fleet-tls/mcp-gateway/ca.crt"
 	fleetMCPGatewayCAVolumeName = "fleet-mcp-gateway-ca"
 	fleetTokenMountPath         = "/etc/fleet-token/token"
+
+	// fleetACMSourceCAMountDir/Path must stay in sync with the volume
+	// mounts FleetMetadataCacheDeployment adds for
+	// spec.fleetMetadataCache.sources.acm.tls source=secret (#647).
+	fleetACMSourceCAMountDir  = "/etc/fleet-tls/acm-source"
+	fleetACMSourceCAMountPath = "/etc/fleet-tls/acm-source/ca.crt"
 )
 
 // apifrontendTLSCAFile is AF's own combined inter-service CA bundle mount

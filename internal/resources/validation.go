@@ -409,6 +409,7 @@ func allASCIIDigits(value string) bool {
 func ValidateFleet(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	errs := make([]error, 0, 2)
 	errs = append(errs, validateFleetConfig(knV2)...)
+	errs = append(errs, validateFleetMetadataCacheSources(knV2)...)
 	errs = append(errs, validateFleetMetadataCache(knV2)...)
 	return errs
 }
@@ -1379,6 +1380,53 @@ func validateFleetTrust(path string, trust *kubernautv1alpha2.FleetTrustSpec) []
 // validateFleetOAuth2's six components (Gateway/RemediationOrchestrator/
 // SignalProcessing/APIFrontend/EffectivenessMonitor/KubernautAgent), so it
 // needs its own effective-value check here.
+// validateFleetMetadataCacheSources validates
+// spec.fleetMetadataCache.sources (#647, DD-FLEET-017 v2 D4.1a). It runs
+// before validateFleetMetadataCache's FMC-enabled early return so an
+// inert-but-selected source on a non-FMC deployment is still rejected
+// instead of being silently ignored (FedRAMP CM-7 — no silent fallback to
+// the GitOps/MCP lane).
+func validateFleetMetadataCacheSources(knV2 *kubernautv1alpha2.Kubernaut) []error {
+	sources := knV2.Spec.FleetMetadataCache.Sources
+	if sources == nil || sources.ACM == nil {
+		return nil
+	}
+	const base = "spec.fleetMetadataCache.sources.acm"
+	if !knV2.Spec.FleetMetadataCacheEnabled() {
+		return []error{fmt.Errorf(
+			"%s: must not be set unless fleetMetadataCache is active (fleet.enabled=true, scopeCheck.backend=fleetmetadatacache) — an unselected source must be omitted, not left inert", base)}
+	}
+
+	var errs []error
+	if sources.ACM.Endpoint == "" {
+		errs = append(errs, fmt.Errorf("%s.endpoint: must be set when the ACM source is selected", base))
+	} else if err := validateFleetACMBaseURL(base+".endpoint", sources.ACM.Endpoint); err != nil {
+		errs = append(errs, err)
+	}
+	if sources.ACM.TokenSecretRef == nil || sources.ACM.TokenSecretRef.Name == "" {
+		errs = append(errs, fmt.Errorf("%s.tokenSecretRef: must be set when the ACM source is selected", base))
+	}
+	return append(errs, validateFleetTrust(base+".tls", sources.ACM.TLS)...)
+}
+
+// validateFleetACMBaseURL is stricter than validateFleetHTTPSURL: the ACM
+// Search source endpoint is a base URL only — the client appends
+// /searchapi/graphql (DD-FLEET-017 v2 D4.1a), so any path would be doubled,
+// and the scheme-less host:port form has no TLS guarantee.
+func validateFleetACMBaseURL(path, value string) error {
+	if strings.TrimSpace(value) != value {
+		return fmt.Errorf("%s must not contain leading or trailing whitespace", path)
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != httpsURLScheme || parsed.Host == "" || parsed.User != nil {
+		return fmt.Errorf("%s must be an absolute https base URL without user information", path)
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return fmt.Errorf("%s must be a base URL without a path — the client appends the GraphQL route itself", path)
+	}
+	return nil
+}
+
 func validateFleetMetadataCache(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	if !knV2.Spec.FleetMetadataCacheEnabled() {
 		return nil

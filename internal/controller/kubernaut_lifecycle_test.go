@@ -388,6 +388,10 @@ func cleanupNamespacedResources(ctx context.Context) {
 		resources.KubernautAgentTLSSecretName, resources.APIFrontendTLSSecretName,
 		resources.FleetMetadataCacheTLSSecretName, "authwebhook-tls",
 		"datastorage-signing-cert", "customer-signing", "telemetry-ca", "telemetry-client",
+		// #647: unlabeled ACM source fixtures, named directly by specs in
+		// fleetmetadatacache_test.go — same contamination hazard the list
+		// exists for.
+		"acm-search-token", "acm-source-ca", "missing-acm-source-token",
 	} {
 		secret := &corev1.Secret{}
 		if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: name}, secret); err == nil {

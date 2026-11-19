@@ -1831,3 +1831,84 @@ var _ = Describe("FleetMetadataCache Validation", func() {
 		Expect(ValidateFleet(kn)).To(BeEmpty())
 	})
 })
+
+// #647 (DD-FLEET-017 v2 D4.1a): spec.fleetMetadataCache.sources.acm
+// validation. Selecting the ACM source without complete configuration is a
+// configuration error at admission — never a silent fallback to the
+// GitOps/MCP lane (FedRAMP CM-7, OWASP ASVS v5.0.0-V5.1.1).
+var _ = Describe("FleetMetadataCache ACM source validation (#647)", func() {
+	validFleetWithACMSource := func() *kubernautv1alpha2.Kubernaut {
+		kn := testKubernaut()
+		enabled := true
+		kn.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+			Enabled: &enabled,
+			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{
+				Type: "eaigw", Endpoint: "https://mcp-gateway.example.com/sse", Namespace: "mcp-system",
+			},
+			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
+			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
+				TokenURL: "https://keycloak.example.com/token", CredentialsSecretRef: "fleet-oauth2-creds",
+			},
+		}
+		kn.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
+		kn.Spec.FleetMetadataCache.Sources = &kubernautv1alpha2.FleetMetadataCacheSourcesSpec{
+			ACM: &kubernautv1alpha2.FleetACMSourceSpec{
+				Endpoint:       "https://acm-search.example.com",
+				TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"},
+			},
+		}
+		return kn
+	}
+
+	It("accepts a fully configured ACM source on an active FMC deployment", func() {
+		Expect(ValidateFleet(validFleetWithACMSource())).To(BeEmpty())
+	})
+
+	It("UT-FLEET-647-VALIDATE-001 [CM-7]: rejects sources.acm when FMC is not the active scope-check backend", func() {
+		kn := validFleetWithACMSource()
+		kn.Spec.Fleet.ScopeCheck.Backend = fleetBackendACM
+		kn.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{
+			Endpoint:       "https://acm-search.example.com/graphql",
+			TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"},
+		}
+		errs := ValidateFleet(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleetMetadataCache.sources.acm"))
+		Expect(errs[0].Error()).To(ContainSubstring("fleetmetadatacache"))
+	})
+
+	It("UT-FLEET-647-VALIDATE-002 [CM-7, IA-5]: requires endpoint and tokenSecretRef when the ACM source is selected", func() {
+		kn := validFleetWithACMSource()
+		kn.Spec.FleetMetadataCache.Sources.ACM = &kubernautv1alpha2.FleetACMSourceSpec{}
+		errs := ValidateFleet(kn)
+		Expect(errs).To(HaveLen(2))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleetMetadataCache.sources.acm.endpoint"))
+		Expect(errs[1].Error()).To(ContainSubstring("spec.fleetMetadataCache.sources.acm.tokenSecretRef"))
+	})
+
+	It("UT-FLEET-647-VALIDATE-003 [SC-8; ASVS v5.0.0-V5.1.1]: rejects endpoints that are not absolute HTTPS base URLs", func() {
+		for _, endpoint := range []string{
+			"http://acm-search.example.com",
+			"acm-search.example.com:4010",
+			"https://acm-search.example.com/graphql",
+			"https://user@acm-search.example.com",
+			" https://acm-search.example.com",
+		} {
+			kn := validFleetWithACMSource()
+			kn.Spec.FleetMetadataCache.Sources.ACM.Endpoint = endpoint
+			errs := ValidateFleet(kn)
+			Expect(errs).To(HaveLen(1), "endpoint %q must be rejected", endpoint)
+			Expect(errs[0].Error()).To(ContainSubstring("spec.fleetMetadataCache.sources.acm.endpoint"))
+		}
+	})
+
+	It("UT-FLEET-647-VALIDATE-004: validates the ACM source trust lane through the shared Fleet trust rules", func() {
+		kn := validFleetWithACMSource()
+		kn.Spec.FleetMetadataCache.Sources.ACM.TLS = &kubernautv1alpha2.FleetTrustSpec{
+			Source: kubernautv1alpha2.FleetTrustSourceFile, CAFile: "relative-ca.pem",
+		}
+		errs := ValidateFleet(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleetMetadataCache.sources.acm.tls.caFile"))
+	})
+})
