@@ -39,6 +39,15 @@ const (
 	kubernautAPIGroup        = "kubernaut.ai"
 )
 
+// rolesByName indexes rendered ClusterRoles by name for lookup in assertions.
+func rolesByName(roles []*rbacv1.ClusterRole) map[string]*rbacv1.ClusterRole {
+	byName := make(map[string]*rbacv1.ClusterRole, len(roles))
+	for _, role := range roles {
+		byName[role.Name] = role
+	}
+	return byName
+}
+
 // apiFrontendVerbs returns the effective API Frontend verbs for one resource.
 func apiFrontendVerbs(role *rbacv1.ClusterRole, resource string) []string {
 	seen := make(map[string]struct{})
@@ -159,12 +168,8 @@ var _ = Describe("ClusterRoles", func() {
 		It("grants read-only PVC access for target scope checks (#645)", func() {
 			kn := testKubernaut()
 			roles := ClusterRoles(kn, testKnV2(kn))
-			roleByName := make(map[string]*rbacv1.ClusterRole, len(roles))
-			for _, role := range roles {
-				roleByName[role.Name] = role
-			}
 
-			ro := roleByName[clusterRoleName(kn, "remediationorchestrator-controller")]
+			ro := rolesByName(roles)[clusterRoleName(kn, "remediationorchestrator-controller")]
 			Expect(ro).NotTo(BeNil(), "remediationorchestrator-controller ClusterRole not found")
 
 			var coreRule *rbacv1.PolicyRule
@@ -173,7 +178,11 @@ var _ = Describe("ClusterRoles", func() {
 					for _, r := range ro.Rules[i].Resources {
 						if r == "persistentvolumes" {
 							coreRule = &ro.Rules[i]
+							break
 						}
+					}
+					if coreRule != nil {
+						break
 					}
 				}
 			}
@@ -696,10 +705,7 @@ var _ = Describe("Fleet caller RBAC (#457)", func() {
 		roles := ClusterRoles(kn, knV2)
 		bindings := ClusterRoleBindings(kn, knV2)
 
-		roleByName := make(map[string]*rbacv1.ClusterRole, len(roles))
-		for _, role := range roles {
-			roleByName[role.Name] = role
-		}
+		roleByName := rolesByName(roles)
 		bindingByName := make(map[string]*rbacv1.ClusterRoleBinding, len(bindings))
 		for _, binding := range bindings {
 			bindingByName[binding.Name] = binding
