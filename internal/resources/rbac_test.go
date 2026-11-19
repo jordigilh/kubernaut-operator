@@ -148,6 +148,43 @@ var _ = Describe("ClusterRoles", func() {
 		Expect(networkPolicyRule.Verbs).To(ConsistOf("create", "delete", "get", "list", "patch", "update", "watch"))
 	})
 
+	Describe("RemediationOrchestratorClusterRole", func() {
+		// UT-RO-645-CTRL-001 — AC-6 (FedRAMP least privilege), CC6.1 (SOC 2
+		// logical access), V4.1.1/V4.2.1 (OWASP ASVS 5.0.0 access control).
+		// Business behavior (BR-SCOPE-010): a PVC remediation target labeled
+		// kubernaut.ai/managed=true must pass RO's scope gate. RO's cached
+		// metadata client needs list/watch on PVCs for the informer to sync;
+		// without it the check returns ScopeUnavailable after the 5s timeout
+		// and the RemediationRequest is blocked instead of authorized.
+		It("grants read-only PVC access for target scope checks (#645)", func() {
+			kn := testKubernaut()
+			roles := ClusterRoles(kn, testKnV2(kn))
+			roleByName := make(map[string]*rbacv1.ClusterRole, len(roles))
+			for _, role := range roles {
+				roleByName[role.Name] = role
+			}
+
+			ro := roleByName[clusterRoleName(kn, "remediationorchestrator-controller")]
+			Expect(ro).NotTo(BeNil(), "remediationorchestrator-controller ClusterRole not found")
+
+			var coreRule *rbacv1.PolicyRule
+			for i := range ro.Rules {
+				if len(ro.Rules[i].APIGroups) == 1 && ro.Rules[i].APIGroups[0] == "" {
+					for _, r := range ro.Rules[i].Resources {
+						if r == "persistentvolumes" {
+							coreRule = &ro.Rules[i]
+						}
+					}
+				}
+			}
+			Expect(coreRule).NotTo(BeNil(), "core resources rule not found")
+			Expect(coreRule.Resources).To(ContainElement("persistentvolumeclaims"),
+				"RO must read PVCs to authorize PVC remediation targets (BR-SCOPE-010)")
+			Expect(coreRule.Verbs).To(ConsistOf("get", "list", "watch"),
+				"PVC access must be read-only metadata reads (AC-6 least privilege)")
+		})
+	})
+
 	Describe("GatewayClusterRole", func() {
 		It("has PVC and HPA rules", func() {
 			kn := testKubernaut()
