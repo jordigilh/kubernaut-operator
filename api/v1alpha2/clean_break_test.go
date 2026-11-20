@@ -204,10 +204,10 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		fleetSchema, hasFleet := specSchema.Properties["fleet"]
 		Expect(hasFleet).To(BeTrue())
 
-		for _, field := range []string{"enabled", "mcpGateway", "scopeCheck", "oauth2", "mcpClient"} {
+		for _, field := range []string{"enabled", "mcpGateway", "oauth2", "mcpClient"} {
 			Expect(fleetSchema.Properties).To(HaveKey(field))
 		}
-		for _, field := range []string{"backend", "endpoint", "caSecretName", "tokenSecretName", "mcpGatewayEndpoint", "mcpGatewayType", "mcpGatewayNamespace", "resilience"} {
+		for _, field := range []string{"backend", "endpoint", "caSecretName", "tokenSecretName", "mcpGatewayEndpoint", "mcpGatewayType", "mcpGatewayNamespace", "resilience", "scopeCheck"} {
 			Expect(fleetSchema.Properties).NotTo(HaveKey(field))
 		}
 
@@ -216,26 +216,11 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 			Expect(mcpGateway.Properties).To(HaveKey(field))
 		}
 
-		scopeCheck := fleetSchema.Properties["scopeCheck"]
-		for _, field := range []string{"backend", "acm"} {
-			Expect(scopeCheck.Properties).To(HaveKey(field))
-		}
-		for _, field := range []string{"endpoint", "tls", "tokenSecretRef"} {
-			Expect(scopeCheck.Properties).NotTo(HaveKey(field))
-		}
-
-		acm := scopeCheck.Properties["acm"]
-		for _, field := range []string{"endpoint", "tls", "tokenSecretRef"} {
-			Expect(acm.Properties).To(HaveKey(field))
-		}
-
 		oauth2 := fleetSchema.Properties["oauth2"]
 		for _, field := range []string{"tokenURL", "scopes", "credentialsSecretRef", "tls"} {
 			Expect(oauth2.Properties).To(HaveKey(field))
 		}
 		Expect(oauth2.Properties).NotTo(HaveKey("enabled"))
-
-		Expect(scopeCheck.Properties).NotTo(HaveKey("tls"))
 
 		mcpClient := fleetSchema.Properties["mcpClient"]
 		Expect(mcpClient.Properties).To(HaveKey("retry"))

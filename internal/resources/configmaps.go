@@ -221,21 +221,18 @@ func resolveTelemetryConfig(t kubernautv1alpha2.TelemetrySpec) *telemetryYAML {
 type fleetConfigYAML struct {
 	Enabled bool `json:"enabled" yaml:"enabled"`
 
-	// Backend/Endpoint use omitempty so resolveMCPGatewayOnlyFleetConfig
-	// (EM, #224) can omit them entirely -- EM never calls the
-	// Backend/Endpoint scope-check adapter, so upstream's own
-	// FleetConfig.Validate() doc comment says requiring it "whenever
-	// Enabled=true would force an unused dependency." AF used to be
-	// covered by the same omission, but kubernaut#2025/#2022 added a
-	// Backend/Endpoint scope-check adapter call to AF's own checkRRScope
-	// path, so AF now renders these fields via resolveAPIFrontendFleetConfig
-	// instead (#464). GW/RO's admission validation (validateFleetConfig)
-	// still requires non-empty values regardless of which components
-	// render them, so this is safe.
-	Backend             string           `json:"backend,omitempty" yaml:"backend,omitempty"`
+	// Endpoint is FMC's derived in-cluster Service URL — the single
+	// fleet-control-plane contact (ADR-068 peer→facade, #647). Endpoint uses
+	// omitempty so resolveMCPGatewayOnlyFleetConfig (EM, #224) can omit it
+	// entirely — EM never calls the scope-check adapter. AF renders it via
+	// resolveAPIFrontendFleetConfig (#464: kubernaut#2025/#2022 gave AF's
+	// checkRRScope path a scope-check adapter call).
+	//
+	// #647/1e: the peer-model Backend and TokenPath keys are gone — callers
+	// no longer select a backend, and the only fleet bearer token is FMC's
+	// own sources.acm token, rendered in FMC's ConfigMap, not here.
 	Endpoint            string           `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
 	TLSCAFile           string           `json:"tlsCAFile,omitempty" yaml:"tlsCAFile,omitempty"`
-	TokenPath           string           `json:"tokenPath,omitempty" yaml:"tokenPath,omitempty"`
 	MCPGatewayEndpoint  string           `json:"mcpGatewayEndpoint,omitempty" yaml:"mcpGatewayEndpoint,omitempty"`
 	MCPGatewayType      string           `json:"mcpGatewayType,omitempty" yaml:"mcpGatewayType,omitempty"`
 	MCPGatewayTLSCAFile string           `json:"mcpGatewayTLSCAFile,omitempty" yaml:"mcpGatewayTLSCAFile,omitempty"`
@@ -324,11 +321,9 @@ type fleetOAuth2YAML struct {
 	TLSCAFile string `json:"tlsCAFile,omitempty" yaml:"tlsCAFile,omitempty"`
 }
 
-// fleetCAMountPath and fleetTokenMountPath must stay in sync with the
-// volume mounts added in deployments.go (GatewayDeployment /
-// RemediationOrchestratorDeployment).
+// fleetOAuth2CAMountPath and the MCP Gateway/token paths must stay in sync
+// with the volume mounts added in deployments.go.
 const (
-	fleetCAMountPath            = "/etc/fleet-tls/scope-check/ca.crt"
 	fleetOAuth2CAMountPath      = "/etc/fleet-tls/oauth2/ca.crt"
 	fleetMCPGatewayCAMountDir   = "/etc/fleet-tls/mcp-gateway"
 	fleetMCPGatewayCAMountPath  = "/etc/fleet-tls/mcp-gateway/ca.crt"
@@ -393,24 +388,20 @@ func resolveFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefO
 	if fleet.Enabled == nil || !*fleet.Enabled {
 		return nil
 	}
+	// #647 (ADR-068 peer→facade): no caller-selected backend and no
+	// consumer-side fleet bearer token. The endpoint is always FMC's
+	// derived URL; the scope-lane CA verifies FMC's serving cert and so
+	// defaults to the caller's inter-service trust bundle (an omitted
+	// FleetTrustSpec lane — the scopeCheck.acm override is gone with the
+	// lane itself).
 	cfg := &fleetConfigYAML{
 		Enabled:             true,
-		Backend:             fleet.ScopeCheck.Backend,
 		Endpoint:            resolveFleetEndpoint(knV2),
+		TLSCAFile:           defaultOAuth2CAFile,
 		MCPGatewayEndpoint:  fleet.MCPGateway.Endpoint,
 		MCPGatewayType:      fleet.MCPGateway.Type,
 		MCPGatewayTLSCAFile: resolveFleetTrustCAFile(fleet.MCPGateway.TLS, defaultOAuth2CAFile, fleetMCPGatewayCAMountPath),
 		Resilience:          resolveMCPClient(knV2),
-	}
-	var scopeTLS *kubernautv1alpha2.FleetTrustSpec
-	var tokenRef *kubernautv1alpha2.SecretKeyRef
-	if fleet.ScopeCheck.ACM != nil {
-		scopeTLS = fleet.ScopeCheck.ACM.TLS
-		tokenRef = fleet.ScopeCheck.ACM.TokenSecretRef
-	}
-	cfg.TLSCAFile = resolveFleetTrustCAFile(scopeTLS, defaultOAuth2CAFile, fleetCAMountPath)
-	if tokenRef != nil && tokenRef.Name != "" {
-		cfg.TokenPath = fleetTokenMountPath
 	}
 	cfg.OAuth2 = &fleetOAuth2YAML{
 		Enabled:              true,
@@ -439,10 +430,8 @@ func resolveMCPGatewayOnlyFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credent
 	if cfg == nil {
 		return nil
 	}
-	cfg.Backend = ""
 	cfg.Endpoint = ""
 	cfg.TLSCAFile = ""
-	cfg.TokenPath = ""
 	cfg.Namespace = knV2.Spec.Fleet.MCPGateway.Namespace
 	return cfg
 }

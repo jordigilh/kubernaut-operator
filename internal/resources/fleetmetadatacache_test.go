@@ -483,21 +483,15 @@ var _ = Describe("FleetMetadataCacheEnabled helper", func() {
 		Expect(testKnV2(kn).Spec.FleetMetadataCacheEnabled()).To(BeFalse())
 	})
 
-	It("returns true when fleet.enabled is true and backend is fleetmetadatacache", func() {
+	It("returns true when fleet.enabled is true", func() {
 		_, knV2 := testKubernautWithFMC()
 		Expect(knV2.Spec.FleetMetadataCacheEnabled()).To(BeTrue())
 	})
 
-	It("returns false when backend is fleetmetadatacache but fleet.enabled is false", func() {
+	It("returns false when fleet.enabled is false", func() {
 		_, knV2 := testKubernautWithFMC()
 		f := false
 		knV2.Spec.Fleet.Enabled = &f
-		Expect(knV2.Spec.FleetMetadataCacheEnabled()).To(BeFalse())
-	})
-
-	It("returns false when fleet.enabled is true but backend is acm", func() {
-		_, knV2 := testKubernautWithFMC()
-		knV2.Spec.Fleet.ScopeCheck.Backend = fleetBackendACM
 		Expect(knV2.Spec.FleetMetadataCacheEnabled()).To(BeFalse())
 	})
 })
@@ -508,7 +502,7 @@ var _ = Describe("isComponentActive for FleetMetadataCache", func() {
 		Expect(ActiveComponents(kn, testKnV2(kn))).NotTo(ContainElement(ComponentFleetMetadataCache))
 	})
 
-	It("is active when fleet.enabled is true and backend is fleetmetadatacache", func() {
+	It("is active when fleet.enabled is true", func() {
 		kn, knV2 := testKubernautWithFMC()
 		Expect(ActiveComponents(kn, knV2)).To(ContainElement(ComponentFleetMetadataCache))
 	})
@@ -516,9 +510,9 @@ var _ = Describe("isComponentActive for FleetMetadataCache", func() {
 
 // resolveFleetEndpoint (used by configmaps.go for Gateway/RO's rendered
 // fleet.endpoint) is exercised here too since it is the mechanism tying
-// FMC's own service URL to spec.fleet.scopeCheck.endpoint auto-derivation.
+// FMC's own service URL to the rendered fleet endpoint.
 var _ = Describe("resolveFleetEndpoint", func() {
-	It("UT-FLEET-521-FMC-001: auto-derives the in-cluster FMC URL when backend=fleetmetadatacache and FMC is operator-managed", func() {
+	It("UT-FLEET-521-FMC-001: auto-derives the in-cluster FMC URL whenever fleet is enabled", func() {
 		kn, knV2 := testKubernautWithFMC()
 		Expect(resolveFleetEndpoint(knV2)).To(Equal(FleetMetadataCacheURL(kn.Namespace)))
 	})
@@ -532,12 +526,6 @@ var _ = Describe("resolveFleetEndpoint", func() {
 		_, knV2 := testKubernautWithFMC()
 		f := false
 		knV2.Spec.Fleet.Enabled = &f
-		Expect(resolveFleetEndpoint(knV2)).To(Equal(""))
-	})
-
-	It("does not auto-derive when backend=acm even if FMC is enabled", func() {
-		_, knV2 := testKubernautWithFMC()
-		knV2.Spec.Fleet.ScopeCheck.Backend = fleetBackendACM
 		Expect(resolveFleetEndpoint(knV2)).To(Equal(""))
 	})
 })

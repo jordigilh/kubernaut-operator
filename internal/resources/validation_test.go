@@ -1580,9 +1580,6 @@ var _ = Describe("Fleet Config Validation", func() {
 			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{
 				Type: "eaigw", Endpoint: "https://mcp-gateway.example.com/sse", Namespace: "mcp-system",
 			},
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{
-				Backend: "fleetmetadatacache",
-			},
 			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 				TokenURL: "https://keycloak.example.com/token", CredentialsSecretRef: "fleet-oauth2-creds",
 			},
@@ -1596,64 +1593,19 @@ var _ = Describe("Fleet Config Validation", func() {
 		Expect(ValidateFleet(testKnV2(kn))).To(BeEmpty())
 
 		disabled := false
-		kn.Spec.Fleet = kubernautv1alpha2.FleetSpec{Enabled: &disabled, ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "invalid"}}
+		kn.Spec.Fleet = kubernautv1alpha2.FleetSpec{Enabled: &disabled}
 		Expect(ValidateFleet(testKnV2(kn))).To(BeEmpty())
 	})
 
-	It("rejects active Fleet without a scope-check backend", func() {
-		kn := validFleet()
-		kn.Spec.Fleet.ScopeCheck.Backend = ""
-		errs := ValidateFleet(kn)
-		Expect(errs).NotTo(BeEmpty())
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.scopeCheck.backend"))
-	})
+	// #647/1e: the backend-selection specs (empty/unsupported backend,
+	// scopeCheck.acm provider requirements, insecure FMC endpoint) were
+	// removed with the scopeCheck block itself — there is no
+	// caller-selected backend to validate anymore, and the ACM surface is
+	// validated under spec.fleetMetadataCache.sources (see the
+	// FleetMetadataCache ACM source validation Describe).
 
-	It("rejects an unsupported scope-check backend", func() {
-		kn := validFleet()
-		kn.Spec.Fleet.ScopeCheck.Backend = "valkey"
-		errs := ValidateFleet(kn)
-		Expect(errs).NotTo(BeEmpty())
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.scopeCheck.backend"))
-		Expect(errs[0].Error()).To(ContainSubstring("valkey"))
-	})
-
-	It("UT-FLEET-521-VALIDATE-001: requires an explicit ACM endpoint and token Secret", func() {
-		kn := validFleet()
-		kn.Spec.Fleet.ScopeCheck.Backend = fleetBackendACM
-		kn.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{}
-		kn.Spec.Fleet.ScopeCheck.ACM.Endpoint = ""
-		kn.Spec.Fleet.ScopeCheck.ACM.TokenSecretRef = nil
-		errs := ValidateFleet(kn)
-		Expect(errs).To(HaveLen(2))
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.scopeCheck.acm.endpoint"))
-		Expect(errs[1].Error()).To(ContainSubstring("spec.fleet.scopeCheck.acm.tokenSecretRef"))
-	})
-
-	It("accepts active Fleet with the operator-managed FMC backend", func() {
+	It("accepts active Fleet (FMC is implied whenever fleet is enabled)", func() {
 		Expect(ValidateFleet(validFleet())).To(BeEmpty())
-	})
-
-	It("rejects ACM without its provider block and rejects ACM data on FMC", func() {
-		kn := validFleet()
-		kn.Spec.Fleet.ScopeCheck.Backend = fleetBackendACM
-		errs := ValidateFleet(kn)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.scopeCheck.acm"))
-
-		kn = validFleet()
-		kn.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{}
-		errs = ValidateFleet(kn)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("must be omitted"))
-	})
-
-	It("rejects an insecure explicit FMC endpoint", func() {
-		kn := validFleet()
-		kn.Spec.Fleet.ScopeCheck.Backend = "acm"
-		kn.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{Endpoint: "http://acm.example.com/graphql", TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "token"}}
-		errs := ValidateFleet(kn)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("https"))
 	})
 
 	It("rejects plaintext MCP Gateway and OAuth2 endpoints", func() {
@@ -1674,16 +1626,6 @@ var _ = Describe("Fleet Config Validation", func() {
 		Expect(errs[0].Error()).To(ContainSubstring("must not contain leading or trailing whitespace"))
 	})
 
-	It("accepts active Fleet with ACM and a typed token Secret reference", func() {
-		kn := validFleet()
-		kn.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{}
-		kn.Spec.Fleet.ScopeCheck = kubernautv1alpha2.FleetScopeCheckSpec{
-			Backend: "acm", ACM: &kubernautv1alpha2.FleetACMScopeCheckSpec{Endpoint: "https://acm-search.example.com/graphql",
-				TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token", Key: "bearer"}},
-		}
-		Expect(ValidateFleet(kn)).To(BeEmpty())
-	})
-
 	It("requires the MCP Gateway endpoint, type, and namespace when Fleet is active", func() {
 		kn := validFleet()
 		kn.Spec.Fleet.MCPGateway = kubernautv1alpha2.FleetMCPGatewaySpec{}
@@ -1696,31 +1638,33 @@ var _ = Describe("Fleet Config Validation", func() {
 
 	It("requires Fleet OAuth2 token URL, shared credentials, and the independent WE credential", func() {
 		kn := validFleet()
-		kn.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{Endpoint: "https://acm.example.com/graphql", TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "token"}}
-		kn.Spec.Fleet.ScopeCheck = kubernautv1alpha2.FleetScopeCheckSpec{
-			Backend: "acm", ACM: &kubernautv1alpha2.FleetACMScopeCheckSpec{Endpoint: "https://acm-search.example.com/graphql",
-				TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"}},
-		}
 		kn.Spec.Fleet.OAuth2 = kubernautv1alpha2.FleetOAuth2Spec{}
 		kn.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = ""
 		errs := ValidateFleet(kn)
-		Expect(errs).To(HaveLen(3))
+		// #647: FMC is now active whenever fleet is enabled, so its own
+		// OAuth2 credential requirement fires as a fourth error.
+		Expect(errs).To(HaveLen(4))
 		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.oauth2.tokenURL"))
 		Expect(errs[1].Error()).To(ContainSubstring("spec.fleet.oauth2.credentialsSecretRef"))
 		Expect(errs[2].Error()).To(ContainSubstring("spec.workflowExecution.fleet.oauth2CredentialsSecretRef"))
+		Expect(errs[3].Error()).To(ContainSubstring("spec.fleetMetadataCache.fleet.oauth2CredentialsSecretRef"))
 	})
 
 	It("validates each Fleet trust lane by source", func() {
 		kn := validFleet()
-		kn.Spec.Fleet.ScopeCheck.Backend = "acm"
-		kn.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{Endpoint: "https://acm.example.com/graphql", TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "token"}}
-		kn.Spec.Fleet.ScopeCheck.ACM.TLS = &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceFile, CAFile: "relative-ca.pem"}
+		kn.Spec.FleetMetadataCache.Sources = &kubernautv1alpha2.FleetMetadataCacheSourcesSpec{
+			ACM: &kubernautv1alpha2.FleetACMSourceSpec{
+				Endpoint:       "https://acm-search.example.com",
+				TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"},
+				TLS:            &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceFile, CAFile: "relative-ca.pem"},
+			},
+		}
 		kn.Spec.Fleet.OAuth2.TLS = &kubernautv1alpha2.FleetTrustSpec{Source: kubernautv1alpha2.FleetTrustSourceSecret, CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "oauth2-ca"}}
 		errs := ValidateFleet(kn)
 		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.scopeCheck.acm.tls.caFile"))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleetMetadataCache.sources.acm.tls.caFile"))
 
-		kn.Spec.Fleet.ScopeCheck.ACM.TLS.CAFile = "/etc/fleet/ca.pem"
+		kn.Spec.FleetMetadataCache.Sources.ACM.TLS.CAFile = "/etc/fleet/ca.pem"
 		Expect(ValidateFleet(kn)).To(BeEmpty())
 	})
 
@@ -1780,7 +1724,6 @@ var _ = Describe("FleetMetadataCache Validation", func() {
 		enabled := true
 		kn.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled:    &enabled,
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Type: "eaigw", Namespace: "mcp-system"},
 			OAuth2:     kubernautv1alpha2.FleetOAuth2Spec{TokenURL: "https://keycloak.example.com/token", CredentialsSecretRef: "fmc-oauth2-creds"},
 		}
@@ -1796,7 +1739,6 @@ var _ = Describe("FleetMetadataCache Validation", func() {
 		kn.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled:    &enabled,
 			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Type: "eaigw", Endpoint: "https://mcp-gateway.example.com/sse", Namespace: "mcp-system"},
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 			OAuth2:     kubernautv1alpha2.FleetOAuth2Spec{TokenURL: "https://keycloak.example.com/token"},
 		}
 		kn.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
@@ -1817,7 +1759,6 @@ var _ = Describe("FleetMetadataCache Validation", func() {
 		kn.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled:    &enabled,
 			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Type: "eaigw", Endpoint: "https://mcp-gateway.example.com/sse", Namespace: "mcp-system"},
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 			OAuth2:     kubernautv1alpha2.FleetOAuth2Spec{TokenURL: "https://keycloak.example.com/token"},
 		}
 		kn.Spec.Gateway.Fleet = &kubernautv1alpha2.FleetOverrideSpec{OAuth2CredentialsSecretRef: testGatewayFleetOAuth2SecretRef}
@@ -1845,7 +1786,6 @@ var _ = Describe("FleetMetadataCache ACM source validation (#647)", func() {
 			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{
 				Type: "eaigw", Endpoint: "https://mcp-gateway.example.com/sse", Namespace: "mcp-system",
 			},
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 				TokenURL: "https://keycloak.example.com/token", CredentialsSecretRef: "fleet-oauth2-creds",
 			},
@@ -1864,17 +1804,14 @@ var _ = Describe("FleetMetadataCache ACM source validation (#647)", func() {
 		Expect(ValidateFleet(validFleetWithACMSource())).To(BeEmpty())
 	})
 
-	It("UT-FLEET-647-VALIDATE-001 [CM-7]: rejects sources.acm when FMC is not the active scope-check backend", func() {
+	It("UT-FLEET-647-VALIDATE-001 [CM-7]: rejects sources.acm when Fleet is disabled", func() {
 		kn := validFleetWithACMSource()
-		kn.Spec.Fleet.ScopeCheck.Backend = fleetBackendACM
-		kn.Spec.Fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{
-			Endpoint:       "https://acm-search.example.com/graphql",
-			TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"},
-		}
+		disabled := false
+		kn.Spec.Fleet.Enabled = &disabled
 		errs := ValidateFleet(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("spec.fleetMetadataCache.sources.acm"))
-		Expect(errs[0].Error()).To(ContainSubstring("fleetmetadatacache"))
+		Expect(errs[0].Error()).To(ContainSubstring("fleet is enabled"))
 	})
 
 	It("UT-FLEET-647-VALIDATE-002 [CM-7, IA-5]: requires endpoint and tokenSecretRef when the ACM source is selected", func() {

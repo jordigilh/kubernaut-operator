@@ -257,8 +257,7 @@ var _ = Describe("cert-manager TLS provisioning", func() {
 	It("provisions and resolves the FMC serving Certificate when FMC is enabled", func() {
 		kn := testKubernaut()
 		kn.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled:    &testFMCEnabled,
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: ComponentFleetMetadataCache},
+			Enabled: &testFMCEnabled,
 		}
 		kn.Spec.TLS = kubernautv1alpha2.TLSConfigSpec{
 			Mode: kubernautv1alpha2.TLSModeCertManager,

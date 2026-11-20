@@ -1264,8 +1264,7 @@ spec:
                     description: Whether Fleet federation is enabled.
                     type: boolean
                   mcpClient:
-                    description: MCPClient overrides shared MCP client retry and timeout
-                      behavior.
+                    description: MCP client tuning shared by Fleet-aware components.
                     properties:
                       retry:
                         description: Retry configures startup connection backoff.
@@ -1405,74 +1404,6 @@ spec:
                         type: object
                       tokenURL:
                         description: OAuth2 token endpoint URL.
-                        type: string
-                    type: object
-                  scopeCheck:
-                    description: Scope-check backend and its trust/token references.
-                    properties:
-                      acm:
-                        description: |-
-                          ACM configures the BYO ACM Search GraphQL scope-check provider. It must
-                          be absent when Backend selects the operator-managed FMC provider.
-                        properties:
-                          endpoint:
-                            description: ACM Search GraphQL endpoint. Must be an absolute
-                              HTTPS URL when Fleet is active.
-                            type: string
-                          tls:
-                            description: ACM endpoint trust source. Omitted defaults
-                              to interService.
-                            properties:
-                              caCertSecretRef:
-                                description: Secret/key containing CA PEM when source=secret.
-                                properties:
-                                  key:
-                                    default: ca.crt
-                                    description: Key within the Secret containing
-                                      the CA PEM.
-                                    type: string
-                                  name:
-                                    description: Name of the Secret.
-                                    type: string
-                                required:
-                                - name
-                                type: object
-                              caFile:
-                                description: Absolute path to administrator-provided
-                                  CA material when source=file.
-                                type: string
-                              source:
-                                description: Source of the CA bundle. Omitted defaults
-                                  to interService.
-                                enum:
-                                - interService
-                                - system
-                                - file
-                                - secret
-                                type: string
-                            type: object
-                          tokenSecretRef:
-                            description: ACM Search bearer-token Secret. The default
-                              key is token.
-                            properties:
-                              key:
-                                default: token
-                                description: 'Key within the Secret. Default: "token".'
-                                type: string
-                              name:
-                                description: Name of the Secret.
-                                type: string
-                            required:
-                            - name
-                            type: object
-                        type: object
-                      backend:
-                        description: |-
-                          Scope-check backend. fleetmetadatacache selects the operator-managed FMC
-                          service's HTTPS API; acm selects the ACM Search GraphQL API.
-                        enum:
-                        - fleetmetadatacache
-                        - acm
                         type: string
                     type: object
                 type: object

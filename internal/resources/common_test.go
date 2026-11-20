@@ -194,9 +194,6 @@ func testKubernautWithFMC() (*kubernautv1alpha2.Kubernaut, *kubernautv1alpha2.Ku
 			Endpoint: "https://mcp-gateway.example.com/sse",
 			Type:     "eaigw",
 		},
-		ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{
-			Backend: "fleetmetadatacache",
-		},
 		OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 			TokenURL:             "https://keycloak.example.com/token",
 			CredentialsSecretRef: "fleet-oauth2-creds",

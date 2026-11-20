@@ -1118,17 +1118,6 @@ var validMCPGatewayTypes = map[string]bool{
 	mcpGatewayTypeKuadrant: true,
 }
 
-// fleetBackendACM is spec.fleet.scopeCheck.backend's value for the BYO ACM Search
-// integration. backend=fleetmetadatacache already has a named constant
-// (ComponentFleetMetadataCache in common.go); this gives "acm" the same
-// treatment instead of repeating the bare literal.
-const fleetBackendACM = "acm"
-
-var validFleetBackends = map[string]bool{
-	ComponentFleetMetadataCache: true,
-	fleetBackendACM:             true,
-}
-
 // validateFleetConfig validates spec.fleet. When Enabled is false or
 // omitted, the other fields are inert and left unvalidated so users can
 // pre-stage configuration ahead of enabling it.
@@ -1138,21 +1127,14 @@ func validateFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) []error {
 		return nil
 	}
 
-	var errs []error
+	errs := make([]error, 0, 4)
 	const base = "spec.fleet"
 
-	if fleet.ScopeCheck.Backend == "" {
-		errs = append(errs, fmt.Errorf("%s.scopeCheck.backend: must not be empty when fleet.enabled is true — must be one of: fleetmetadatacache, acm", base))
-	} else if !validFleetBackends[fleet.ScopeCheck.Backend] {
-		errs = append(errs, fmt.Errorf("%s.scopeCheck.backend: invalid backend %q — must be one of: fleetmetadatacache, acm", base, fleet.ScopeCheck.Backend))
-	}
-
-	errs = append(errs, validateFleetScopeCheck(&fleet.ScopeCheck, base)...)
-
-	// FedRAMP IA-5 (authenticator management): upstream pkg/fleet has no
-	// unauthenticated mode for the ACM Search GraphQL API. Without a token,
-	// Gateway/RemediationOrchestrator crash-loop at startup instead of
-	// failing fast here at admission.
+	// #647 (ADR-068 peer→facade): there is no scopeCheck.backend to
+	// validate — FMC is the single fleet-control-plane contact whenever
+	// fleet is enabled, and ACM is an FMC source validated under
+	// spec.fleetMetadataCache.sources.
+	//
 	// #222: Gateway and RemediationOrchestrator both unconditionally call
 	// upstream Fleet.ValidateFullFederation() at startup, which requires
 	// mcpGateway.endpoint and mcpGateway.type whenever fleet is enabled. Omitting
@@ -1172,28 +1154,6 @@ func validateFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	errs = append(errs, validateFleetTrust("spec.fleet.oauth2.tls", fleet.OAuth2.TLS)...)
 	errs = append(errs, validateFleetMCPClient(fleet.MCPClient)...)
 
-	return errs
-}
-
-func validateFleetScopeCheck(scope *kubernautv1alpha2.FleetScopeCheckSpec, base string) []error {
-	var errs []error
-	if scope.Backend == fleetBackendACM {
-		if scope.ACM == nil {
-			return []error{fmt.Errorf("%s.scopeCheck.acm: must be set when backend is %q", base, fleetBackendACM)}
-		}
-		if scope.ACM.Endpoint == "" {
-			errs = append(errs, fmt.Errorf("%s.scopeCheck.acm.endpoint: must be set when backend is %q", base, fleetBackendACM))
-		} else if err := validateFleetHTTPSURL("spec.fleet.scopeCheck.acm.endpoint", scope.ACM.Endpoint); err != nil {
-			errs = append(errs, err)
-		}
-		if scope.ACM.TokenSecretRef == nil || scope.ACM.TokenSecretRef.Name == "" {
-			errs = append(errs, fmt.Errorf("%s.scopeCheck.acm.tokenSecretRef: must be set when backend is %q", base, fleetBackendACM))
-		}
-		return append(errs, validateFleetTrust("spec.fleet.scopeCheck.acm.tls", scope.ACM.TLS)...)
-	}
-	if scope.ACM != nil {
-		errs = append(errs, fmt.Errorf("%s.scopeCheck.acm: must be omitted when backend is %q", base, ComponentFleetMetadataCache))
-	}
 	return errs
 }
 
@@ -1394,7 +1354,7 @@ func validateFleetMetadataCacheSources(knV2 *kubernautv1alpha2.Kubernaut) []erro
 	const base = "spec.fleetMetadataCache.sources.acm"
 	if !knV2.Spec.FleetMetadataCacheEnabled() {
 		return []error{fmt.Errorf(
-			"%s: must not be set unless fleetMetadataCache is active (fleet.enabled=true, scopeCheck.backend=fleetmetadatacache) — an unselected source must be omitted, not left inert", base)}
+			"%s: must not be set unless fleet is enabled (fleet.enabled=true) — FMC is the single fleet-control-plane contact and is deployed whenever fleet is enabled", base)}
 	}
 
 	var errs []error

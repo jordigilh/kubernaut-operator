@@ -60,7 +60,6 @@ func defaultFMCFleetSpec() kubernautv1alpha2.FleetSpec {
 	t := true
 	return kubernautv1alpha2.FleetSpec{
 		Enabled:    &t,
-		ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 		MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw", Namespace: testNamespace},
 		// testNamespace ("default") always exists in envtest -- these
 		// generic lifecycle fixtures aren't exercising namespace-scoped
@@ -130,37 +129,6 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		cleanupClusterScoped(ctx)
 	})
 
-	It("rejects an active Fleet when a Secret-backed scope-check CA is missing", func() {
-		createBYOSecrets(ctx)
-		Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
-
-		kn := &kubernautv1alpha2.Kubernaut{}
-		Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-		fleet := defaultFMCFleetSpec()
-		fleet.ScopeCheck.Backend = fleetBackendACM
-		fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{Endpoint: "https://acm-search.example.com/graphql", TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"}}
-		fleet.ScopeCheck.ACM.TLS = &kubernautv1alpha2.FleetTrustSpec{
-			Source:          kubernautv1alpha2.FleetTrustSourceSecret,
-			CACertSecretRef: &kubernautv1alpha2.CACertSecretRef{Name: "missing-fleet-ca"},
-		}
-		kn.Spec.Fleet = fleet
-		kn.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-		Expect(k8sClient.Update(ctx, kn)).To(Succeed())
-
-		r := newReconciler()
-		_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-		Expect(err).NotTo(HaveOccurred())
-		_, err = r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-		Expect(err).NotTo(HaveOccurred())
-
-		updated := &kubernautv1alpha2.Kubernaut{}
-		Expect(k8sClient.Get(ctx, singletonKey(), updated)).To(Succeed())
-		Expect(updated.Status.Phase).To(Equal(kubernautv1alpha2.PhaseError))
-		condition := meta.FindStatusCondition(updated.Status.Conditions, kubernautv1alpha2.ConditionBYOValidated)
-		Expect(condition).NotTo(BeNil())
-		Expect(condition.Message).To(ContainSubstring("spec.fleet.scopeCheck.acm.tls.caCertSecretRef"))
-	})
-
 	Describe("FleetMetadataCache Lifecycle (#200)", func() {
 		It("IT-FLEET-521-RECONCILE-FMC: creates FMC resources and renders the derived endpoint/trust", func() {
 			createBYOSecrets(ctx)
@@ -187,7 +155,8 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			gatewayConfig := &corev1.ConfigMap{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "gateway-config", Namespace: testNamespace}, gatewayConfig)).To(Succeed())
-			Expect(gatewayConfig.Data["config.yaml"]).To(ContainSubstring("backend: fleetmetadatacache"))
+			Expect(gatewayConfig.Data["config.yaml"]).NotTo(ContainSubstring("backend:"),
+				"#647/1e: the peer-model backend key is gone from the rendered fleet block")
 			Expect(gatewayConfig.Data["config.yaml"]).To(ContainSubstring("endpoint: https://fleetmetadatacache-service." + testNamespace + ".svc.cluster.local:8080"))
 			Expect(gatewayConfig.Data["config.yaml"]).To(ContainSubstring("tlsCAFile: /etc/tls-ca/service-ca.crt"))
 
@@ -285,43 +254,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(fmcVolume).To(BeTrue())
 		})
 
-		It("IT-FLEET-521-RECONCILE-ACM: reconciles ACM endpoint, trust default, and token mount", func() {
-			createBYOSecrets(ctx)
-			cr := newMinimalCR()
-			fleet := defaultFMCFleetSpec()
-			fleet.ScopeCheck.Backend = fleetBackendACM
-			fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{
-				Endpoint:       "https://acm-search.example.com/graphql",
-				TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"},
-			}
-			cr.Spec.Fleet = fleet
-			cr.Spec.WorkflowExecution.Fleet.OAuth2CredentialsSecretRef = testWEFleetOAuth2SecretRef
-			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
-			Expect(k8sClient.Create(ctx, &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{Name: "acm-search-token", Namespace: testNamespace},
-				Data:       map[string][]byte{"token": []byte("acm-bearer-token")},
-			})).To(Succeed())
-			reconcileToRunning(ctx)
-
-			gatewayConfig := &corev1.ConfigMap{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "gateway-config", Namespace: testNamespace}, gatewayConfig)).To(Succeed())
-			data := gatewayConfig.Data["config.yaml"]
-			Expect(data).To(ContainSubstring("backend: acm"))
-			Expect(data).To(ContainSubstring("endpoint: https://acm-search.example.com/graphql"))
-			Expect(data).To(ContainSubstring("tokenPath: /etc/fleet-token/token"))
-
-			deployment := &appsv1.Deployment{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.DeploymentName(resources.ComponentGateway), Namespace: testNamespace}, deployment)).To(Succeed())
-			foundTokenMount := false
-			for _, volume := range deployment.Spec.Template.Spec.Volumes {
-				if volume.Name == "fleet-token" {
-					foundTokenMount = true
-					Expect(volume.Secret).NotTo(BeNil())
-					Expect(volume.Secret.SecretName).To(Equal("acm-search-token"))
-				}
-			}
-			Expect(foundTokenMount).To(BeTrue())
-		})
+		// #647: IT-FLEET-521-RECONCILE-ACM was removed with the peer-model
+		// scope-check lane — the ACM surface is FMC's source, covered by
+		// IT-FLEET-647-SRC-001 below. Consumers render no backend and no
+		// fleet token anymore.
 
 		// #647 (DD-FLEET-017 v2 D4.1a): FMC's ACM Search source surface,
 		// rendered only when the source is selected.

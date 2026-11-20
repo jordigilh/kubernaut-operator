@@ -1,8 +1,39 @@
 # DD-647: FMC ACM Search source configuration and credentials
 
-Date: 2026-11-19
+Date: 2026-11-19 (amended same day — peer scaffolding removal)
 Issue: kubernaut-operator#647
 Upstream contract: DD-FLEET-017 v2 D4.1a (jordigilh/kubernaut#2661, recorded on `docs/2661-acm-inventory-contract`)
+
+## Amendment: peer scaffolding removed (same PR)
+
+v1alpha2 is unreleased and the operator is the only supported deployment
+path, so this change also **deletes the peer model outright** instead of
+keeping a transitional constant (upstream kubernaut increment 1e deletes
+its half in the same release window; DD-FLEET-017 §2 records the plan and
+the merge-order rule — data, not compatibility):
+
+- CRD: `spec.fleet.scopeCheck` (backend enum + the `scopeCheck.acm`
+  provider block) is deleted. `FleetMetadataCacheEnabled()` reduces to
+  `FleetEnabled()` — FMC deploys whenever fleet is enabled.
+- Rendering: `fleetConfigYAML.Backend` and `.TokenPath` are deleted.
+  GW/RO/AF/EM render `enabled`, the derived FMC endpoint, `tlsCAFile`
+  (inter-service default; verifies FMC's serving cert), `mcpGateway.*`,
+  `oauth2`, `resilience` and (AF/EM) `namespace` — no `backend`, no
+  consumer fleet token. Upstream ConfigMap decoding is non-strict, so
+  `UT-FLEET-647-PEER-001` and the not-contains assertions in the
+  reconciliation specs are the only guards that the target shape stays
+  the target shape.
+- Mounts: the `fleet-ca` / `fleet-token` scope-check lanes are removed
+  from every consumer Deployment (`appendFleetSecretMounts` now mounts
+  only the MCP Gateway CA and OAuth2 credentials). FMC keeps its own
+  `fleet-acm-source-token` / `fleet-acm-source-ca` mounts.
+- Controller: `validateFleetTokenSecret` and the scope-check trust lanes
+  are removed (the mcpGateway/oauth2/sources.acm lanes remain);
+  `ReasonFleetTokenSecretInvalid` is deleted with its only caller.
+
+Merge gate: this branch does not merge before upstream 1d (backend
+optional) is released / 1e lands in the same v1.6 window — recorded on
+kubernaut-operator#647.
 
 ## Decision
 
