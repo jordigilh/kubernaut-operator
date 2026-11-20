@@ -409,6 +409,7 @@ func allASCIIDigits(value string) bool {
 func ValidateFleet(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	errs := make([]error, 0, 2)
 	errs = append(errs, validateFleetConfig(knV2)...)
+	errs = append(errs, validateFleetMetadataCacheSources(knV2)...)
 	errs = append(errs, validateFleetMetadataCache(knV2)...)
 	return errs
 }
@@ -1117,17 +1118,6 @@ var validMCPGatewayTypes = map[string]bool{
 	mcpGatewayTypeKuadrant: true,
 }
 
-// fleetBackendACM is spec.fleet.scopeCheck.backend's value for the BYO ACM Search
-// integration. backend=fleetmetadatacache already has a named constant
-// (ComponentFleetMetadataCache in common.go); this gives "acm" the same
-// treatment instead of repeating the bare literal.
-const fleetBackendACM = "acm"
-
-var validFleetBackends = map[string]bool{
-	ComponentFleetMetadataCache: true,
-	fleetBackendACM:             true,
-}
-
 // validateFleetConfig validates spec.fleet. When Enabled is false or
 // omitted, the other fields are inert and left unvalidated so users can
 // pre-stage configuration ahead of enabling it.
@@ -1137,21 +1127,14 @@ func validateFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) []error {
 		return nil
 	}
 
-	var errs []error
+	errs := make([]error, 0, 4)
 	const base = "spec.fleet"
 
-	if fleet.ScopeCheck.Backend == "" {
-		errs = append(errs, fmt.Errorf("%s.scopeCheck.backend: must not be empty when fleet.enabled is true — must be one of: fleetmetadatacache, acm", base))
-	} else if !validFleetBackends[fleet.ScopeCheck.Backend] {
-		errs = append(errs, fmt.Errorf("%s.scopeCheck.backend: invalid backend %q — must be one of: fleetmetadatacache, acm", base, fleet.ScopeCheck.Backend))
-	}
-
-	errs = append(errs, validateFleetScopeCheck(&fleet.ScopeCheck, base)...)
-
-	// FedRAMP IA-5 (authenticator management): upstream pkg/fleet has no
-	// unauthenticated mode for the ACM Search GraphQL API. Without a token,
-	// Gateway/RemediationOrchestrator crash-loop at startup instead of
-	// failing fast here at admission.
+	// #647 (ADR-068 peer→facade): there is no scopeCheck.backend to
+	// validate — FMC is the single fleet-control-plane contact whenever
+	// fleet is enabled, and ACM is an FMC source validated under
+	// spec.fleetMetadataCache.sources.
+	//
 	// #222: Gateway and RemediationOrchestrator both unconditionally call
 	// upstream Fleet.ValidateFullFederation() at startup, which requires
 	// mcpGateway.endpoint and mcpGateway.type whenever fleet is enabled. Omitting
@@ -1171,28 +1154,6 @@ func validateFleetConfig(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	errs = append(errs, validateFleetTrust("spec.fleet.oauth2.tls", fleet.OAuth2.TLS)...)
 	errs = append(errs, validateFleetMCPClient(fleet.MCPClient)...)
 
-	return errs
-}
-
-func validateFleetScopeCheck(scope *kubernautv1alpha2.FleetScopeCheckSpec, base string) []error {
-	var errs []error
-	if scope.Backend == fleetBackendACM {
-		if scope.ACM == nil {
-			return []error{fmt.Errorf("%s.scopeCheck.acm: must be set when backend is %q", base, fleetBackendACM)}
-		}
-		if scope.ACM.Endpoint == "" {
-			errs = append(errs, fmt.Errorf("%s.scopeCheck.acm.endpoint: must be set when backend is %q", base, fleetBackendACM))
-		} else if err := validateFleetHTTPSURL("spec.fleet.scopeCheck.acm.endpoint", scope.ACM.Endpoint); err != nil {
-			errs = append(errs, err)
-		}
-		if scope.ACM.TokenSecretRef == nil || scope.ACM.TokenSecretRef.Name == "" {
-			errs = append(errs, fmt.Errorf("%s.scopeCheck.acm.tokenSecretRef: must be set when backend is %q", base, fleetBackendACM))
-		}
-		return append(errs, validateFleetTrust("spec.fleet.scopeCheck.acm.tls", scope.ACM.TLS)...)
-	}
-	if scope.ACM != nil {
-		errs = append(errs, fmt.Errorf("%s.scopeCheck.acm: must be omitted when backend is %q", base, ComponentFleetMetadataCache))
-	}
 	return errs
 }
 
@@ -1379,6 +1340,62 @@ func validateFleetTrust(path string, trust *kubernautv1alpha2.FleetTrustSpec) []
 // validateFleetOAuth2's six components (Gateway/RemediationOrchestrator/
 // SignalProcessing/APIFrontend/EffectivenessMonitor/KubernautAgent), so it
 // needs its own effective-value check here.
+// validateFleetMetadataCacheSources validates
+// spec.fleetMetadataCache.sources (#647, DD-FLEET-017 v2 D4.1a). It runs
+// before validateFleetMetadataCache's FMC-enabled early return so an
+// inert-but-selected source on a non-FMC deployment is still rejected
+// instead of being silently ignored (FedRAMP CM-7 — no silent fallback to
+// the GitOps/MCP lane).
+func validateFleetMetadataCacheSources(knV2 *kubernautv1alpha2.Kubernaut) []error {
+	sources := knV2.Spec.FleetMetadataCache.Sources
+	if sources == nil {
+		return nil
+	}
+	if sources.ACM == nil {
+		// Cross-team alignment (kubernaut#2661): upstream FMC fails to load
+		// a rendered "sources:" key that names no source, and the contract
+		// says presence selects — an empty declaration is ambiguous, so it
+		// is rejected here rather than silently rendering nothing (the
+		// renderer would omit the key, but the CR intent is unclear).
+		return []error{fmt.Errorf(
+			"spec.fleetMetadataCache.sources: must name a source or be omitted — an empty sources block selects nothing and is rejected rather than silently falling back to the GitOps/MCP lane")}
+	}
+	const base = "spec.fleetMetadataCache.sources.acm"
+	if !knV2.Spec.FleetMetadataCacheEnabled() {
+		return []error{fmt.Errorf(
+			"%s: must not be set unless fleet is enabled (fleet.enabled=true) — FMC is the single fleet-control-plane contact and is deployed whenever fleet is enabled", base)}
+	}
+
+	var errs []error
+	if sources.ACM.Endpoint == "" {
+		errs = append(errs, fmt.Errorf("%s.endpoint: must be set when the ACM source is selected", base))
+	} else if err := validateFleetACMBaseURL(base+".endpoint", sources.ACM.Endpoint); err != nil {
+		errs = append(errs, err)
+	}
+	if sources.ACM.TokenSecretRef == nil || sources.ACM.TokenSecretRef.Name == "" {
+		errs = append(errs, fmt.Errorf("%s.tokenSecretRef: must be set when the ACM source is selected", base))
+	}
+	return append(errs, validateFleetTrust(base+".tls", sources.ACM.TLS)...)
+}
+
+// validateFleetACMBaseURL is stricter than validateFleetHTTPSURL: the ACM
+// Search source endpoint is a base URL only — the client appends
+// /searchapi/graphql (DD-FLEET-017 v2 D4.1a), so any path would be doubled,
+// and the scheme-less host:port form has no TLS guarantee.
+func validateFleetACMBaseURL(path, value string) error {
+	if strings.TrimSpace(value) != value {
+		return fmt.Errorf("%s must not contain leading or trailing whitespace", path)
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != httpsURLScheme || parsed.Hostname() == "" || parsed.User != nil {
+		return fmt.Errorf("%s must be an absolute https base URL with a hostname, without user information", path)
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return fmt.Errorf("%s must be a base URL without a path — the client appends the GraphQL route itself", path)
+	}
+	return nil
+}
+
 func validateFleetMetadataCache(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	if !knV2.Spec.FleetMetadataCacheEnabled() {
 		return nil

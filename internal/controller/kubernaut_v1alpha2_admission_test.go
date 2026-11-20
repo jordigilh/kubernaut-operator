@@ -83,16 +83,13 @@ var _ = Describe("v1alpha2 Fleet nested API admission", func() {
 		}
 	})
 
-	It("IT-FLEET-521-ADMISSION-001: accepts active Fleet with nested MCP Gateway, scope-check, and OAuth2 configuration", func() {
+	It("IT-FLEET-521-ADMISSION-001: accepts active Fleet with nested MCP Gateway and OAuth2 configuration", func() {
 		cr := newMinimalV1alpha2CR("fleet-nested-active")
 		t := true
 		cr.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled: &t,
 			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{
 				Type: "eaigw", Endpoint: "https://mcp-gateway.example.com/sse", Namespace: testNamespace,
-			},
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{
-				Backend: "fleetmetadatacache",
 			},
 			OAuth2: kubernautv1alpha2.FleetOAuth2Spec{
 				TokenURL:             "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token",
@@ -108,7 +105,6 @@ var _ = Describe("v1alpha2 Fleet nested API admission", func() {
 		Expect(fetched.Spec.Fleet.Enabled).NotTo(BeNil())
 		Expect(*fetched.Spec.Fleet.Enabled).To(BeTrue())
 		Expect(fetched.Spec.Fleet.MCPGateway.Endpoint).To(Equal(cr.Spec.Fleet.MCPGateway.Endpoint))
-		Expect(fetched.Spec.Fleet.ScopeCheck.Backend).To(Equal("fleetmetadatacache"))
 		Expect(fetched.Spec.Fleet.OAuth2.TokenURL).To(Equal(cr.Spec.Fleet.OAuth2.TokenURL))
 	})
 
@@ -120,7 +116,6 @@ var _ = Describe("v1alpha2 Fleet nested API admission", func() {
 			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{
 				Type: "eaigw", Endpoint: "https://mcp-gateway.example.com/sse", Namespace: testNamespace,
 			},
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: fleetBackendACM},
 		}
 
 		Expect(k8sClient.Create(ctx, cr)).To(Succeed())

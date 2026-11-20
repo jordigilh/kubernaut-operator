@@ -145,9 +145,9 @@ type KubernautSpec struct {
 	Fleet FleetSpec `json:"fleet,omitempty"`
 
 	// FleetMetadataCache configures the operator-managed Fleet Metadata
-	// Cache (FMC) service (ADR-068). It is active when
-	// spec.fleet.scopeCheck.backend=fleetmetadatacache; deployments that select
-	// spec.fleet.scopeCheck.backend=acm use an existing RHACM Search installation.
+	// Cache (FMC) service (ADR-068). It is active whenever spec.fleet.enabled
+	// is true — FMC is the single fleet-control-plane contact (peer→facade
+	// amendment, #647).
 	// +optional
 	FleetMetadataCache FleetMetadataCacheSpec `json:"fleetMetadataCache,omitempty"`
 
@@ -316,16 +316,12 @@ type FleetSpec struct {
 	// +optional
 	MCPGateway FleetMCPGatewaySpec `json:"mcpGateway,omitempty"`
 
-	// Scope-check backend and its trust/token references.
-	// +optional
-	ScopeCheck FleetScopeCheckSpec `json:"scopeCheck,omitempty"`
-
 	// OAuth2 client credentials for the MCP Gateway token endpoint. There is no
 	// Enabled field: active Fleet always requires this configuration.
 	// +optional
 	OAuth2 FleetOAuth2Spec `json:"oauth2,omitempty"`
 
-	// MCPClient overrides shared MCP client retry and timeout behavior.
+	// MCP client tuning shared by Fleet-aware components.
 	// +optional
 	MCPClient *FleetMCPClientSpec `json:"mcpClient,omitempty"`
 }
@@ -350,35 +346,6 @@ type FleetMCPGatewaySpec struct {
 	// this is a trust-source override, not a TLS disable switch.
 	// +optional
 	TLS *FleetTrustSpec `json:"tls,omitempty"`
-}
-
-// FleetScopeCheckSpec configures the backend used for federated scope checks.
-type FleetScopeCheckSpec struct {
-	// Scope-check backend. fleetmetadatacache selects the operator-managed FMC
-	// service's HTTPS API; acm selects the ACM Search GraphQL API.
-	// +kubebuilder:validation:Enum=fleetmetadatacache;acm
-	// +optional
-	Backend string `json:"backend,omitempty"`
-
-	// ACM configures the BYO ACM Search GraphQL scope-check provider. It must
-	// be absent when Backend selects the operator-managed FMC provider.
-	// +optional
-	ACM *FleetACMScopeCheckSpec `json:"acm,omitempty"`
-}
-
-// FleetACMScopeCheckSpec configures the ACM Search GraphQL scope-check provider.
-type FleetACMScopeCheckSpec struct {
-	// ACM Search GraphQL endpoint. Must be an absolute HTTPS URL when Fleet is active.
-	// +optional
-	Endpoint string `json:"endpoint,omitempty"`
-
-	// ACM endpoint trust source. Omitted defaults to interService.
-	// +optional
-	TLS *FleetTrustSpec `json:"tls,omitempty"`
-
-	// ACM Search bearer-token Secret. The default key is token.
-	// +optional
-	TokenSecretRef *SecretKeyRef `json:"tokenSecretRef,omitempty"`
 }
 
 // FleetOAuth2Spec configures the OAuth2 client-credentials grant used by
@@ -478,17 +445,15 @@ type FleetMCPClientTimeoutsSpec struct {
 // Cache (FMC) service (ADR-068). FMC polls managed clusters via the MCP
 // Gateway (spec.fleet.mcpGateway.endpoint/type) and serves federated
 // scope-check results from Valkey over HTTPS, so Gateway and
-// RemediationOrchestrator (spec.fleet.scopeCheck.backend=fleetmetadatacache) query
-// scope without holding federated K8s credentials themselves. The API port is
-// HTTPS-only; health and metrics remain separate plaintext operational ports.
+// RemediationOrchestrator query scope without holding federated K8s
+// credentials themselves. The API port is HTTPS-only; health and metrics
+// remain separate plaintext operational ports.
 //
-// There is no separate enable toggle: FMC is not a BYO/self-hosted
-// component, so the operator deploys it automatically whenever
-// spec.fleet.enabled is true and spec.fleet.scopeCheck.backend is
-// "fleetmetadatacache" -- see KubernautSpec.FleetMetadataCacheEnabled()
-// and kubernaut-operator#450. Most deployments that enable spec.fleet use
-// scopeCheck.backend=acm (an existing RHACM Search installation) instead, in which
-// case this block stays inert.
+// There is no separate enable toggle and no backend choice: FMC is the
+// single fleet-control-plane contact (ADR-068 peer→facade amendment,
+// #647), not a BYO/self-hosted component, so the operator deploys it
+// automatically whenever spec.fleet.enabled is true — see
+// KubernautSpec.FleetMetadataCacheEnabled() and kubernaut-operator#450.
 type FleetMetadataCacheSpec struct {
 	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for FMC's own
 	// OAuth2 client credentials (F1 -- collapses v1alpha1's bespoke
@@ -518,14 +483,57 @@ type FleetMetadataCacheSpec struct {
 	// Resource requirements.
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Sources selects FMC's sync-time inventory sources
+	// (kubernaut-operator#647, DD-FLEET-017 v2 D4.1a). Omitted: FMC
+	// collects via the GitOps/MCP lane only and the rendered config is
+	// byte-identical to a deployment without this field. Selecting a
+	// source requires its complete configuration; absent configuration
+	// fails validation rather than silently falling back (FedRAMP CM-7).
+	// +optional
+	Sources *FleetMetadataCacheSourcesSpec `json:"sources,omitempty"`
+}
+
+// FleetMetadataCacheSourcesSpec selects FMC's inventory sources. At most
+// one source may be declared (upstream decodes `sources` with
+// known-fields-only strictness and rejects additional entries at startup);
+// the CRD shape guarantees this structurally — ACM is the only field.
+type FleetMetadataCacheSourcesSpec struct {
+	// ACM configures the ACM Search source (DD-FLEET-017 v2 D4.1a). Its
+	// presence selects the ACM source for this deployment.
+	// +optional
+	ACM *FleetACMSourceSpec `json:"acm,omitempty"`
+}
+
+// FleetACMSourceSpec configures FMC's ACM Search source. Field shape
+// matches the retired scope-check lane, but the semantics differ: the
+// source endpoint is a base URL with no path (the client appends
+// /searchapi/graphql), validated by a dedicated base-URL rule.
+type FleetACMSourceSpec struct {
+	// ACM Search endpoint. Absolute HTTPS base URL without a path; the
+	// client appends the GraphQL route. No default, no fallback.
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+
+	// ACM Search endpoint trust source. Omitted defaults to interService.
+	// +optional
+	TLS *FleetTrustSpec `json:"tls,omitempty"`
+
+	// ACM Search bearer-token Secret for the configured hub Search
+	// principal. The default key is token; the Secret is mounted read-only
+	// and keyed, never rendered into the ConfigMap.
+	// +optional
+	TokenSecretRef *SecretKeyRef `json:"tokenSecretRef,omitempty"`
 }
 
 // FleetMetadataCacheEnabled returns true when the operator should deploy
-// the FMC service. There is no separate enable toggle: FMC is
-// operator-managed only (no BYO/self-hosted path), so selecting it as the
-// fleet backend is what deploys it (kubernaut-operator#450).
+// the FMC service. There is no separate enable toggle and no backend
+// choice: FMC is the single fleet-control-plane contact (ADR-068
+// peer→facade amendment, 2026-11-18), operator-managed only (no BYO/
+// self-hosted path), so enabling Fleet is what deploys it
+// (kubernaut-operator#450, #647).
 func (s *KubernautSpec) FleetMetadataCacheEnabled() bool {
-	return s.FleetEnabled() && s.Fleet.ScopeCheck.Backend == "fleetmetadatacache"
+	return s.FleetEnabled()
 }
 
 // FleetEnabled returns true when fleet federation (multi-cluster reads via

@@ -684,13 +684,10 @@ func resolveFleetEndpoint(knV2 *kubernautv1alpha2.Kubernaut) string {
 	if fleet.Enabled == nil || !*fleet.Enabled {
 		return ""
 	}
-	if knV2.Spec.FleetMetadataCacheEnabled() {
-		return FleetMetadataCacheURL(knV2.Namespace)
-	}
-	if fleet.ScopeCheck.ACM == nil {
-		return ""
-	}
-	return fleet.ScopeCheck.ACM.Endpoint
+	// FMC is the single fleet-control-plane contact (ADR-068 peer→facade,
+	// #647): the scope-check endpoint is always FMC's own in-cluster
+	// Service URL, derived — there is no caller-selected backend anymore.
+	return FleetMetadataCacheURL(knV2.Namespace)
 }
 
 // effectiveFleetOAuth2SecretRef resolves a component's nilable Fleet

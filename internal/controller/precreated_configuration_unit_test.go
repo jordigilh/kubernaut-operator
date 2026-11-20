@@ -323,7 +323,6 @@ var _ = Describe("pre-created configuration validation", Label("unit"), func() {
 		kn = newMinimalCR()
 		kn.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled:    &enabled,
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp.example.com", Type: "eaigw", Namespace: kn.Namespace},
 			OAuth2:     kubernautv1alpha2.FleetOAuth2Spec{CredentialsSecretRef: "fleet-default"},
 		}

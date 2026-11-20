@@ -93,7 +93,7 @@ const (
 	ReasonTLSNotReady                    = "TLSNotReady"
 	ReasonTLSWaitingForServiceCA         = "WaitingForServiceCA"
 	ReasonFleetTrustSecretInvalid        = "FleetTrustSecretInvalid"
-	ReasonFleetTokenSecretInvalid        = "FleetTokenSecretInvalid"
+	ReasonFleetACMSourceSecretInvalid    = "FleetACMSourceSecretInvalid" //nolint:gosec // status reason constant, not credential data
 	ReasonMonitoringTLSNotReady          = "MonitoringTLSNotReady"
 	ReasonTelemetrySecretInvalid         = "TelemetrySecretInvalid"
 	ReasonTelemetryAmbientInvalid        = "TelemetryAmbientTrustInvalid"
@@ -122,7 +122,6 @@ const (
 
 const (
 	monitoringTLSDefaultCAKey = "ca.crt"
-	fleetBackendACM           = "acm"
 )
 
 // KubernautReconciler reconciles a Kubernaut object.
@@ -383,11 +382,11 @@ func (r *KubernautReconciler) phaseValidate(ctx context.Context, kn *kubernautv1
 		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
 			ReasonFleetTrustSecretInvalid, fmt.Sprintf("Fleet trust material validation failed: %v", err))
 	}
-	if err := r.validateFleetTokenSecret(ctx, knV2); err != nil {
-		log.Error(err, "Fleet token Secret validation failed",
+	if err := r.validateFleetMetadataCacheACMSourceSecrets(ctx, knV2); err != nil {
+		log.Error(err, "FMC ACM source Secret validation failed",
 			"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
 		return r.setConditionAndRequeue(ctx, kn, kubernautv1alpha2.ConditionBYOValidated,
-			ReasonFleetTokenSecretInvalid, fmt.Sprintf("Fleet token Secret validation failed: %v", err))
+			ReasonFleetACMSourceSecretInvalid, fmt.Sprintf("FMC ACM source Secret validation failed: %v", err))
 	}
 	if err := r.validateMonitoringTLS(ctx, knV2); err != nil {
 		log.Error(err, "Monitoring TLS trust source validation failed",
@@ -3597,14 +3596,14 @@ func (r *KubernautReconciler) validateFleetTrustSecrets(ctx context.Context, kn 
 		path  string
 		trust *kubernautv1alpha2.FleetTrustSpec
 	}{
-		{path: "spec.fleet.scopeCheck.acm.tls", trust: func() *kubernautv1alpha2.FleetTrustSpec {
-			if kn.Spec.Fleet.ScopeCheck.ACM == nil {
-				return nil
-			}
-			return kn.Spec.Fleet.ScopeCheck.ACM.TLS
-		}()},
 		{path: "spec.fleet.mcpGateway.tls", trust: kn.Spec.Fleet.MCPGateway.TLS},
 		{path: "spec.fleet.oauth2.tls", trust: kn.Spec.Fleet.OAuth2.TLS},
+		{path: "spec.fleetMetadataCache.sources.acm.tls", trust: func() *kubernautv1alpha2.FleetTrustSpec {
+			if kn.Spec.FleetMetadataCache.Sources == nil || kn.Spec.FleetMetadataCache.Sources.ACM == nil {
+				return nil
+			}
+			return kn.Spec.FleetMetadataCache.Sources.ACM.TLS
+		}()},
 	}
 	for _, lane := range lanes {
 		if lane.trust == nil || lane.trust.Source != kubernautv1alpha2.FleetTrustSourceSecret || lane.trust.CACertSecretRef == nil {
@@ -3669,9 +3668,15 @@ func fleetTrustSecretReferenced(kn *kubernautv1alpha2.Kubernaut, name string) bo
 	if !kn.Spec.FleetEnabled() {
 		return false
 	}
-	refs := make([]*kubernautv1alpha2.FleetTrustSpec, 0, 3)
-	if kn.Spec.Fleet.ScopeCheck.ACM != nil {
-		refs = append(refs, kn.Spec.Fleet.ScopeCheck.ACM.TLS)
+	refs := make([]*kubernautv1alpha2.FleetTrustSpec, 0, 4)
+	// #647: the FMC ACM source CA lane exists only when FMC is the active
+	// backend (validated upstream of any watch event), so no extra enable
+	// guard is needed here. A watch event's value is a prompt PhaseError on
+	// Secret deletion and re-heal on re-creation; content rotation is
+	// handled by FMC's CA reloader, so an update event changes no rendered
+	// spec by design.
+	if kn.Spec.FleetMetadataCache.Sources != nil && kn.Spec.FleetMetadataCache.Sources.ACM != nil {
+		refs = append(refs, kn.Spec.FleetMetadataCache.Sources.ACM.TLS)
 	}
 	refs = append(refs, kn.Spec.Fleet.MCPGateway.TLS, kn.Spec.Fleet.OAuth2.TLS)
 	for _, trust := range refs {
@@ -3707,17 +3712,29 @@ func (r *KubernautReconciler) fleetMCPGatewayTrustRevision(ctx context.Context, 
 	}), nil
 }
 
-func (r *KubernautReconciler) validateFleetTokenSecret(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
-	if !kn.Spec.FleetEnabled() || kn.Spec.Fleet.ScopeCheck.Backend != fleetBackendACM || kn.Spec.Fleet.ScopeCheck.ACM == nil || kn.Spec.Fleet.ScopeCheck.ACM.TokenSecretRef == nil {
+// fleetTokenSecretDefaultKey is the default key for Fleet bearer-token
+// Secret references (matches kubebuilder:default="token" on SecretKeyRef).
+const fleetTokenSecretDefaultKey = "token"
+
+// validateFleetMetadataCacheACMSourceSecrets verifies the FMC ACM source's
+// bearer-token Secret before the deployment phases (#647). Fail-closed at
+// validation time instead of a Pod stuck in ContainerCreating (FedRAMP
+// CM-7, OWASP ASVS v5.0.0-V5.1.1); the CA Secret is covered by
+// validateFleetTrustSecrets' sources.acm lane. Healing relies on the same
+// requeue-retry behavior as the scope-check token lane: creating the Secret
+// triggers revalidation on the next reconcile.
+func (r *KubernautReconciler) validateFleetMetadataCacheACMSourceSecrets(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
+	sources := kn.Spec.FleetMetadataCache.Sources
+	if !kn.Spec.FleetMetadataCacheEnabled() || sources == nil || sources.ACM == nil || sources.ACM.TokenSecretRef == nil {
 		return nil
 	}
-	ref := kn.Spec.Fleet.ScopeCheck.ACM.TokenSecretRef
+	ref := sources.ACM.TokenSecretRef
 	key := ref.Key
 	if key == "" {
-		key = "token"
+		key = fleetTokenSecretDefaultKey
 	}
 	if err := r.validateSecret(ctx, kn.Namespace, ref.Name, []string{key}); err != nil {
-		return fmt.Errorf("spec.fleet.scopeCheck.acm.tokenSecretRef: %w", err)
+		return fmt.Errorf("spec.fleetMetadataCache.sources.acm.tokenSecretRef: %w", err)
 	}
 	return nil
 }

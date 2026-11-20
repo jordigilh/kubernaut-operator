@@ -97,6 +97,22 @@ type fleetMetadataCacheOAuth2YAML struct {
 	TLSCaFile      string   `json:"tlsCaFile,omitempty" yaml:"tlsCaFile,omitempty"`
 }
 
+// fleetMetadataCacheACMSourceYAML mirrors upstream's planned
+// pkg/fleet/fmc/config.ACMSourceConfig (kubernaut#2661 increment 2,
+// DD-FLEET-017 v2 D4.1a) field-for-field. Upstream decodes `sources` with
+// known-fields-only strictness, so exactly these three keys may render —
+// anything extra fails FMC startup by design. caFile is omitted (not
+// empty) when trust resolves to the system store.
+type fleetMetadataCacheACMSourceYAML struct {
+	Endpoint  string `json:"endpoint" yaml:"endpoint"`
+	TokenPath string `json:"tokenPath" yaml:"tokenPath"`
+	CAFile    string `json:"caFile,omitempty" yaml:"caFile,omitempty"`
+}
+
+type fleetMetadataCacheSourcesYAML struct {
+	ACM *fleetMetadataCacheACMSourceYAML `json:"acm,omitempty" yaml:"acm,omitempty"`
+}
+
 // fleetMetadataCacheConfigYAML mirrors upstream's
 // pkg/fleet/fmc/config.ServiceConfig field names and nesting exactly.
 type fleetMetadataCacheConfigYAML struct {
@@ -106,6 +122,7 @@ type fleetMetadataCacheConfigYAML struct {
 	Sync       fleetMetadataCacheSyncYAML       `json:"sync" yaml:"sync"`
 	OAuth2     fleetMetadataCacheOAuth2YAML     `json:"oauth2" yaml:"oauth2"`
 	Debug      debugYAML                        `json:"debug" yaml:"debug"`
+	Sources    *fleetMetadataCacheSourcesYAML   `json:"sources,omitempty" yaml:"sources,omitempty"`
 }
 
 // FleetMetadataCacheConfigMap builds the fleetmetadatacache-config ConfigMap.
@@ -148,6 +165,21 @@ func FleetMetadataCacheConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernau
 			TLSCaFile:      resolveFleetTrustCAFile(fleet.OAuth2.TLS, InterServiceTLSCAFileFor(knV2), fleetOAuth2CAMountPath),
 		},
 		Debug: debugYAML{PprofEnabled: knV2.Spec.Debug.PprofEnabled},
+	}
+
+	// #647 (DD-FLEET-017 v2 D4.1a): the sources key renders only when a
+	// source is selected; the default GitOps/MCP rendering stays
+	// byte-identical. tokenPath is the mounted file, never the Secret
+	// name or contents; caFile is trust-source-resolved and omitted
+	// entirely when trust selects the system store.
+	if sources := fmc.Sources; sources != nil && sources.ACM != nil {
+		cfg.Sources = &fleetMetadataCacheSourcesYAML{
+			ACM: &fleetMetadataCacheACMSourceYAML{
+				Endpoint:  sources.ACM.Endpoint,
+				TokenPath: fleetTokenMountPath,
+				CAFile:    resolveFleetTrustCAFile(sources.ACM.TLS, InterServiceTLSCAFileFor(knV2), fleetACMSourceCAMountPath),
+			},
+		}
 	}
 
 	return yamlConfigMap(ObjectMeta(kn, fleetMetadataCacheConfigMapName, ComponentFleetMetadataCache), "config.yaml", "fleetmetadatacache config", cfg)
@@ -208,6 +240,22 @@ func FleetMetadataCacheDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kuberna
 	if trust := knV2.Spec.Fleet.OAuth2.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
 		volumes = append(volumes, secretKeyVolume("fleet-oauth2-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
 		mounts = append(mounts, corev1.VolumeMount{Name: "fleet-oauth2-ca", MountPath: "/etc/fleet-tls/oauth2", ReadOnly: true})
+	}
+	// #647 (DD-FLEET-017 v2 D4.1a): the ACM Search source's bearer-token
+	// and CA mounts exist only when the source is selected. Both are
+	// read-only and keyed; FMC consumes artifacts (mounted paths), never
+	// Secret references. Token rotation is handled by FMC's file token
+	// source and CA rotation by its CA reloader, so (unlike the MCP
+	// Gateway lane) no Deployment rollout revision is needed.
+	if sources := knV2.Spec.FleetMetadataCache.Sources; sources != nil && sources.ACM != nil {
+		if ref := sources.ACM.TokenSecretRef; ref != nil && ref.Name != "" {
+			volumes = append(volumes, secretKeyVolume("fleet-acm-source-token", ref.Name, withDefault(ref.Key, "token"), "token"))
+			mounts = append(mounts, corev1.VolumeMount{Name: "fleet-acm-source-token", MountPath: "/etc/fleet-token", ReadOnly: true})
+		}
+		if trust := sources.ACM.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
+			volumes = append(volumes, secretKeyVolume("fleet-acm-source-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
+			mounts = append(mounts, corev1.VolumeMount{Name: "fleet-acm-source-ca", MountPath: fleetACMSourceCAMountDir, ReadOnly: true})
+		}
 	}
 	// #398: mirrors DataStorageDeployment's identical spec.valkey.tls volume
 	// wiring -- without this, FMC's rendered valkey.tls.caFile/certFile/
