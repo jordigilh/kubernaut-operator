@@ -95,6 +95,27 @@ var _ = Describe("cluster-wide activation enforcement", Label("unit"), func() {
 })
 
 var _ = Describe("cluster-wide activation through the real API", func() {
+	// Runs LAST (DeferCleanup is LIFO, and this is registered before each
+	// spec's own cleanups): after the spec's CRs are deleted, sweep the
+	// owned migration Job that the background manager may concurrently
+	// create for the testNamespace CR. envtest runs no garbage collector,
+	// so an owner-referenced Job outliving its CR leaks into later specs —
+	// seen as IT-TLS-AUDIT-515-003 failing order-dependently on a leftover
+	// Job from these specs (#649).
+	BeforeEach(func() {
+		DeferCleanup(func() {
+			jobKey := types.NamespacedName{Name: "kubernaut-db-migration", Namespace: testNamespace}
+			job := &batchv1.Job{}
+			if err := k8sClient.Get(ctx, jobKey, job); err == nil {
+				propagation := metav1.DeletePropagationBackground
+				_ = k8sClient.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &propagation})
+			}
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8sClient.Get(ctx, jobKey, &batchv1.Job{}))
+			}, timeout, interval).Should(BeTrue(), "singleton spec must not leak the migration Job into later specs")
+		})
+	})
+
 	It("IT-AUDIT-515-SINGLETON-001 [AC-3, CM-5, SI-10]: blocks cross-namespace competitors admitted without the webhook", func() {
 		namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "singleton-competitor-"}}
 		Expect(k8sClient.Create(ctx, namespace)).To(Succeed())
