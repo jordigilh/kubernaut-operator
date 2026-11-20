@@ -1188,14 +1188,6 @@ func appendInterServiceTLSCAForMonitoringConsumer(kn *kubernautv1alpha2.Kubernau
 	return volumes, mounts, env
 }
 
-// appendFleetSecretMounts adds the fleet-ca / fleet-token / fleet-oauth2
-// volume mounts shared by Gateway and RemediationOrchestrator when
-// spec.fleet.enabled is true and the corresponding BYO secret name is set.
-// Mount paths must stay in sync with fleetCAMountPath / fleetTokenMountPath
-// in configmaps.go. componentEtcDir is the component's own config directory
-// (e.g. "/etc/gateway") — upstream GW/RO each read OAuth2 client-id/secret
-// files from "<componentEtcDir>/<credentialsSecretRef>/{client-id,client-secret}",
-// so the mount path must be built per-component, not shared.
 // appendFleetSecretMounts mounts the Secrets backing spec.fleet's TLS CA,
 // ACM bearer token, and OAuth2 client credentials. credentialsSecretRefOverride,
 // when non-empty, overrides spec.fleet.oauth2.credentialsSecretRef for this
