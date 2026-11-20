@@ -145,9 +145,9 @@ type KubernautSpec struct {
 	Fleet FleetSpec `json:"fleet,omitempty"`
 
 	// FleetMetadataCache configures the operator-managed Fleet Metadata
-	// Cache (FMC) service (ADR-068). It is active when
-	// spec.fleet.scopeCheck.backend=fleetmetadatacache; deployments that select
-	// spec.fleet.scopeCheck.backend=acm use an existing RHACM Search installation.
+	// Cache (FMC) service (ADR-068). It is active whenever spec.fleet.enabled
+	// is true — FMC is the single fleet-control-plane contact (peer→facade
+	// amendment, #647).
 	// +optional
 	FleetMetadataCache FleetMetadataCacheSpec `json:"fleetMetadataCache,omitempty"`
 
@@ -445,17 +445,15 @@ type FleetMCPClientTimeoutsSpec struct {
 // Cache (FMC) service (ADR-068). FMC polls managed clusters via the MCP
 // Gateway (spec.fleet.mcpGateway.endpoint/type) and serves federated
 // scope-check results from Valkey over HTTPS, so Gateway and
-// RemediationOrchestrator (spec.fleet.scopeCheck.backend=fleetmetadatacache) query
-// scope without holding federated K8s credentials themselves. The API port is
-// HTTPS-only; health and metrics remain separate plaintext operational ports.
+// RemediationOrchestrator query scope without holding federated K8s
+// credentials themselves. The API port is HTTPS-only; health and metrics
+// remain separate plaintext operational ports.
 //
-// There is no separate enable toggle: FMC is not a BYO/self-hosted
-// component, so the operator deploys it automatically whenever
-// spec.fleet.enabled is true and spec.fleet.scopeCheck.backend is
-// "fleetmetadatacache" -- see KubernautSpec.FleetMetadataCacheEnabled()
-// and kubernaut-operator#450. Most deployments that enable spec.fleet use
-// scopeCheck.backend=acm (an existing RHACM Search installation) instead, in which
-// case this block stays inert.
+// There is no separate enable toggle and no backend choice: FMC is the
+// single fleet-control-plane contact (ADR-068 peer→facade amendment,
+// #647), not a BYO/self-hosted component, so the operator deploys it
+// automatically whenever spec.fleet.enabled is true — see
+// KubernautSpec.FleetMetadataCacheEnabled() and kubernaut-operator#450.
 type FleetMetadataCacheSpec struct {
 	// Fleet overrides spec.fleet.oauth2.credentialsSecretRef for FMC's own
 	// OAuth2 client credentials (F1 -- collapses v1alpha1's bespoke

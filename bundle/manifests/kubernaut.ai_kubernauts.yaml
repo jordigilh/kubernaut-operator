@@ -1410,9 +1410,9 @@ spec:
               fleetMetadataCache:
                 description: |-
                   FleetMetadataCache configures the operator-managed Fleet Metadata
-                  Cache (FMC) service (ADR-068). It is active when
-                  spec.fleet.scopeCheck.backend=fleetmetadatacache; deployments that select
-                  spec.fleet.scopeCheck.backend=acm use an existing RHACM Search installation.
+                  Cache (FMC) service (ADR-068). It is active whenever spec.fleet.enabled
+                  is true — FMC is the single fleet-control-plane contact (peer→facade
+                  amendment, #647).
                 properties:
                   fleet:
                     description: |-
