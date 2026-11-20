@@ -105,14 +105,24 @@ var _ = Describe("cluster-wide activation through the real API", func() {
 	BeforeEach(func() {
 		DeferCleanup(func() {
 			jobKey := types.NamespacedName{Name: "kubernaut-db-migration", Namespace: testNamespace}
-			job := &batchv1.Job{}
-			if err := k8sClient.Get(ctx, jobKey, job); err == nil {
-				propagation := metav1.DeletePropagationBackground
-				_ = k8sClient.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &propagation})
-			}
-			Eventually(func() bool {
-				return apierrors.IsNotFound(k8sClient.Get(ctx, jobKey, &batchv1.Job{}))
-			}, timeout, interval).Should(BeTrue(), "singleton spec must not leak the migration Job into later specs")
+			propagation := metav1.DeletePropagationBackground
+			// Get-and-delete inside the poll so a transient API error is
+			// retried (and reported) rather than turning into a timeout
+			// with the Job still present.
+			Eventually(func() error {
+				job := &batchv1.Job{}
+				err := k8sClient.Get(ctx, jobKey, job)
+				if apierrors.IsNotFound(err) {
+					return nil
+				}
+				if err != nil {
+					return fmt.Errorf("getting leftover migration Job %v: %w", jobKey, err)
+				}
+				if err := k8sClient.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !apierrors.IsNotFound(err) {
+					return fmt.Errorf("deleting leftover migration Job %v: %w", jobKey, err)
+				}
+				return nil
+			}, timeout, interval).Should(Succeed(), "singleton spec must not leak the migration Job into later specs")
 		})
 	})
 
