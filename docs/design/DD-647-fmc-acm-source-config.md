@@ -33,7 +33,21 @@ the merge-order rule — data, not compatibility):
 
 Merge gate: this branch does not merge before upstream 1d (backend
 optional) is released / 1e lands in the same v1.6 window — recorded on
-kubernaut-operator#647.
+kubernaut-operator#647. (1d merged 2026-11-20; the module is pinned to
+its merge commit `6bd88d5dc`, which satisfies the merge gate.)
+
+**Release gates (two independent operand requirements):**
+
+1. **Key-less fleet block, all releases** — CSV operand digests built
+   at/after `6bd88d5dc` (1d). Older operands CrashLoop GW/RO/AF with
+   `fleet: unsupported backend ""`.
+2. **ACM source selection** — the FMC operand must implement
+   `sources.acm` (kubernaut#2661 **increment 2**; NOT present at
+   `6bd88d5dc`). FMC decodes its config non-strictly, so an operand
+   without increment 2 silently drops the `sources.acm` block and runs
+   the MCP/GitOps collector with no error. Increment 2 also adds the
+   strict `sources` decoding that turns a key mismatch into a startup
+   failure, making the operator's pinned-key-set test doubly guarded.
 
 ## Decision
 

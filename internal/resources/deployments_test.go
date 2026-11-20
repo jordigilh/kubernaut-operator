@@ -2532,7 +2532,7 @@ var _ = Describe("SignalProcessing/APIFrontend/EffectivenessMonitor Fleet secret
 		Expect(err).NotTo(HaveOccurred())
 		emDep, err := EffectivenessMonitorDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
-		afDep, err := APIFrontendDeployment(kn, testKnV2(kn))
+		afDep, err := APIFrontendDeployment(kn, knV2)
 		Expect(err).NotTo(HaveOccurred())
 		for _, dep := range []*appsv1.Deployment{spDep, emDep, afDep} {
 			for _, v := range dep.Spec.Template.Spec.Volumes {

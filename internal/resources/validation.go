@@ -1378,8 +1378,8 @@ func validateFleetACMBaseURL(path, value string) error {
 		return fmt.Errorf("%s must not contain leading or trailing whitespace", path)
 	}
 	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme != httpsURLScheme || parsed.Host == "" || parsed.User != nil {
-		return fmt.Errorf("%s must be an absolute https base URL without user information", path)
+	if err != nil || parsed.Scheme != httpsURLScheme || parsed.Hostname() == "" || parsed.User != nil {
+		return fmt.Errorf("%s must be an absolute https base URL with a hostname, without user information", path)
 	}
 	if parsed.Path != "" && parsed.Path != "/" {
 		return fmt.Errorf("%s must be a base URL without a path — the client appends the GraphQL route itself", path)

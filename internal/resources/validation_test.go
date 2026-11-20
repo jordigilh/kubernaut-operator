@@ -1830,6 +1830,7 @@ var _ = Describe("FleetMetadataCache ACM source validation (#647)", func() {
 			"https://acm-search.example.com/graphql",
 			"https://user@acm-search.example.com",
 			" https://acm-search.example.com",
+			"https://:443",
 		} {
 			kn := validFleetWithACMSource()
 			kn.Spec.FleetMetadataCache.Sources.ACM.Endpoint = endpoint
@@ -1837,6 +1838,11 @@ var _ = Describe("FleetMetadataCache ACM source validation (#647)", func() {
 			Expect(errs).To(HaveLen(1), "endpoint %q must be rejected", endpoint)
 			Expect(errs[0].Error()).To(ContainSubstring("spec.fleetMetadataCache.sources.acm.endpoint"))
 		}
+
+		By("a hostname with an explicit port is a valid base URL")
+		kn := validFleetWithACMSource()
+		kn.Spec.FleetMetadataCache.Sources.ACM.Endpoint = "https://acm-search.example.com:443"
+		Expect(ValidateFleet(kn)).To(BeEmpty())
 	})
 
 	It("UT-FLEET-647-VALIDATE-004: validates the ACM source trust lane through the shared Fleet trust rules", func() {
