@@ -2523,7 +2523,7 @@ var _ = Describe("SignalProcessing/APIFrontend/EffectivenessMonitor Fleet secret
 		}
 	})
 
-	It("never mounts fleet-ca or fleet-token on SignalProcessing/EffectivenessMonitor even when scope-check Secret references are set", func() {
+	It("never mounts fleet-ca or fleet-token on SignalProcessing/EffectivenessMonitor/APIFrontend when Fleet is enabled", func() {
 		// #647/1e: the scope-check Secret lanes no longer exist for any
 		// consumer, so the strongest form of this spec is that the volumes
 		// are absent everywhere regardless of configuration.
