@@ -587,6 +587,18 @@ var _ = Describe("ServiceAccount for FleetMetadataCache", func() {
 	It("resolves to the fleetmetadatacache SA name", func() {
 		Expect(ServiceAccountName(ComponentFleetMetadataCache)).To(Equal("fleetmetadatacache"))
 	})
+
+	// #647/1e: with the consumer fleet token mount gone, FMC's scope lane
+	// falls back to the in-cluster SA token (upstream scope_factory.go
+	// TokenPath-absent fallback). Disabling automount for FMC's SA would
+	// 401 every scope check and fail GW/RO/AF closed — pin that it can't
+	// drift (only the KubernautAgent SA disables automount).
+	It("UT-FLEET-647-SA-001 [IA-5]: leaves ServiceAccount token automount enabled for the SA-token fallback", func() {
+		kn, _ := testKubernautWithFMC()
+		sa := ServiceAccount(kn, ComponentFleetMetadataCache)
+		Expect(sa.AutomountServiceAccountToken).To(BeNil(),
+			"FMC authenticates with the auto-mounted SA token when tokenPath is absent — automount must not be disabled")
+	})
 })
 
 // #647 (DD-FLEET-017 v2 D4.1a): FMC's ACM Search source surface. The
