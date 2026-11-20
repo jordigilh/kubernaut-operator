@@ -654,6 +654,25 @@ var _ = Describe("FleetMetadataCache ACM source (#647, DD-FLEET-017 D4.1a)", fun
 		Expect(cfg.Sources).To(BeNil())
 	})
 
+	// Cross-team alignment (kubernaut#2661, upstream row 1): FMC fails to
+	// load a rendered "sources:" key that names no source, and an MCP
+	// deployment must carry no sources key at all. Validation rejects an
+	// empty declaration (UT-FLEET-647-VALIDATE-005); this pins that the
+	// renderer, even fed an empty declaration directly, cannot emit the
+	// fatal empty block — a templating artifact defense in depth.
+	It("UT-FLEET-647-SRC-009 [CM-7]: never renders an empty sources key, even for an empty declaration", func() {
+		kn, knV2 := testKubernautWithFMC()
+		knV2.Spec.FleetMetadataCache.Sources = &kubernautv1alpha2.FleetMetadataCacheSourcesSpec{}
+		cm, err := FleetMetadataCacheConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("sources:"),
+			"an empty sources declaration must render no key at all — upstream FMC fails startup on an empty sources block")
+
+		var cfg fleetMetadataCacheConfigYAML
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &cfg)).To(Succeed())
+		Expect(cfg.Sources).To(BeNil())
+	})
+
 	It("UT-FLEET-647-SRC-002 [SC-8, SC-12; ASVS v5.0.0-V5.1.1]: renders exactly endpoint, tokenPath, and caFile with interService default trust", func() {
 		kn, knV2 := withACMSource(nil)
 		cm, err := FleetMetadataCacheConfigMap(kn, knV2)

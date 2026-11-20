@@ -1845,6 +1845,15 @@ var _ = Describe("FleetMetadataCache ACM source validation (#647)", func() {
 		Expect(ValidateFleet(kn)).To(BeEmpty())
 	})
 
+	It("UT-FLEET-647-VALIDATE-005 [CM-7]: rejects an empty sources declaration — presence selects, nothing named is ambiguous", func() {
+		kn := validFleetWithACMSource()
+		kn.Spec.FleetMetadataCache.Sources.ACM = nil
+		errs := ValidateFleet(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleetMetadataCache.sources:"))
+		Expect(errs[0].Error()).To(ContainSubstring("must name a source or be omitted"))
+	})
+
 	It("UT-FLEET-647-VALIDATE-004: validates the ACM source trust lane through the shared Fleet trust rules", func() {
 		kn := validFleetWithACMSource()
 		kn.Spec.FleetMetadataCache.Sources.ACM.TLS = &kubernautv1alpha2.FleetTrustSpec{

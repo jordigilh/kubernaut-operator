@@ -100,6 +100,24 @@ revision is rendered. The Secret watch (`fleetTrustSecretReferenced`) is
 extended with the sources.acm lane for prompt `PhaseError` on Secret
 deletion and re-heal on re-creation.
 
+## Startup readability of tokenPath and caFile
+
+Upstream FMC validates `sources.acm.tokenPath` (absolute **and readable**)
+at process startup, not at first sync. Two mechanisms guarantee this on
+the operator side:
+
+1. **Kubelet mount ordering** — `fleet-acm-source-token` and
+   `fleet-acm-source-ca` are Secret volumes; the kubelet mounts Secret
+   volumes before the container starts. FMC never runs ahead of its
+   projected token/CA files.
+2. **Pre-rollout validation** — `validateFleetMetadataCacheACMSourceSecrets`
+   (token Secret existence and key) and the `validateFleetTrustSecrets`
+   sources.acm lane (CA Secret existence, key, PEM parse) fail the CR at
+   `PhaseError` before any Deployment is created, so a missing Secret
+   can neither crash-loop FMC nor leave a pod unschedulable. The
+   projection cannot race the process because a pod referencing a
+   missing Secret is never scheduled in the first place.
+
 ## Fail-closed validation
 
 - `validateFleetMetadataCacheSources` (spec level, admission via

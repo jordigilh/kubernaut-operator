@@ -1348,8 +1348,17 @@ func validateFleetTrust(path string, trust *kubernautv1alpha2.FleetTrustSpec) []
 // the GitOps/MCP lane).
 func validateFleetMetadataCacheSources(knV2 *kubernautv1alpha2.Kubernaut) []error {
 	sources := knV2.Spec.FleetMetadataCache.Sources
-	if sources == nil || sources.ACM == nil {
+	if sources == nil {
 		return nil
+	}
+	if sources.ACM == nil {
+		// Cross-team alignment (kubernaut#2661): upstream FMC fails to load
+		// a rendered "sources:" key that names no source, and the contract
+		// says presence selects — an empty declaration is ambiguous, so it
+		// is rejected here rather than silently rendering nothing (the
+		// renderer would omit the key, but the CR intent is unclear).
+		return []error{fmt.Errorf(
+			"spec.fleetMetadataCache.sources: must name a source or be omitted — an empty sources block selects nothing and is rejected rather than silently falling back to the GitOps/MCP lane")}
 	}
 	const base = "spec.fleetMetadataCache.sources.acm"
 	if !knV2.Spec.FleetMetadataCacheEnabled() {
