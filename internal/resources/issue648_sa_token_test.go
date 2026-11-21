@@ -27,7 +27,7 @@ import (
 // their in-cluster ServiceAccount token (kubernaut#2661 peer→facade
 // contract, #647). Their SAs must disable automount and their Deployments
 // must mount a projected short-TTL SA token at the default path instead —
-// the same hardening KubernautAgent already has (kaServiceAccountTokenVolume).
+// the same hardening KubernautAgent already has (projectedServiceAccountTokenVolume).
 // IA-5 (authenticator management) / CM-6: bounded token lifetime, no
 // long-lived automounted credential.
 var _ = Describe("Issue 648 consumer SA projected tokens", func() {
@@ -50,6 +50,57 @@ var _ = Describe("Issue 648 consumer SA projected tokens", func() {
 			sa := ServiceAccount(kn, ComponentFleetMetadataCache)
 			Expect(sa.AutomountServiceAccountToken).To(BeNil(),
 				"UT-FLEET-647-SA-001 pins FMC's automount — only consumer identities are hardened")
+		})
+
+		It("UT-648-SA-003 [CM-6]: membership of projectedTokenComponents matches the SAs that disable automount", func() {
+			kn := testKubernaut()
+			automountDisabled := make([]string, 0, len(projectedTokenComponents))
+			for _, component := range AllComponents() {
+				sa := ServiceAccount(kn, component)
+				if sa.AutomountServiceAccountToken != nil && !*sa.AutomountServiceAccountToken {
+					automountDisabled = append(automountDisabled, component)
+				}
+			}
+			expected := make([]string, 0, len(projectedTokenComponents))
+			for component := range projectedTokenComponents {
+				expected = append(expected, component)
+			}
+			Expect(automountDisabled).To(ConsistOf(expected),
+				"every SA that disables automount must be a projectedTokenComponents member, and vice versa")
+		})
+
+		It("UT-648-SA-004 [CM-6]: sa-token volume presence matches projectedTokenComponents across all Deployments", func() {
+			// Cross-file invariant, both directions: a member's Deployment
+			// must mount the projected token (disabling automount without it
+			// leaves the pod with no SA token at all — a silent auth
+			// failure), and a non-member's Deployment must not carry a
+			// redundant projected token next to its automounted one.
+			kn := testKubernaut()
+			knV2 := testKnV2(kn)
+			deps := getAllDeployments(kn)
+			apiFrontend, err := APIFrontendDeployment(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			deps = append(deps, apiFrontend)
+			console, err := ConsoleDeployment(testKubernautWithConsole())
+			Expect(err).NotTo(HaveOccurred())
+			deps = append(deps, console)
+			fmc, err := FleetMetadataCacheDeployment(kn, knV2)
+			Expect(err).NotTo(HaveOccurred())
+			deps = append(deps, fmc)
+
+			membersSeen := make(map[string]bool, len(projectedTokenComponents))
+			for _, dep := range deps {
+				component := dep.Spec.Template.Labels["app"]
+				Expect(component).NotTo(BeEmpty(), "Deployment %q has no app label", dep.Name)
+				hasSAToken := findVolume(dep, "sa-token") != nil
+				Expect(hasSAToken).To(Equal(projectedTokenComponents[component]),
+					"Deployment for %q sa-token volume presence must match projectedTokenComponents membership", component)
+				if projectedTokenComponents[component] {
+					membersSeen[component] = true
+				}
+			}
+			Expect(membersSeen).To(HaveLen(len(projectedTokenComponents)),
+				"every projectedTokenComponents member's Deployment must be swept here; update the fixture list together with the map")
 		})
 	})
 
