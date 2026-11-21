@@ -48,7 +48,7 @@ func ServiceAccountName(component string) string {
 }
 
 // projectedTokenComponents are the components whose Deployments mount a
-// projected short-TTL ServiceAccount token (kaServiceAccountTokenVolume)
+// projected short-TTL ServiceAccount token (projectedServiceAccountTokenVolume)
 // instead of the default long-lived automounted token, so their SAs disable
 // automount. KubernautAgent was first (#118); #648 extends it to the
 // consumer fleet identities (GW/RO/AF) that authenticate to FMC with their

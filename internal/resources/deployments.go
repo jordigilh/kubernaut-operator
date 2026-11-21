@@ -45,13 +45,14 @@ func GatewayDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.
 		}},
 	}
 
-	volumes := make([]corev1.Volume, 0, 4)
+	// Capacity 9: 3 baseline + up to 3 fleet + up to 2 telemetry + sa-token.
+	volumes := make([]corev1.Volume, 0, 9)
 	volumes = append(volumes,
 		configMapVolume("config", "gateway-config"),
 		secretVolume("tls-certs", TLSSecretName(kn, TLSServiceGateway)),
 		InterServiceTLSCAVolume(kn),
 	)
-	mounts := make([]corev1.VolumeMount, 0, 4)
+	mounts := make([]corev1.VolumeMount, 0, 9)
 	mounts = append(mounts,
 		corev1.VolumeMount{Name: "config", MountPath: "/etc/gateway", ReadOnly: true},
 		corev1.VolumeMount{Name: "tls-certs", MountPath: InterServiceTLSCertDirFor(kn), ReadOnly: true},
@@ -61,7 +62,7 @@ func GatewayDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.
 	volumes, mounts = AppendTelemetrySecretMounts(knV2.Spec.Gateway.Config.Telemetry, volumes, mounts)
 	// #648: projected short-TTL SA token replaces the automounted token
 	// (gateway SA disables automount — see serviceaccounts.go).
-	saTokenVolume, saTokenMount := kaServiceAccountTokenVolume()
+	saTokenVolume, saTokenMount := projectedServiceAccountTokenVolume()
 	volumes = append(volumes, saTokenVolume)
 	mounts = append(mounts, saTokenMount)
 
@@ -300,18 +301,19 @@ func SignalProcessingDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernaut
 
 // RemediationOrchestratorDeployment builds the remediationorchestrator Deployment.
 func RemediationOrchestratorDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-	volumes := make([]corev1.Volume, 0, 2)
+	// Capacity 6: config + inter-service CA + up to 3 fleet + sa-token.
+	volumes := make([]corev1.Volume, 0, 6)
 	volumes = append(volumes, configMapVolume("config", "remediationorchestrator-config"))
-	mounts := make([]corev1.VolumeMount, 0, 2)
+	mounts := make([]corev1.VolumeMount, 0, 6)
 	mounts = append(mounts, corev1.VolumeMount{Name: "config", MountPath: "/etc/config", ReadOnly: true})
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(kn, volumes, mounts, env)
 	volumes, mounts = appendFleetSecretMounts(volumes, mounts, knV2, "/etc/remediationorchestrator", effectiveFleetOAuth2SecretRef(knV2.Spec.RemediationOrchestrator.Fleet, ""))
 	// #648: projected short-TTL SA token replaces the automounted token
 	// (remediationorchestrator SA disables automount — see serviceaccounts.go).
-	roSATokenVolume, roSATokenMount := kaServiceAccountTokenVolume()
-	volumes = append(volumes, roSATokenVolume)
-	mounts = append(mounts, roSATokenMount)
+	saTokenVolume, saTokenMount := projectedServiceAccountTokenVolume()
+	volumes = append(volumes, saTokenVolume)
+	mounts = append(mounts, saTokenMount)
 	ports := make([]corev1.ContainerPort, 0, 3)
 	ports = append(ports,
 		corev1.ContainerPort{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
@@ -558,7 +560,7 @@ func KubernautAgentDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1
 
 	var initContainers []corev1.Container
 
-	saTokenVolume, saTokenMount := kaServiceAccountTokenVolume()
+	saTokenVolume, saTokenMount := projectedServiceAccountTokenVolume()
 	volumes = append(volumes, saTokenVolume)
 	mounts = append(mounts, saTokenMount)
 
@@ -730,13 +732,13 @@ func kaResources(kn *kubernautv1alpha2.Kubernaut) corev1.ResourceRequirements {
 	return MergeResources(kn.Spec.KubernautAgent.Resources)
 }
 
-// kaServiceAccountTokenVolume builds the projected short-TTL ServiceAccount
+// projectedServiceAccountTokenVolume builds the projected short-TTL ServiceAccount
 // token volume that replaces the default automounted token for the
 // projected-token components (kubernaut-agent plus the #648 consumer fleet
 // identities: gateway, remediationorchestrator, apifrontend — see
 // projectedTokenComponents in serviceaccounts.go). Requires
 // AutomountServiceAccountToken=false on the component's ServiceAccount.
-func kaServiceAccountTokenVolume() (corev1.Volume, corev1.VolumeMount) {
+func projectedServiceAccountTokenVolume() (corev1.Volume, corev1.VolumeMount) {
 	volume := corev1.Volume{
 		Name: "sa-token",
 		VolumeSource: corev1.VolumeSource{
@@ -961,9 +963,9 @@ func APIFrontendDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alp
 	volumes, mounts = appendFleetSecretMounts(volumes, mounts, knV2, "/etc/apifrontend", effectiveFleetOAuth2SecretRef(knV2.Spec.APIFrontend.Fleet, ""))
 	// #648: projected short-TTL SA token replaces the automounted token
 	// (apifrontend SA disables automount — see serviceaccounts.go).
-	afSATokenVolume, afSATokenMount := kaServiceAccountTokenVolume()
-	volumes = append(volumes, afSATokenVolume)
-	mounts = append(mounts, afSATokenMount)
+	saTokenVolume, saTokenMount := projectedServiceAccountTokenVolume()
+	volumes = append(volumes, saTokenVolume)
+	mounts = append(mounts, saTokenMount)
 
 	var initContainers []corev1.Container
 
