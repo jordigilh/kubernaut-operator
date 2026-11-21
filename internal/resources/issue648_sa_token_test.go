@@ -28,10 +28,13 @@ import (
 // contract, #647). Their SAs must disable automount and their Deployments
 // must mount a projected short-TTL SA token at the default path instead —
 // the same hardening KubernautAgent already has (projectedServiceAccountTokenVolume).
+// #653: EffectivenessMonitor joins the projected-token set — its SA-token
+// reads (DataStorage querier, OCP monitoring) also run on the default path
+// and get the same bounded lifetime.
 // IA-5 (authenticator management) / CM-6: bounded token lifetime, no
 // long-lived automounted credential.
 var _ = Describe("Issue 648 consumer SA projected tokens", func() {
-	consumers := []string{ComponentGateway, ComponentRemediationOrchestrator, ComponentAPIFrontend}
+	consumers := []string{ComponentGateway, ComponentRemediationOrchestrator, ComponentAPIFrontend, ComponentEffectivenessMonitor}
 
 	Context("ServiceAccount", func() {
 		It("UT-648-SA-001 [IA-5]: disables token automount for consumer fleet SAs", func() {
@@ -119,6 +122,8 @@ var _ = Describe("Issue 648 consumer SA projected tokens", func() {
 				dep, err = RemediationOrchestratorDeployment(kn, knV2)
 			case ComponentAPIFrontend:
 				dep, err = APIFrontendDeployment(kn, knV2)
+			case ComponentEffectivenessMonitor:
+				dep, err = EffectivenessMonitorDeployment(kn, knV2)
 			}
 			Expect(err).NotTo(HaveOccurred(), component)
 			Expect(dep).NotTo(BeNil(), component)

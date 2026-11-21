@@ -450,6 +450,12 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kuber
 		mounts = append(mounts, MonitoringTLSVolumeMount())
 	}
 	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, knV2, "/etc/effectivenessmonitor", effectiveFleetOAuth2SecretRef(knV2.Spec.EffectivenessMonitor.Fleet, ""))
+	// #653: projected short-TTL SA token replaces the automounted token —
+	// EM's DataStorage querier and OCP monitoring reads use the default
+	// path (effectivenessmonitor SA disables automount — see serviceaccounts.go).
+	saTokenVolume, saTokenMount := projectedServiceAccountTokenVolume()
+	volumes = append(volumes, saTokenVolume)
+	mounts = append(mounts, saTokenMount)
 	ports := make([]corev1.ContainerPort, 0, 3)
 	ports = append(ports,
 		corev1.ContainerPort{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
