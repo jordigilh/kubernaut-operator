@@ -45,13 +45,16 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		cleanupClusterScoped(ctx)
 	})
 
-	Describe("Consumer SA projected tokens (#648)", func() {
+	Describe("SA projected tokens through reconciliation (#648 consumers, #653 EM)", func() {
 		deploymentSAComponents := []struct {
 			component, saName string
 		}{
 			{resources.ComponentGateway, resources.ServiceAccountName(resources.ComponentGateway)},
 			{resources.ComponentRemediationOrchestrator, resources.ServiceAccountName(resources.ComponentRemediationOrchestrator)},
 			{resources.ComponentAPIFrontend, resources.ServiceAccountName(resources.ComponentAPIFrontend)},
+			// #653: EM reads its SA token for DataStorage and OCP monitoring
+			// on the same default path — same hardening.
+			{resources.ComponentEffectivenessMonitor, resources.ServiceAccountName(resources.ComponentEffectivenessMonitor)},
 		}
 
 		It("IT-648-RECONCILE-TOKEN-001 [IA-5, CM-6]: reconciliation renders consumer SA automount off plus projected short-TTL tokens at the default path", func() {
