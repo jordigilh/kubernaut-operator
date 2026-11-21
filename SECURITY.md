@@ -144,7 +144,7 @@ the operator.
 
 - Kubernaut Agent uses projected SA tokens (not automounted).
 - `AutomountServiceAccountToken: false` on the `kubernaut-agent-sa` ServiceAccount.
-- Projected token: audience `https://kubernetes.default.svc`, expiration 3600s (1 hour), mount path `/var/run/secrets/kubernetes.io/serviceaccount/token`.
+- Projected token: expiration 3600s (1 hour), mount path `/var/run/secrets/kubernetes.io/serviceaccount/token`; no audience is set, so the API server selects its own portable service-account audience.
 - The consumer fleet identities (#648) — Gateway, RemediationOrchestrator, and APIFrontend — use the same model: their SAs disable automount and their Deployments mount a projected 3600s SA token at the default path (the credential they present to the Fleet Metadata Cache, kubernaut#2661 peer→facade contract).
 - EffectivenessMonitor deliberately keeps its automounted token: its SA-token reads (DataStorage, OCP monitoring) authenticate to in-cluster services under the pod's own identity, not to FMC.
 - All other service SAs use standard automounted tokens.
