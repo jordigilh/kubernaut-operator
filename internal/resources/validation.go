@@ -199,7 +199,7 @@ func validateMonitoringEndpoints(kn *kubernautv1alpha2.Kubernaut) []error {
 			continue
 		}
 		parsed, err := url.Parse(value)
-		if err != nil || parsed.Scheme != httpsURLScheme || parsed.Host == "" || parsed.User != nil {
+		if err != nil || parsed.Scheme != httpsURLScheme || parsed.Hostname() == "" || parsed.User != nil {
 			errs = append(errs, fmt.Errorf("%s must be an https URL without user information", endpoint.path))
 		}
 	}
@@ -346,7 +346,7 @@ func normalizeTelemetryEndpoint(endpoint string) (string, error) {
 	}
 	if strings.Contains(endpoint, "://") {
 		parsed, err := url.Parse(endpoint)
-		if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
+		if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
 			return "", fmt.Errorf("must use an https:// URI or host:port value; plaintext HTTP and other URI forms are unsupported")
 		}
 		endpoint = parsed.Host
@@ -780,7 +780,7 @@ func validateAPIFrontend(kn *kubernautv1alpha2.Kubernaut) []error {
 	af := kn.Spec.APIFrontend
 	if af.AgentCardURL != "" {
 		u, err := url.Parse(af.AgentCardURL)
-		if err != nil || u.Scheme == "" || u.Host == "" {
+		if err != nil || u.Scheme == "" || u.Hostname() == "" {
 			errs = append(errs, fmt.Errorf("spec.apiFrontend.agentCardURL: must be a valid URL with scheme and host"))
 		}
 	}
@@ -942,7 +942,7 @@ func unsupportedConsoleLogoutQueryParameter(query url.Values) string {
 func validateConsoleLogoutAuthority(kn *kubernautv1alpha2.Kubernaut, logoutURL *url.URL, path string) error {
 	issuer := kn.Spec.ConsoleIssuerURL()
 	issuerURL, err := url.Parse(issuer)
-	if err != nil || issuerURL.Scheme == "" || issuerURL.Host == "" || issuerURL.User != nil {
+	if err != nil || issuerURL.Scheme == "" || issuerURL.Hostname() == "" || issuerURL.User != nil {
 		return fmt.Errorf("%s cannot be validated without a valid effective OIDC issuer", path)
 	}
 	if !strings.EqualFold(issuerURL.Scheme, httpsURLScheme) {
@@ -967,7 +967,7 @@ func canonicalHTTPSAuthority(value *url.URL) string {
 // accepted when the explicit development/test escape hatch is enabled.
 func validateOIDCURL(raw, path string, allowInsecure bool, insecureFlagPath string) error {
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme == "" || u.Host == "" {
+	if err != nil || u.Scheme == "" || u.Hostname() == "" {
 		return fmt.Errorf("%s: must be an absolute URL with scheme and host", path)
 	}
 
@@ -1280,7 +1280,7 @@ func validateFleetHTTPSURL(path, value string) error {
 		return fmt.Errorf("%s must not contain leading or trailing whitespace", path)
 	}
 	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme != httpsURLScheme || parsed.Host == "" || parsed.User != nil {
+	if err != nil || parsed.Scheme != httpsURLScheme || parsed.Hostname() == "" || parsed.User != nil {
 		return fmt.Errorf("%s must be an absolute https URL without user information", path)
 	}
 	return nil
