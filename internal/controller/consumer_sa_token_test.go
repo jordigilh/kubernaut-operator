@@ -45,7 +45,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		cleanupClusterScoped(ctx)
 	})
 
-	Describe("Consumer SA projected tokens (#648)", func() {
+	Describe("SA projected tokens through reconciliation (#648 consumers, #653 EM)", func() {
 		deploymentSAComponents := []struct {
 			component, saName string
 		}{

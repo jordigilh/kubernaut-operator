@@ -33,7 +33,7 @@ import (
 // and get the same bounded lifetime.
 // IA-5 (authenticator management) / CM-6: bounded token lifetime, no
 // long-lived automounted credential.
-var _ = Describe("Issue 648 consumer SA projected tokens", func() {
+var _ = Describe("SA projected tokens", func() {
 	consumers := []string{ComponentGateway, ComponentRemediationOrchestrator, ComponentAPIFrontend, ComponentEffectivenessMonitor}
 
 	Context("ServiceAccount", func() {
