@@ -514,6 +514,74 @@ var _ = Describe("Console Resources", func() {
 		})
 	})
 
+	Context("ConsoleNginxConfigMap console API routing (#638)", func() {
+		consoleAPIBlock := func() string {
+			cm := ConsoleNginxConfigMap(testKubernautWithConsole())
+			serverConf := cm.Data["server.conf"]
+			// Extract the /api/v1/console/ location block so assertions are
+			// scoped to it rather than to the whole server.conf.
+			start := strings.Index(serverConf, "location ^~ /api/v1/console/ {")
+			if start < 0 {
+				return ""
+			}
+			end := strings.Index(serverConf[start:], "\n}\n")
+			if end < 0 {
+				return serverConf[start:]
+			}
+			return serverConf[start : start+end+3]
+		}
+
+		It("UT-CN-638-001 [AC-3, CC6.1]: routes /api/v1/console/ to the AF upstream with the full request path preserved", func() {
+			block := consoleAPIBlock()
+			Expect(block).NotTo(BeEmpty(), "server.conf must contain a location ^~ /api/v1/console/ block")
+			// Bare proxy_pass (no URI part) so NGINX forwards the original
+			// /api/v1/console/... path and query string unchanged.
+			Expect(block).To(ContainSubstring(
+				fmt.Sprintf("proxy_pass https://%s.%s.svc:%d;\n", ComponentAPIFrontend, testSystemNamespace, PortHTTPS)),
+				"the console API location must proxy_pass to the AF upstream without a URI part")
+			Expect(block).NotTo(ContainSubstring("try_files"),
+				"the console API location must not fall through to the SPA")
+		})
+
+		It("UT-CN-638-002 [AC-3, AC-6, CC6.1, CC6.3]: forwards only the trusted OAuth2 Proxy access token as the AF Authorization header", func() {
+			block := consoleAPIBlock()
+			Expect(block).NotTo(BeEmpty())
+			Expect(block).To(ContainSubstring(
+				`proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";`),
+				"AF authorization must come from the OAuth2 Proxy-injected X-Forwarded-Access-Token, discarding any client-supplied Authorization header")
+			Expect(block).NotTo(ContainSubstring("proxy_set_header Authorization $http_authorization"),
+				"a client-supplied Authorization header must never be forwarded to AF")
+		})
+
+		It("UT-CN-638-003 [SI-4, CC6.1]: applies the shared api rate-limit zone to the console API location", func() {
+			block := consoleAPIBlock()
+			Expect(block).NotTo(BeEmpty())
+			Expect(block).To(ContainSubstring("limit_req zone=api burst=50 nodelay;"),
+				"console API reads must be rate limited like the /a2a/ proxy location")
+		})
+
+		It("UT-CN-638-004 [AC-6, CC6.1]: does not route unrelated /api/ paths (negative)", func() {
+			cm := ConsoleNginxConfigMap(testKubernautWithConsole())
+			serverConf := cm.Data["server.conf"]
+			Expect(serverConf).NotTo(ContainSubstring("location /api/ "))
+			Expect(serverConf).NotTo(ContainSubstring("location /api/v1/ "))
+			Expect(serverConf).NotTo(ContainSubstring("location = /api/"))
+		})
+
+		It("UT-CN-638-005 [SC-8]: the console API location inherits AF upstream TLS verification", func() {
+			cm := ConsoleNginxConfigMap(testKubernautWithConsole())
+			serverConf := cm.Data["server.conf"]
+			// proxy_ssl_verify/proxy_ssl_trusted_certificate are server-level
+			// and inherited by every location; the new block must not override
+			// them (which would require re-declaring them locally).
+			block := consoleAPIBlock()
+			Expect(block).NotTo(BeEmpty())
+			Expect(block).NotTo(ContainSubstring("proxy_ssl_verify off"))
+			Expect(block).NotTo(ContainSubstring("proxy_ssl_trusted_certificate"))
+			Expect(serverConf).To(ContainSubstring("proxy_ssl_verify on"))
+		})
+	})
+
 	Context("ConsoleDeployment TLS (#198)", func() {
 		const tlsCAMountPath = "/etc/tls-ca"
 

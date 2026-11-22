@@ -1049,6 +1049,73 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}, timeout, interval).ShouldNot(Equal(updatedHash), "disabling raw thinking must roll the Console pod again")
 		})
 
+		It("IT-CN-638-001 [CM-3, AC-3, AC-6, CC6.1/CC6.3; ASVS V4.1.1/V4.2.1]: console API location is reconciled and restored on drift", func() {
+			createBYOSecrets(ctx)
+			cr := newMinimalCR()
+			t := true
+			cr.Spec.Console.Enabled = &t
+			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+			cr.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
+			Expect(k8sClient.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
+				Data: map[string][]byte{
+					"client-id":     []byte("cid"),
+					"client-secret": []byte("csec"),
+					"cookie-secret": []byte("cook"),
+				},
+			})).To(Succeed())
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			cmKey := types.NamespacedName{Name: string(resources.ComponentConsole) + "-nginx", Namespace: testNamespace}
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
+
+			By("routing /api/v1/console/ reads to AF rather than the SPA")
+			serverConf := cm.Data["server.conf"]
+			Expect(serverConf).To(ContainSubstring("location ^~ /api/v1/console/ {"),
+				"the reconciled Console NGINX config must contain the console API location")
+			Expect(serverConf).To(ContainSubstring(
+				fmt.Sprintf("proxy_pass https://%s.%s.svc:%d;\n", resources.ComponentAPIFrontend, testNamespace, resources.PortHTTPS)),
+				"the console API location must proxy to the AF upstream")
+			Expect(serverConf).To(ContainSubstring(
+				`proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";`),
+				"AF authorization must flow from the OAuth2 Proxy-injected access token only")
+
+			deployment := &appsv1.Deployment{}
+			deploymentKey := types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}
+			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+			initialHash := deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
+			Expect(initialHash).NotTo(BeEmpty(), "Console Deployment must carry the nginx ConfigMap hash")
+
+			By("tampering with the ConfigMap (drift) and re-reconciling")
+			tampered := strings.Replace(serverConf, "location ^~ /api/v1/console/ {", "location /api/v1/console/ {", 1)
+			Expect(tampered).NotTo(Equal(serverConf), "tampering must actually change the config")
+			cm.Data["server.conf"] = tampered
+			Expect(k8sClient.Update(ctx, cm)).To(Succeed())
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			// The nginx ConfigMap files are subPath-mounted, so a running
+			// Console pod never observes the tamper in the first place, and
+			// drift repair restores the original content, which re-hashes to
+			// the original cmHashes["console"] value: the deployment
+			// annotation is correctly unchanged (no spurious roll). A real
+			// config change, like the #638 location added by this operator
+			// version, produces a new ConfigMapDataHash and rolls the pod on
+			// the next deployment re-render (spec-change rolls are covered by
+			// IT-CN-476-002).
+			Eventually(func() string {
+				Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
+				return cm.Data["server.conf"]
+			}, timeout, interval).Should(ContainSubstring("location ^~ /api/v1/console/ {"),
+				"re-reconciliation must restore the drifted console API location")
+
+			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+			Expect(deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]).To(Equal(initialHash),
+				"drift repair restores the original content, so the deployment hash must be unchanged")
+		})
+
 		It("IT-CL-483-001 [AC-2/AC-12, CC6.1/CC6.3; ASVS V3.3/V7.2.1]: renders and regenerates provider logout configuration", func() {
 			const (
 				logoutURL1 = "https://idp.example.com/realms/kubernaut/logout?id_token_hint={id_token}"
