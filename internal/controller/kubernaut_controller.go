@@ -124,12 +124,16 @@ const (
 	monitoringTLSDefaultCAKey = "ca.crt"
 )
 
+// retiredConditionRouteReady is the status condition type removed from the
+// status contract by the administrator-owned external exposure change (#572).
+const retiredConditionRouteReady kubernautv1alpha2.ConditionType = "RouteReady"
+
 // retiredConditionTypes lists status condition types removed from the status
 // contract by the administrator-owned external exposure change (#572). Objects
 // upgraded from a pre-#572 operator may still carry these entries; every
 // reconcile prunes them so .status.conditions reflects only the current
 // contract (#574).
-var retiredConditionTypes = []kubernautv1alpha2.ConditionType{"RouteReady"}
+var retiredConditionTypes = []kubernautv1alpha2.ConditionType{retiredConditionRouteReady}
 
 // KubernautReconciler reconciles a Kubernaut object.
 type KubernautReconciler struct {
@@ -831,7 +835,10 @@ func (r *KubernautReconciler) handleRBACDeployError(ctx context.Context, kn *kub
 // have succeeded. Extracted from phaseDeploy to keep its cyclomatic
 // complexity within threshold.
 func (r *KubernautReconciler) finalizeDeployStatus(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
-	return r.patchStatus(ctx, kn, func() {
+	// Records which retired condition types this pass actually removed, so the
+	// audit log fires only after the status patch has persisted.
+	removed := make([]kubernautv1alpha2.ConditionType, 0, len(retiredConditionTypes))
+	if err := r.patchStatus(ctx, kn, func() {
 		r.setPhase(kn, kubernautv1alpha2.PhaseDeploying)
 		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
 			Type: kubernautv1alpha2.ConditionRBACProvisioned, Status: metav1.ConditionTrue,
@@ -857,10 +864,7 @@ func (r *KubernautReconciler) finalizeDeployStatus(ctx context.Context, kn *kube
 		// the persisted status reflects only the current contract (#574).
 		for _, retired := range retiredConditionTypes {
 			if meta.FindStatusCondition(kn.Status.Conditions, retired) != nil {
-				logf.FromContext(ctx).Info("removing retired status condition",
-					"conditionType", retired,
-					"namespace", kn.Namespace, "name", kn.Name,
-					"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+				removed = append(removed, retired)
 			}
 			meta.RemoveStatusCondition(&kn.Status.Conditions, retired)
 		}
@@ -876,7 +880,16 @@ func (r *KubernautReconciler) finalizeDeployStatus(ctx context.Context, kn *kube
 			Reason: ReasonManifestsApplied, Message: "All service manifests applied",
 			ObservedGeneration: kn.Generation,
 		})
-	})
+	}); err != nil {
+		return err
+	}
+	for _, retired := range removed {
+		logf.FromContext(ctx).Info("removed retired status condition",
+			"conditionType", retired,
+			"namespace", kn.Namespace, "name", kn.Name,
+			"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+	}
+	return nil
 }
 
 // monitoringConfigView prevents generic clusters from inheriting OpenShift's

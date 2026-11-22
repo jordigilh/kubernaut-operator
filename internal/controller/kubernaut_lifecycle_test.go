@@ -541,7 +541,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			kn := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			Expect(findCondition(kn.Status.Conditions, "RouteReady")).To(BeNil())
+			Expect(findCondition(kn.Status.Conditions, retiredConditionRouteReady)).To(BeNil())
 			Expect(findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionExposureReady).Reason).To(Equal(ReasonExposureInternal))
 		})
 
@@ -555,7 +555,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			stale := kn.DeepCopy()
 			meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-				Type:               "RouteReady",
+				Type:               retiredConditionRouteReady,
 				Status:             metav1.ConditionFalse,
 				Reason:             "RouteDisabled",
 				Message:            "operator-managed Routes are disabled",
@@ -570,7 +570,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			upgraded := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), upgraded)).To(Succeed())
 			Expect(upgraded.Status.Phase).To(Equal(kubernautv1alpha2.PhaseRunning))
-			Expect(findCondition(upgraded.Status.Conditions, "RouteReady")).To(BeNil(),
+			Expect(findCondition(upgraded.Status.Conditions, retiredConditionRouteReady)).To(BeNil(),
 				"reconciliation must drop the retired RouteReady condition from upgraded objects")
 			exposure := findCondition(upgraded.Status.Conditions, kubernautv1alpha2.ConditionExposureReady)
 			Expect(exposure).NotTo(BeNil())
