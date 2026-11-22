@@ -168,6 +168,16 @@ var _ = Describe("Console provider logout URL validation", func() {
 		}
 	})
 
+	It("UT-650-VALIDATE-007 [SI-10; ASVS V5.1.1]: logout shape check still rejects a hostless URL when reached directly", func() {
+		// parseConsoleProviderLogoutURL now rejects hostless URLs at its
+		// absolute-URL guard (the #650 hardening), so the shape check's own
+		// host branch is pinned here to keep its business statement covered.
+		logoutURL, err := url.Parse("https://:443/logout?id_token_hint={id_token}")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(validateConsoleLogoutURLShape(logoutURL, "spec.console.auth.providerLogoutURL")).To(MatchError(
+			ContainSubstring("must include a host")))
+	})
+
 	It("UT-483-VALIDATE-003 [AC-6; CC6.1; ASVS V5/V8]: applies the effective first-provider authority", func() {
 		kn := testKubernautWithConsole()
 		kn.Spec.APIFrontend.Auth.IssuerURL = ""
