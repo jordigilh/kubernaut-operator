@@ -711,6 +711,24 @@ you've set `consoleAccessAuthorizationCheckEnabled: true`, Console access
 too — with it left at the default `false`, Console access doesn't consult
 groups at all and is unaffected by a missing claim).
 
+The six built-in personas and their exact tool sets are audited in
+[DD-636](../design/DD-636-console-direct-action-rbac.md). Two additions land
+in v1.6: `sre` can also list pending approval requests
+(`kubernaut_list_approval_requests`) and discover fleet clusters
+(`list_clusters`); `ai-orchestrator` can discover fleet clusters but still
+cannot read or decide approvals (separation of duties, DD-278).
+
+**Console policy/inventory reads need a separate role.** The operator also
+renders `console-reader` (a seventh ClusterRole, cluster-scoped), granting
+only the three AF console read capabilities (`kubernaut_read_policy_scope`,
+`kubernaut_list_managed_resources`, `kubernaut_get_managed_resource`). It is
+**not bound by default** and no persona implies it, so login never grants
+console reads. Bind it through `roleBindings` with `clusterRoleName`
+(the operator creates the CRB) or your own ClusterRoleBinding. Local
+inventory reads additionally check the user's own Kubernetes `get`/`list`
+permissions on the exact projected resources, which remain your
+responsibility because the projected set depends on your managed scope.
+
 **Console access is derived automatically — leave `consoleAccessGroups`
 unset.** `spec.apiFrontend.rbac.consoleAccessGroups` only has any effect
 once `consoleAccessAuthorizationCheckEnabled: true` is set (see above) --

@@ -133,6 +133,10 @@ func ClusterRoles(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kuber
 	if kn.Spec.APIFrontendEnabled() {
 		roles = append(roles, apifrontendClusterRole(kn, knV2, labels))
 		roles = append(roles, ConsoleAccessClusterRole(kn))
+		// #636: console REST read projection capabilities. Rendered but
+		// deliberately unbound -- the console-access (login) grant must not
+		// imply action authorization.
+		roles = append(roles, ConsoleReaderClusterRole(kn))
 	}
 
 	// #224 Finding 5: once the shared spec.fleet.mcpGateway.namespace
@@ -784,6 +788,11 @@ var toolPersonas = []toolPersona{
 			"kubernaut_check_existing_remediation", "kubernaut_remediate",
 			"list_alerts", "get_alert_details", "kubernaut_investigate_alert",
 			"kubernaut_get_approval_request", "kubernaut_complete_no_action",
+			// #636: approval visibility (DD-636 amends DD-278 v1.1 -- sre already
+			// holds kubernaut_approve, so listing pending approvals only makes an
+			// already-possible decision an informed one) and read-only fleet
+			// discovery for cross-cluster investigation (BR-FLEET-054).
+			"kubernaut_list_approval_requests", "list_clusters",
 		},
 	},
 	{
@@ -797,6 +806,10 @@ var toolPersonas = []toolPersona{
 			"kubectl_get", "kubectl_list", "kubectl_list_events",
 			"kubernaut_check_existing_remediation", "kubernaut_remediate",
 			"list_alerts", "get_alert_details", "kubernaut_investigate_alert",
+			// #636: read-only fleet discovery only. Approval reads/decisions stay
+			// with the human personas (DD-278 separation of duties); the upstream
+			// E2E persona fixture's broader list is deliberately not mirrored.
+			"list_clusters",
 		},
 	},
 	{
@@ -1062,6 +1075,50 @@ func ConsoleAccessClusterRoleBinding(kn *kubernautv1alpha2.Kubernaut) *rbacv1.Cl
 			Name:     ConsoleAccessClusterRoleName(kn),
 		},
 		Subjects: subjects,
+	}
+}
+
+// ConsoleReaderClusterRoleName returns the name of the console-reader
+// ClusterRole (#636).
+func ConsoleReaderClusterRoleName(kn *kubernautv1alpha2.Kubernaut) string {
+	return clusterRoleName(kn, "console-reader")
+}
+
+// ConsoleReaderClusterRole builds the least-privilege role for the console
+// REST read projection (kubernaut#2584 / DD-AF-018): policy scope and
+// managed-resource inventory reads. AF authorizes these through the same
+// named kubernaut.ai/tools "use" SubjectAccessReview as every tool action,
+// so the capabilities are explicit resourceNames rather than a wildcard.
+//
+// The role is rendered whenever AF is enabled and deliberately has no
+// binding: upstream has not defined which persona owns these reads, and no
+// login/console-access grant may imply them (#636). Administrators bind it
+// through spec.apiFrontend.rbac.roleBindings[].clusterRoleName (the operator
+// creates the CRB) or their own ClusterRoleBinding. See
+// docs/design/DD-636-console-direct-action-rbac.md.
+//
+// The read additionally requires user-scoped Kubernetes get/list on the exact
+// local target resources; those grants remain administrator-owned because the
+// projected resource set is deployment-specific.
+func ConsoleReaderClusterRole(kn *kubernautv1alpha2.Kubernaut) *rbacv1.ClusterRole {
+	if !kn.Spec.APIFrontendEnabled() {
+		return nil
+	}
+	return &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   ConsoleReaderClusterRoleName(kn),
+			Labels: CommonLabels(kn),
+		},
+		Rules: []rbacv1.PolicyRule{{
+			APIGroups: []string{"kubernaut.ai"},
+			Resources: []string{"tools"},
+			ResourceNames: []string{
+				"kubernaut_read_policy_scope",
+				"kubernaut_list_managed_resources",
+				"kubernaut_get_managed_resource",
+			},
+			Verbs: []string{"use"},
+		}},
 	}
 }
 

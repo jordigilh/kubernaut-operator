@@ -68,10 +68,10 @@ func apiFrontendVerbs(role *rbacv1.ClusterRole, resource string) []string {
 }
 
 var _ = Describe("ClusterRoles", func() {
-	It("returns exactly 17 roles (14 base + 2 monitoring + 1 console-access)", func() {
+	It("returns exactly 18 roles (14 base + 2 monitoring + 1 console-access + 1 console-reader)", func() {
 		kn := testKubernaut()
 		roles := ClusterRoles(kn, testKnV2(kn))
-		Expect(roles).To(HaveLen(17), "ClusterRoles() should return exactly 17 roles (14 base + 2 monitoring + 1 console-access, #289), got %d", len(roles))
+		Expect(roles).To(HaveLen(18), "ClusterRoles() should return exactly 18 roles (14 base + 2 monitoring + 1 console-access, #289 + 1 console-reader, #636), got %d", len(roles))
 	})
 
 	It("contains expected role names", func() {
@@ -99,6 +99,7 @@ var _ = Describe("ClusterRoles", func() {
 			ns + "-authwebhook-role",
 			ns + "-alertmanager-view",
 			ns + "-gateway-signal-source",
+			ns + "-console-reader",
 		}
 
 		for _, name := range expectedNames {
@@ -1234,8 +1235,8 @@ var _ = Describe("ToolClusterRoles", func() {
 				"tool ClusterRole %q should have %d resourceNames, got %d",
 				found.Name, expectedCount, len(found.Rules[0].ResourceNames))
 		},
-		Entry("SRE", "tool-sre", 29),
-		Entry("AI-orchestrator", "tool-ai-orchestrator", 21),
+		Entry("SRE", "tool-sre", 31),
+		Entry("AI-orchestrator", "tool-ai-orchestrator", 22),
 		Entry("CICD", "tool-cicd", 4),
 		Entry("Observability", "tool-observability", 6),
 		Entry("L3-audit", "tool-l3-audit", 6),
