@@ -17,6 +17,7 @@ limitations under the License.
 package resources
 
 import (
+	"slices"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -207,19 +208,19 @@ var _ = Describe("Issue #636: console direct-action RBAC audit", func() {
 		// rules do not name, proving deny-by-default.
 		ruleAllows := func(rules []rbacv1.PolicyRule, group, resource, name, verb string) bool {
 			for _, rule := range rules {
-				if !containsString(rule.APIGroups, group) && !containsString(rule.APIGroups, "*") {
+				if !slices.Contains(rule.APIGroups, group) && !slices.Contains(rule.APIGroups, "*") {
 					continue
 				}
-				if !containsString(rule.Resources, resource) && !containsString(rule.Resources, "*") {
+				if !slices.Contains(rule.Resources, resource) && !slices.Contains(rule.Resources, "*") {
 					continue
 				}
-				if !containsString(rule.Verbs, verb) && !containsString(rule.Verbs, "*") {
+				if !slices.Contains(rule.Verbs, verb) && !slices.Contains(rule.Verbs, "*") {
 					continue
 				}
 				if len(rule.ResourceNames) == 0 {
 					return true
 				}
-				if containsString(rule.ResourceNames, name) {
+				if slices.Contains(rule.ResourceNames, name) {
 					return true
 				}
 			}
@@ -268,12 +269,3 @@ var _ = Describe("Issue #636: console direct-action RBAC audit", func() {
 		})
 	})
 })
-
-func containsString(values []string, want string) bool {
-	for _, v := range values {
-		if v == want {
-			return true
-		}
-	}
-	return false
-}

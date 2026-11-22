@@ -3857,7 +3857,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}
 		})
 
-		It("IT-CONSOLE-007: updates tool-sre with the audited approval-visibility and fleet-discovery tools", func() {
+		It("IT-CONSOLE-007: renders tool-sre with the audited approval-visibility and fleet-discovery tools", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToDeployPhase(ctx)

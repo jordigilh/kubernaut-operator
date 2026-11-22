@@ -710,8 +710,8 @@ too — with it left at the default `false`, Console access doesn't consult
 groups at all and is unaffected by a missing claim).
 
 The six built-in personas and their exact tool sets are audited in
-[DD-636](../design/DD-636-console-direct-action-rbac.md). Two additions land
-in v1.6: `sre` can also list pending approval requests
+[DD-636](../design/DD-636-console-direct-action-rbac.md). Two persona
+additions land in v1.6: `sre` can also list pending approval requests
 (`kubernaut_list_approval_requests`) and discover fleet clusters
 (`list_clusters`); `ai-orchestrator` can discover fleet clusters but still
 cannot read or decide approvals (separation of duties, DD-278).
