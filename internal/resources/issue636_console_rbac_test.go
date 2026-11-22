@@ -129,9 +129,14 @@ var _ = Describe("Issue #636: console direct-action RBAC audit", func() {
 		It("never grants a console REST read capability to a built-in persona", func() {
 			roles := ToolClusterRoles(testKubernautWithAF())
 			for _, role := range roles {
-				Expect(role.Rules[0].ResourceNames).NotTo(ContainElements(consoleCapabilities),
-					"persona %q must not implicitly grant console reads; use the console-reader role",
-					role.Name)
+				// Per-name negation: NotTo(ContainElements(list)) would only
+				// fail on a persona leaking ALL capabilities, silently passing
+				// a single-capability leak.
+				for _, capability := range consoleCapabilities {
+					Expect(role.Rules[0].ResourceNames).NotTo(ContainElement(capability),
+						"persona %q must not implicitly grant console reads; use the console-reader role",
+						role.Name)
+				}
 			}
 		})
 
@@ -139,10 +144,14 @@ var _ = Describe("Issue #636: console direct-action RBAC audit", func() {
 			roles := ToolClusterRoles(testKubernautWithAF())
 			role := findRole(roles, "tool-ai-orchestrator")
 			Expect(role).NotTo(BeNil())
-			Expect(role.Rules[0].ResourceNames).NotTo(ContainElements(
+			approvalTools := []string{
 				"kubernaut_approve", "kubernaut_list_approval_requests",
 				"kubernaut_get_approval_request", "kubernaut_complete_no_action",
-			), "approval decisions and approval reads stay with human personas")
+			}
+			for _, tool := range approvalTools {
+				Expect(role.Rules[0].ResourceNames).NotTo(ContainElement(tool),
+					"approval decisions and approval reads stay with human personas (DD-278)")
+			}
 		})
 	})
 

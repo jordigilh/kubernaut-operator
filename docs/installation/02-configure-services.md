@@ -721,11 +721,13 @@ renders `console-reader` (a seventh ClusterRole, cluster-scoped), granting
 only the three AF console read capabilities (`kubernaut_read_policy_scope`,
 `kubernaut_list_managed_resources`, `kubernaut_get_managed_resource`). It is
 **not bound by default** and no persona implies it, so login never grants
-console reads. Bind it through `roleBindings` with `clusterRoleName`
-(the operator creates the CRB) or your own ClusterRoleBinding. Local
-inventory reads additionally check the user's own Kubernetes `get`/`list`
-permissions on the exact projected resources, which remain your
-responsibility because the projected set depends on your managed scope.
+console reads. Bind it through `roleBindings` with `clusterRoleName` — note
+the rendered name is namespace-prefixed, so reference
+`<namespace>-console-reader` exactly (the custom-binding path uses the name
+verbatim) — or your own ClusterRoleBinding. Local inventory reads
+additionally check the user's own Kubernetes `get`/`list` permissions on the
+exact projected resources, which remain your responsibility because the
+projected set depends on your managed scope.
 
 **Console access is derived automatically — leave `consoleAccessGroups`
 unset.** `spec.apiFrontend.rbac.consoleAccessGroups` only has any effect

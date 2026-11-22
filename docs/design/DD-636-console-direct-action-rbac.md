@@ -85,7 +85,7 @@ grants are explicitly deferred with tracked follow-ups rather than guessed.
 |---|---|---|---|
 | `console-access` | console-access groups (derived or explicit) | `kubernaut.ai/console` `use` — the UI gate | Login-level only; never implies a tool |
 | `tool-<persona>` | OIDC groups from `spec.apiFrontend.rbac.roleBindings` | named tool actions | One ClusterRole per persona |
-| `console-reader` | nothing by default | the three console REST read capabilities | Bind via `roleBindings[].clusterRoleName` or an external CRB |
+| `console-reader` | nothing by default | the three console REST read capabilities | Bind via `roleBindings[].clusterRoleName` (rendered name is `<ns>-console-reader`, used verbatim) or an external CRB |
 | `<ns>-apifrontend-inventory-read` | AF ServiceAccount | backend metadata reads for the projection | Never a user grant |
 
 A group bound to a persona also joins `effectiveConsoleAccessGroups`, so it
