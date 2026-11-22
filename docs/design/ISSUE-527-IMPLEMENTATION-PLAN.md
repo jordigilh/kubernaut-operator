@@ -39,7 +39,7 @@ when handed an older/in-memory object whose new nested fields are absent.
 |---|---|---|---|
 | Investigation profile | KA static/runtime ConfigMaps and Deployment | `internal/resources/configmaps.go`, `deployments.go` | live reconciliation renders the selected base profile |
 | Workflow-discovery profile | KA runtime `phaseModels.workflow_discovery` and dedicated credential mount | `internal/resources/configmaps.go`, `deployments.go` | live reconciliation renders the phase and mount |
-| Evidence handoff budget | KA `kubernaut-agent-config` | `KubernautAgentConfigMap` via `deployConfigMaps` | live ConfigMap contains 262144 or explicit override |
+| Evidence handoff budget | KA `kubernaut-agent-config` | `KubernautAgentConfigMap` via `deployConfigMaps` | live ConfigMap contains 262144 or explicit override (knob since removed in #589; budget is code-owned in Kubernaut Agent) |
 | API Frontend profile | AF ConfigMap/Deployment | existing AF builders and `AFLLMProfileRef` | independent profile validation/rendering test |
 
 ## TDD sequence
@@ -95,6 +95,8 @@ make test-pyramid
 - `go build ./...`: passed.
 
 The upstream/demo workflow journey remains the qualification boundary for a
-sanitized handoff larger than 64KiB and within 256KiB. This repository proves
+sanitized handoff larger than 64KiB and within 256KiB (the byte-budget knob
+was later removed in #589; the structured context budget is now code-owned in
+Kubernaut Agent). This repository proves
 the operator's generated configuration and reconciliation contract without
 duplicating upstream KA behavior.

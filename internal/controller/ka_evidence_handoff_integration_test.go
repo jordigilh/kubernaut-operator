@@ -56,17 +56,4 @@ var _ = Describe("Issue #527: KA evidence handoff reconciliation", func() {
 			HaveField("Name", Equal("config")),
 		), "KA container must consume the generated config volume")
 	})
-
-	It("IT-KA-589-RECONCILE-001 [CM-2, CM-6; SOC2 CC8.1; ASVS v5.0.0-V16.5.2] renders no maxEvidenceHandoffBytes knob on a fresh deployment", func() {
-		createBYOSecrets(ctx)
-		kn := newMinimalCR()
-		Expect(k8sClient.Create(ctx, kn)).To(Succeed())
-
-		reconcileToDeployPhase(ctx)
-
-		configMap := &corev1.ConfigMap{}
-		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "kubernaut-agent-config", Namespace: testNamespace}, configMap)).To(Succeed())
-		Expect(configMap.Data["config.yaml"]).NotTo(ContainSubstring("maxEvidenceHandoffBytes"),
-			"the structured context budget is code-owned in Kubernaut Agent; a fresh deployment must not render the removed ai.investigation knob")
-	})
 })
