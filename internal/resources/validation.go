@@ -347,7 +347,7 @@ func normalizeTelemetryEndpoint(endpoint string) (string, error) {
 	if strings.Contains(endpoint, "://") {
 		parsed, err := url.Parse(endpoint)
 		if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
-			return "", fmt.Errorf("must use an https://host[:port] URI or host:port value; a host is required and plaintext HTTP and other URI forms are unsupported")
+			return "", fmt.Errorf("must use an https://host:port URI or host:port value; a host is required and plaintext HTTP and other URI forms are unsupported")
 		}
 		endpoint = parsed.Host
 	}
