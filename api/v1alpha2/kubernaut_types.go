@@ -1024,14 +1024,6 @@ type WorkflowDiscoverySpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +optional
 	LLMProfileRef string `json:"llmProfileRef,omitempty"`
-
-	// MaxEvidenceHandoffBytes is the maximum serialized size of the complete
-	// sanitized evidence packet handed from investigation to workflow
-	// discovery, including its digest and freeze timestamp.
-	// +kubebuilder:default=262144
-	// +kubebuilder:validation:Minimum=1
-	// +optional
-	MaxEvidenceHandoffBytes *int `json:"maxEvidenceHandoffBytes,omitempty"`
 }
 
 // KubernautAgentSpec configures the Kubernaut Agent (KA) LLM integration service.
