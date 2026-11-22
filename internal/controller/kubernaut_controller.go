@@ -124,6 +124,13 @@ const (
 	monitoringTLSDefaultCAKey = "ca.crt"
 )
 
+// retiredConditionTypes lists status condition types removed from the status
+// contract by the administrator-owned external exposure change (#572). Objects
+// upgraded from a pre-#572 operator may still carry these entries; every
+// reconcile prunes them so .status.conditions reflects only the current
+// contract (#574).
+var retiredConditionTypes = []kubernautv1alpha2.ConditionType{"RouteReady"}
+
 // KubernautReconciler reconciles a Kubernaut object.
 type KubernautReconciler struct {
 	client.Client
@@ -844,6 +851,19 @@ func (r *KubernautReconciler) finalizeDeployStatus(ctx context.Context, kn *kube
 			ObservedGeneration: kn.Generation,
 		}
 		meta.SetStatusCondition(&kn.Status.Conditions, exposureCondition)
+		// Drop status conditions retired by the administrator-owned external
+		// exposure change (#572). Objects upgraded from a pre-#572 operator
+		// keep a stale RouteReady entry next to ExposureReady; remove it so
+		// the persisted status reflects only the current contract (#574).
+		for _, retired := range retiredConditionTypes {
+			if meta.FindStatusCondition(kn.Status.Conditions, retired) != nil {
+				logf.FromContext(ctx).Info("removing retired status condition",
+					"conditionType", retired,
+					"namespace", kn.Namespace, "name", kn.Name,
+					"generation", kn.Generation, "resourceVersion", kn.ResourceVersion)
+			}
+			meta.RemoveStatusCondition(&kn.Status.Conditions, retired)
+		}
 		// Evaluate status against the user configuration rather than the
 		// runtime view. The runtime view disables an unset generic endpoint so
 		// builders do not inherit an OpenShift fallback; status must still

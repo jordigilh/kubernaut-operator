@@ -36,6 +36,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -542,6 +543,43 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
 			Expect(findCondition(kn.Status.Conditions, "RouteReady")).To(BeNil())
 			Expect(findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionExposureReady).Reason).To(Equal(ReasonExposureInternal))
+		})
+
+		It("IT-EXP-574-UPGRADE-001 [CM-6, SI-4; SOC2 CC7.2; ASVS v5.0.0-V16.5.2]: removes a stale RouteReady condition from objects upgraded past the external-exposure change", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			By("injecting the pre-#572 operator's last status write")
+			kn := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			stale := kn.DeepCopy()
+			meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
+				Type:               "RouteReady",
+				Status:             metav1.ConditionFalse,
+				Reason:             "RouteDisabled",
+				Message:            "operator-managed Routes are disabled",
+				ObservedGeneration: kn.Generation - 1,
+			})
+			Expect(k8sClient.Status().Patch(ctx, kn, client.MergeFrom(stale))).To(Succeed())
+
+			By("reconciling with the current operator")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			upgraded := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), upgraded)).To(Succeed())
+			Expect(upgraded.Status.Phase).To(Equal(kubernautv1alpha2.PhaseRunning))
+			Expect(findCondition(upgraded.Status.Conditions, "RouteReady")).To(BeNil(),
+				"reconciliation must drop the retired RouteReady condition from upgraded objects")
+			exposure := findCondition(upgraded.Status.Conditions, kubernautv1alpha2.ConditionExposureReady)
+			Expect(exposure).NotTo(BeNil())
+			Expect(exposure.Status).To(Equal(metav1.ConditionTrue))
+			Expect(exposure.Reason).To(Equal(ReasonExposureInternal))
+
+			ingresses := &networkingv1.IngressList{}
+			Expect(k8sClient.List(ctx, ingresses, client.InNamespace(testNamespace))).To(Succeed())
+			Expect(ingresses.Items).To(BeEmpty(), "the operator must not manage administrator-owned exposure resources")
 		})
 
 		It("IT-TLS-GAP-003 [SC-8, SC-17, SI-4; SOC2 CC6, CC7, A1; ASVS v5.0.0-V12.1.3, v5.0.0-V13.2.1, v5.0.0-V16.5.2] deploys generic TLS and webhook resources without OpenShift annotations", func() {

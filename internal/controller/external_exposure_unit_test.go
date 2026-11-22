@@ -40,4 +40,30 @@ var _ = Describe("administrator-owned external exposure", Label("unit"), func() 
 		Expect(exposure.Reason).To(Equal(ReasonExposureInternal))
 		Expect(exposure.Message).To(ContainSubstring("administrator"))
 	})
+
+	It("UT-EXP-574-STATUS-002 [CM-6, SI-4; SOC2 CC7.2; ASVS v5.0.0-V16.5.2]: removes a stale RouteReady condition written by a pre-#572 operator", func() {
+		kn := newMinimalCR()
+		kn.Status.Conditions = []metav1.Condition{{
+			Type:               "RouteReady",
+			Status:             metav1.ConditionFalse,
+			Reason:             "RouteDisabled",
+			Message:            "operator-managed Routes are disabled",
+			ObservedGeneration: 3,
+		}}
+		r := businessUnitReconciler(kn, interceptor.Funcs{})
+
+		Expect(r.finalizeDeployStatus(ctx, kn)).To(Succeed())
+
+		Expect(findCondition(kn.Status.Conditions, "RouteReady")).To(BeNil(),
+			"reconciliation must drop the retired RouteReady condition from upgraded objects")
+		exposure := findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionExposureReady)
+		Expect(exposure).NotTo(BeNil())
+		Expect(exposure.Status).To(Equal(metav1.ConditionTrue))
+		Expect(exposure.Reason).To(Equal(ReasonExposureInternal))
+
+		By("pruning again on a follow-up reconcile without the stale condition")
+		Expect(r.finalizeDeployStatus(ctx, kn)).To(Succeed())
+		Expect(findCondition(kn.Status.Conditions, "RouteReady")).To(BeNil())
+		Expect(findCondition(kn.Status.Conditions, kubernautv1alpha2.ConditionExposureReady)).NotTo(BeNil())
+	})
 })
