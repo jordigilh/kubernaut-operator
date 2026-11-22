@@ -466,11 +466,6 @@ gzip_vary on;
 `
 }
 
-// consoleNginxServerConf returns the server-level nginx directives: security
-// headers, TLS trust for the AF upstream, and the location blocks proxying
-// /a2a/, /mcp, /.well-known/, the authenticated console read API (#638),
-// static assets, /runtime-config.js (#314), and the SPA fallback.
-
 // consoleAPIProxyLocation renders the NGINX location that routes the
 // authenticated Console policy and inventory read API (#638,
 // GET /api/v1/console/...) to API Frontend. The bare proxy_pass (no URI
@@ -497,6 +492,10 @@ func consoleAPIProxyLocation(afURL string) string {
 `, afURL)
 }
 
+// consoleNginxServerConf returns the server-level nginx directives: security
+// headers, TLS trust for the AF upstream, and the location blocks proxying
+// /a2a/, /mcp, /.well-known/, the authenticated console read API (#638),
+// static assets, /runtime-config.js (#314), and the SPA fallback.
 func consoleNginxServerConf(afURL string, enableRawThinking bool, caFiles ...string) string {
 	caFile := InterServiceTLSCAFile
 	if len(caFiles) > 0 && caFiles[0] != "" {
