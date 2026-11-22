@@ -86,8 +86,10 @@ it) — or use `ingressCIDRs` for a hostNetwork-mode controller. Confirm
 the controller can reach the Service before relying on the exposure. The
 Console has no operator-managed NetworkPolicy and needs no override.
 
-The Console proxy speaks HTTP on `4180`, so a plain (non-TLS) Route or edge
-termination targeting `http` is correct:
+The Console proxy speaks HTTP on `4180`, so terminate TLS at the Route with
+`edge` termination targeting the `http` port. Do **not** use a plain
+(non-TLS) Route: the Console OAuth2 callback (`spec.console.auth.redirectURL`)
+must be an HTTPS URL, and a plain Route cannot serve it.
 
 ```bash
 oc apply -n kubernaut-system -f - <<'EOF'
