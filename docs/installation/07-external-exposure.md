@@ -6,9 +6,8 @@ workload externally reachable is a platform decision that belongs to
 cluster administrators or their GitOps controllers — not a side effect of
 applying a `Kubernaut` CR. The operator's manager RBAC grants no
 permissions on Route, Ingress, or Gateway API exposure resources (it only
-retains read-only access to OpenShift's cluster Ingress configuration
-object), and the operator never creates, adopts, updates, or deletes
-those resources.
+retains read-only access to OpenShift cluster configuration objects), and
+the operator never creates, adopts, updates, or deletes those resources.
 
 The design decision and its rationale are recorded in
 [DD-565: Administrator-owned external exposure boundary](../design/DD-565-EXTERNAL-EXPOSURE-BOUNDARY.md).
@@ -29,7 +28,7 @@ typically expose:
 |---|---|---|---|
 | Gateway (main API) | `gateway-service` | `8443` (`https`) | HTTPS (service-internal CA) |
 | API Frontend | `apifrontend` | `8443` (`https`) | HTTPS (service-internal CA) |
-| Console | `console` | `4180` (`http`) | HTTP (OAuth2 proxy) |
+| Console | `kubernaut-console` | `4180` (`http`) | HTTP (OAuth2 proxy) |
 
 The Gateway's deterministic internal URL stays as-is regardless of
 exposure: `https://gateway-service.<namespace>.svc.cluster.local:8443`.
@@ -40,7 +39,7 @@ Because the Gateway and API Frontend backends serve HTTPS with the
 inter-service CA, use `reencrypt` termination and trust the destination
 with the CA the operator provisioned (for service-CA mode this is the
 OpenShift service-signing CA, available via the `service-ca.crt` key of the
-`inter-service-ca` ConfigMap, or use `passthrough`):
+`inter-service-ca` ConfigMap):
 
 ```bash
 oc apply -n kubernaut-system -f - <<'EOF'
@@ -67,7 +66,8 @@ Avoid `passthrough` for these Services: the backend certificates are only
 valid for the internal Service DNS names (`gateway-service.<namespace>.svc`
 and friends), so external clients would fail hostname validation against
 the Route hostname. If you need passthrough, add the external hostname to
-the backend certificate SANs first (`spec.tls.certManager.extraSANs`).
+the backend certificate SANs first — only possible when TLS provisioning
+is enabled, via `spec.tls.certManager.provisioning.extraSANs`.
 
 Do **not** use `edge` termination for `gateway-service` or `apifrontend`:
 those backends speak TLS on their `https` port, so a plain-HTTP edge hop
@@ -85,7 +85,7 @@ metadata:
 spec:
   to:
     kind: Service
-    name: console
+    name: kubernaut-console
   port:
     targetPort: http
   tls:
@@ -145,8 +145,8 @@ EOF
 ```
 
 The Console needs no `backend-protocol` annotation (it is HTTP on `4180`)
-— point an Ingress at `console` / `4180` and mirror the external HTTPS URL
-in `spec.console.auth.redirectURL`, exactly as above.
+— point an Ingress at `kubernaut-console` / `4180` and mirror the external
+HTTPS URL in `spec.console.auth.redirectURL`, exactly as above.
 
 Gateway API is equally supported as an administrator-owned path
 (`GatewayClass`/`Gateway`/`HTTPRoute`); see
