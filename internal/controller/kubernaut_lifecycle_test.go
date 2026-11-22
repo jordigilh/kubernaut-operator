@@ -1085,8 +1085,8 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			deployment := &appsv1.Deployment{}
 			deploymentKey := types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}
 			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
-			Expect(deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]).NotTo(BeEmpty(),
-				"Console Deployment must carry the nginx ConfigMap hash")
+			initialHash := deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
+			Expect(initialHash).NotTo(BeEmpty(), "Console Deployment must carry the nginx ConfigMap hash")
 
 			By("tampering with the ConfigMap (drift) and re-reconciling")
 			tampered := strings.Replace(serverConf, "location ^~ /api/v1/console/ {", "location /api/v1/console/ {", 1)
@@ -1096,14 +1096,15 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
-			// Unlike the subPath-mounted oauth2-proxy ConfigMap (whose drift
-			// repair appends +resourceVersion to the console hash to force a
-			// pod roll, kubernaut_controller.go deployComponentConfigMaps),
-			// the nginx ConfigMap is directory-mounted: kubelet live-updates
-			// it in running Console pods, so restoring the ConfigMap content
-			// is the complete remediation for an existing deployment. Pod
-			// rolls on config-affecting spec changes are covered separately
-			// by IT-CN-476-002.
+			// The nginx ConfigMap files are subPath-mounted, so a running
+			// Console pod never observes the tamper in the first place, and
+			// drift repair restores the original content, which re-hashes to
+			// the original cmHashes["console"] value: the deployment
+			// annotation is correctly unchanged (no spurious roll). A real
+			// config change, like the #638 location added by this operator
+			// version, produces a new ConfigMapDataHash and rolls the pod on
+			// the next deployment re-render (spec-change rolls are covered by
+			// IT-CN-476-002).
 			Eventually(func() string {
 				Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
 				return cm.Data["server.conf"]
@@ -1111,8 +1112,8 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				"re-reconciliation must restore the drifted console API location")
 
 			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
-			Expect(deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]).NotTo(BeEmpty(),
-				"the Console Deployment must keep carrying the nginx ConfigMap hash after drift repair")
+			Expect(deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]).To(Equal(initialHash),
+				"drift repair restores the original content, so the deployment hash must be unchanged")
 		})
 
 		It("IT-CL-483-001 [AC-2/AC-12, CC6.1/CC6.3; ASVS V3.3/V7.2.1]: renders and regenerates provider logout configuration", func() {
