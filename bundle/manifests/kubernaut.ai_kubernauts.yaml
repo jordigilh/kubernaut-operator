@@ -2285,14 +2285,6 @@ spec:
                           operator infers that sole profile when this is empty.
                         minLength: 1
                         type: string
-                      maxEvidenceHandoffBytes:
-                        default: 262144
-                        description: |-
-                          MaxEvidenceHandoffBytes is the maximum serialized size of the complete
-                          sanitized evidence packet handed from investigation to workflow
-                          discovery, including its digest and freeze timestamp.
-                        minimum: 1
-                        type: integer
                     type: object
                 type: object
               llmProfiles:

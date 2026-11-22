@@ -1272,8 +1272,7 @@ spec:
                     description: Whether Fleet federation is enabled.
                     type: boolean
                   mcpClient:
-                    description: MCPClient overrides shared MCP client retry and timeout
-                      behavior.
+                    description: MCP client tuning shared by Fleet-aware components.
                     properties:
                       retry:
                         description: Retry configures startup connection backoff.
@@ -1415,81 +1414,13 @@ spec:
                         description: OAuth2 token endpoint URL.
                         type: string
                     type: object
-                  scopeCheck:
-                    description: Scope-check backend and its trust/token references.
-                    properties:
-                      acm:
-                        description: |-
-                          ACM configures the BYO ACM Search GraphQL scope-check provider. It must
-                          be absent when Backend selects the operator-managed FMC provider.
-                        properties:
-                          endpoint:
-                            description: ACM Search GraphQL endpoint. Must be an absolute
-                              HTTPS URL when Fleet is active.
-                            type: string
-                          tls:
-                            description: ACM endpoint trust source. Omitted defaults
-                              to interService.
-                            properties:
-                              caCertSecretRef:
-                                description: Secret/key containing CA PEM when source=secret.
-                                properties:
-                                  key:
-                                    default: ca.crt
-                                    description: Key within the Secret containing
-                                      the CA PEM.
-                                    type: string
-                                  name:
-                                    description: Name of the Secret.
-                                    type: string
-                                required:
-                                - name
-                                type: object
-                              caFile:
-                                description: Absolute path to administrator-provided
-                                  CA material when source=file.
-                                type: string
-                              source:
-                                description: Source of the CA bundle. Omitted defaults
-                                  to interService.
-                                enum:
-                                - interService
-                                - system
-                                - file
-                                - secret
-                                type: string
-                            type: object
-                          tokenSecretRef:
-                            description: ACM Search bearer-token Secret. The default
-                              key is token.
-                            properties:
-                              key:
-                                default: token
-                                description: 'Key within the Secret. Default: "token".'
-                                type: string
-                              name:
-                                description: Name of the Secret.
-                                type: string
-                            required:
-                            - name
-                            type: object
-                        type: object
-                      backend:
-                        description: |-
-                          Scope-check backend. fleetmetadatacache selects the operator-managed FMC
-                          service's HTTPS API; acm selects the ACM Search GraphQL API.
-                        enum:
-                        - fleetmetadatacache
-                        - acm
-                        type: string
-                    type: object
                 type: object
               fleetMetadataCache:
                 description: |-
                   FleetMetadataCache configures the operator-managed Fleet Metadata
-                  Cache (FMC) service (ADR-068). It is active when
-                  spec.fleet.scopeCheck.backend=fleetmetadatacache; deployments that select
-                  spec.fleet.scopeCheck.backend=acm use an existing RHACM Search installation.
+                  Cache (FMC) service (ADR-068). It is active whenever spec.fleet.enabled
+                  is true — FMC is the single fleet-control-plane contact (peer→facade
+                  amendment, #647).
                 properties:
                   fleet:
                     description: |-
@@ -1588,6 +1519,75 @@ spec:
                           If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
                           otherwise to an implementation-defined value. Requests cannot exceed Limits.
                           More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  sources:
+                    description: |-
+                      Sources selects FMC's sync-time inventory sources
+                      (kubernaut-operator#647, DD-FLEET-017 v2 D4.1a). Omitted: FMC
+                      collects via the GitOps/MCP lane only and the rendered config is
+                      byte-identical to a deployment without this field. Selecting a
+                      source requires its complete configuration; absent configuration
+                      fails validation rather than silently falling back (FedRAMP CM-7).
+                    properties:
+                      acm:
+                        description: |-
+                          ACM configures the ACM Search source (DD-FLEET-017 v2 D4.1a). Its
+                          presence selects the ACM source for this deployment.
+                        properties:
+                          endpoint:
+                            description: |-
+                              ACM Search endpoint. Absolute HTTPS base URL without a path; the
+                              client appends the GraphQL route. No default, no fallback.
+                            type: string
+                          tls:
+                            description: ACM Search endpoint trust source. Omitted
+                              defaults to interService.
+                            properties:
+                              caCertSecretRef:
+                                description: Secret/key containing CA PEM when source=secret.
+                                properties:
+                                  key:
+                                    default: ca.crt
+                                    description: Key within the Secret containing
+                                      the CA PEM.
+                                    type: string
+                                  name:
+                                    description: Name of the Secret.
+                                    type: string
+                                required:
+                                - name
+                                type: object
+                              caFile:
+                                description: Absolute path to administrator-provided
+                                  CA material when source=file.
+                                type: string
+                              source:
+                                description: Source of the CA bundle. Omitted defaults
+                                  to interService.
+                                enum:
+                                - interService
+                                - system
+                                - file
+                                - secret
+                                type: string
+                            type: object
+                          tokenSecretRef:
+                            description: |-
+                              ACM Search bearer-token Secret for the configured hub Search
+                              principal. The default key is token; the Secret is mounted read-only
+                              and keyed, never rendered into the ConfigMap.
+                            properties:
+                              key:
+                                default: token
+                                description: 'Key within the Secret. Default: "token".'
+                                type: string
+                              name:
+                                description: Name of the Secret.
+                                type: string
+                            required:
+                            - name
+                            type: object
                         type: object
                     type: object
                   syncInterval:
@@ -2293,14 +2293,6 @@ spec:
                           operator infers that sole profile when this is empty.
                         minLength: 1
                         type: string
-                      maxEvidenceHandoffBytes:
-                        default: 262144
-                        description: |-
-                          MaxEvidenceHandoffBytes is the maximum serialized size of the complete
-                          sanitized evidence packet handed from investigation to workflow
-                          discovery, including its digest and freeze timestamp.
-                        minimum: 1
-                        type: integer
                     type: object
                 type: object
               llmProfiles:
