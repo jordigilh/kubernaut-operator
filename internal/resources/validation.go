@@ -347,7 +347,7 @@ func normalizeTelemetryEndpoint(endpoint string) (string, error) {
 	if strings.Contains(endpoint, "://") {
 		parsed, err := url.Parse(endpoint)
 		if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
-			return "", fmt.Errorf("must use an https:// URI or host:port value; plaintext HTTP and other URI forms are unsupported")
+			return "", fmt.Errorf("must use an https://host[:port] URI or host:port value; a host is required and plaintext HTTP and other URI forms are unsupported")
 		}
 		endpoint = parsed.Host
 	}
@@ -836,7 +836,7 @@ func validateConsoleRedirectURL(kn *kubernautv1alpha2.Kubernaut) error {
 		return fmt.Errorf("%s must not contain leading or trailing whitespace", path)
 	}
 	redirectURL, err := url.Parse(raw)
-	if err != nil || !strings.EqualFold(redirectURL.Scheme, httpsURLScheme) || redirectURL.Host == "" || redirectURL.Hostname() == "" || redirectURL.User != nil || redirectURL.RawQuery != "" || redirectURL.Fragment != "" || redirectURL.EscapedPath() != "/oauth2/callback" {
+	if err != nil || !strings.EqualFold(redirectURL.Scheme, httpsURLScheme) || redirectURL.Hostname() == "" || redirectURL.User != nil || redirectURL.RawQuery != "" || redirectURL.Fragment != "" || redirectURL.EscapedPath() != "/oauth2/callback" {
 		return fmt.Errorf("%s must be an absolute https URL ending in /oauth2/callback", path)
 	}
 	return nil
@@ -864,7 +864,7 @@ func parseConsoleProviderLogoutURL(raw, path string) (*url.URL, error) {
 	}
 
 	logoutURL, err := url.Parse(raw)
-	if err != nil || logoutURL.Scheme == "" || logoutURL.Host == "" || logoutURL.Opaque != "" {
+	if err != nil || logoutURL.Scheme == "" || logoutURL.Hostname() == "" || logoutURL.Opaque != "" {
 		return nil, fmt.Errorf("%s must be an absolute HTTPS URL", path)
 	}
 	if err := validateConsoleLogoutURLShape(logoutURL, path); err != nil {

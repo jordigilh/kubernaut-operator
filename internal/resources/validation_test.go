@@ -1248,7 +1248,7 @@ var _ = Describe("OTLP telemetry TLS contract", func() {
 	})
 
 	It("UT-650-VALIDATE-002 [SI-10; ASVS V2.2.1]: rejects hostless https:// telemetry endpoints at the URI parse site", func() {
-		Expect(validateTelemetryEndpoint(hostlessURL)).To(MatchError(ContainSubstring("plaintext HTTP and other URI forms")),
+		Expect(validateTelemetryEndpoint(hostlessURL)).To(MatchError(ContainSubstring("a host is required")),
 			"hostless URI must fail fast at the parse site, not fall through to host:port normalization")
 
 		By("a hostname with an explicit port remains valid")
