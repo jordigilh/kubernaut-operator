@@ -118,7 +118,6 @@ spec:
       maxTurns: 40
     workflowDiscovery:
       llmProfileRef: primary
-      maxEvidenceHandoffBytes: 262144
     # runtimeConfigMapName: custom-llm-runtime  # uncomment for BYO LLM config
     # logging:
     #   level: info                        # debug, info, warn, error

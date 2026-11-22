@@ -25,7 +25,6 @@ spec:
       maxTurns: 40
     workflowDiscovery:
       llmProfileRef: lightweight
-      maxEvidenceHandoffBytes: 262144
   apiFrontend:
     llmProfileRef: primary
 ```
