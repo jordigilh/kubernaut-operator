@@ -378,6 +378,9 @@ oc get service gateway-service -n kubernaut-system
 # Gateway API, or mesh resource created for the deployment.
 ```
 
+To create that external exposure, see
+[External Exposure (Administrator-Owned)](07-external-exposure.md).
+
 ## Seed the Workflow Catalog
 
 After the AuthWebhook is ready, apply ActionTypes and RemediationWorkflows. The webhook uses `failurePolicy: Fail`, so CRD mutations are rejected until the webhook pod is healthy.
