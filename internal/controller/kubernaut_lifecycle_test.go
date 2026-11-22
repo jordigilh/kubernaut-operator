@@ -1088,28 +1088,31 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]).NotTo(BeEmpty(),
 				"Console Deployment must carry the nginx ConfigMap hash")
 
-			By("simulating drift and a stale deployment hash (old-operator output)")
+			By("tampering with the ConfigMap (drift) and re-reconciling")
 			tampered := strings.Replace(serverConf, "location ^~ /api/v1/console/ {", "location /api/v1/console/ {", 1)
 			Expect(tampered).NotTo(Equal(serverConf), "tampering must actually change the config")
 			cm.Data["server.conf"] = tampered
 			Expect(k8sClient.Update(ctx, cm)).To(Succeed())
-			deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash] = "stale-old-operator-hash"
-			Expect(k8sClient.Update(ctx, deployment)).To(Succeed())
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
+			// Unlike the subPath-mounted oauth2-proxy ConfigMap (whose drift
+			// repair appends +resourceVersion to the console hash to force a
+			// pod roll, kubernaut_controller.go deployComponentConfigMaps),
+			// the nginx ConfigMap is directory-mounted: kubelet live-updates
+			// it in running Console pods, so restoring the ConfigMap content
+			// is the complete remediation for an existing deployment. Pod
+			// rolls on config-affecting spec changes are covered separately
+			// by IT-CN-476-002.
 			Eventually(func() string {
 				Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
 				return cm.Data["server.conf"]
 			}, timeout, interval).Should(ContainSubstring("location ^~ /api/v1/console/ {"),
 				"re-reconciliation must restore the drifted console API location")
 
-			By("applying the restored configuration to the existing deployment")
-			Eventually(func() string {
-				Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
-				return deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
-			}, timeout, interval).ShouldNot(Equal("stale-old-operator-hash"),
-				"the reconciled ConfigMap content must replace the stale hash and roll the Console pod")
+			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+			Expect(deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]).NotTo(BeEmpty(),
+				"the Console Deployment must keep carrying the nginx ConfigMap hash after drift repair")
 		})
 
 		It("IT-CL-483-001 [AC-2/AC-12, CC6.1/CC6.3; ASVS V3.3/V7.2.1]: renders and regenerates provider logout configuration", func() {
