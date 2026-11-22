@@ -470,6 +470,32 @@ gzip_vary on;
 // headers, TLS trust for the AF upstream, and the location blocks proxying
 // /a2a/, /mcp, /.well-known/, static assets, /runtime-config.js (#314), and
 // the SPA fallback.
+// consoleAPIProxyLocation renders the NGINX location that routes the
+// authenticated Console policy and inventory read API (#638,
+// GET /api/v1/console/...) to API Frontend. The bare proxy_pass (no URI
+// part) preserves the complete request path and query string; opaque
+// resource IDs survive unchanged. The ^~ modifier stops the static-asset
+// regex in consoleNginxServerConf from matching IDs that happen to end in
+// an asset-like extension. Authorization is forwarded from the OAuth2
+// Proxy-injected X-Forwarded-Access-Token only, so client-supplied identity
+// headers cannot reach AF. Server-level proxy_ssl_verify on and the trusted
+// service CA apply to this upstream.
+func consoleAPIProxyLocation(afURL string) string {
+	return fmt.Sprintf(`location ^~ /api/v1/console/ {
+  limit_req zone=api burst=50 nodelay;
+  proxy_pass %s;
+  proxy_http_version 1.1;
+  proxy_set_header Connection "";
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";
+  proxy_buffering off;
+  proxy_cache off;
+}
+`, afURL)
+}
+
 func consoleNginxServerConf(afURL string, enableRawThinking bool, caFiles ...string) string {
 	caFile := InterServiceTLSCAFile
 	if len(caFiles) > 0 && caFiles[0] != "" {
@@ -523,6 +549,8 @@ location /.well-known/ {
   proxy_set_header Host $host;
 }
 
+%s
+
 location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?|ttf|eot)$ {
   expires 1y;
   add_header Cache-Control "public, immutable";
@@ -544,7 +572,7 @@ location / {
   add_header Cache-Control "no-cache, must-revalidate";
   try_files $uri $uri/ /index.html;
 }
-`, caFile, afURL, afURL, afURL, enableRawThinking)
+`, caFile, afURL, afURL, afURL, consoleAPIProxyLocation(afURL), enableRawThinking)
 }
 
 func consoleRedirectURL(kn *kubernautv1alpha2.Kubernaut) string {
