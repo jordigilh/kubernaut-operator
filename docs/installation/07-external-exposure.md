@@ -4,9 +4,11 @@ The operator deliberately does not create or manage external exposure
 resources. This is a security boundary, not a missing feature: making a
 workload externally reachable is a platform decision that belongs to
 cluster administrators or their GitOps controllers — not a side effect of
-applying a `Kubernaut` CR. The operator's manager RBAC grants no Route,
-Ingress, or Gateway API permissions, and the operator never creates,
-adopts, updates, or deletes those objects.
+applying a `Kubernaut` CR. The operator's manager RBAC grants no
+permissions on Route, Ingress, or Gateway API exposure resources (it only
+retains read-only access to OpenShift's cluster Ingress configuration
+object), and the operator never creates, adopts, updates, or deletes
+those resources.
 
 The design decision and its rationale are recorded in
 [DD-565: Administrator-owned external exposure boundary](../design/DD-565-EXTERNAL-EXPOSURE-BOUNDARY.md).
@@ -61,25 +63,11 @@ spec:
 EOF
 ```
 
-`passthrough` also works if you prefer the backend certificate to be
-presented directly:
-
-```bash
-oc apply -n kubernaut-system -f - <<'EOF'
-apiVersion: route.openshift.io/v1
-kind: Route
-metadata:
-  name: kubernaut-gateway
-spec:
-  to:
-    kind: Service
-    name: gateway-service
-  port:
-    targetPort: https
-  tls:
-    termination: passthrough
-EOF
-```
+Avoid `passthrough` for these Services: the backend certificates are only
+valid for the internal Service DNS names (`gateway-service.<namespace>.svc`
+and friends), so external clients would fail hostname validation against
+the Route hostname. If you need passthrough, add the external hostname to
+the backend certificate SANs first (`spec.tls.certManager.extraSANs`).
 
 Do **not** use `edge` termination for `gateway-service` or `apifrontend`:
 those backends speak TLS on their `https` port, so a plain-HTTP edge hop
@@ -112,10 +100,11 @@ never derives it from the cluster ingress domain:
 spec:
   console:
     auth:
-      redirectURL: https://kubernaut-console-<hash>-kubernaut-system.<cluster-domain>/oauth2/callback
+      redirectURL: https://kubernaut-console-kubernaut-system.<cluster-domain>/oauth2/callback
 ```
 
-See [Deploy Kubernaut](03-deploy.md) for the full Console auth contract.
+See [Configure Services](02-configure-services.md) for the full Console
+auth contract.
 
 ## Generic Kubernetes / Kind: Ingress
 
@@ -132,7 +121,10 @@ metadata:
   annotations:
     # gateway-service and apifrontend serve HTTPS with the service-internal CA
     nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
-    nginx.ingress.kubernetes.io/ssl-verify: "off"   # or trust the service-internal CA
+    # nginx does not verify the backend certificate by default. To harden,
+    # trust the service-internal CA with proxy-ssl-verify: "true" plus
+    # proxy-ssl-secret, proxy-ssl-server-name, and a proxy-ssl-name matching
+    # the backend cert SANs (gateway-service.kubernaut-system.svc).
 spec:
   ingressClassName: nginx
   rules:
