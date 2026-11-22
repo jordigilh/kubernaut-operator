@@ -3820,6 +3820,106 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			err = k8sClient.Get(ctx, types.NamespacedName{Name: crbName}, &rbacv1.ClusterRoleBinding{})
 			Expect(errors.IsNotFound(err)).To(BeTrue(), "console-access CRB should be deleted by finalizer")
 		})
+
+		// ==================================================================
+		// Console direct-action RBAC (#636)
+		// ==================================================================
+		// These prove the reconciliation path, not just the builder: the
+		// console-reader capability role reaches the cluster through the
+		// ClusterRoles() aggregator, is never implicitly bound, and is pruned
+		// or finalized with the rest of the core cluster RBAC.
+
+		It("IT-CONSOLE-006: renders the unbound console-reader capability role during deploy", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+			reconcileToDeployPhase(ctx)
+
+			knForNames := &kubernautv1alpha2.Kubernaut{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace}}
+			cr := &rbacv1.ClusterRole{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.ConsoleReaderClusterRoleName(knForNames)}, cr)).
+				To(Succeed(), "console-reader ClusterRole should exist after deploy")
+			Expect(cr.Rules).To(HaveLen(1))
+			Expect(cr.Rules[0].APIGroups).To(ConsistOf("kubernaut.ai"))
+			Expect(cr.Rules[0].Resources).To(ConsistOf("tools"))
+			Expect(cr.Rules[0].Verbs).To(ConsistOf("use"))
+			Expect(cr.Rules[0].ResourceNames).To(ConsistOf(
+				"kubernaut_read_policy_scope",
+				"kubernaut_list_managed_resources",
+				"kubernaut_get_managed_resource",
+			))
+
+			By("never binding the capability role implicitly (login grants no action)")
+			crbs := &rbacv1.ClusterRoleBindingList{}
+			Expect(k8sClient.List(ctx, crbs)).To(Succeed())
+			for _, crb := range crbs.Items {
+				Expect(crb.RoleRef.Name).NotTo(Equal(cr.Name),
+					"console-reader must stay unbound after a default reconcile")
+			}
+		})
+
+		It("IT-CONSOLE-007: renders tool-sre with the audited approval-visibility and fleet-discovery tools", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+			reconcileToDeployPhase(ctx)
+
+			cr := &rbacv1.ClusterRole{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: testNamespace + "-tool-sre",
+			}, cr)).To(Succeed(), "tool-sre ClusterRole should exist after deploy")
+			Expect(cr.Rules).To(HaveLen(1))
+			Expect(cr.Rules[0].ResourceNames).To(ContainElements(
+				"kubernaut_list_approval_requests", "list_clusters",
+			), "tool-sre must carry the #636 audited tools through the reconciler")
+		})
+
+		It("IT-CONSOLE-008: prunes the console-reader role after AF is disabled", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			knForNames := &kubernautv1alpha2.Kubernaut{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace}}
+			crName := resources.ConsoleReaderClusterRoleName(knForNames)
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crName}, &rbacv1.ClusterRole{})).To(Succeed(),
+				"precondition: console-reader ClusterRole should exist")
+
+			By("disabling API Frontend")
+			kn := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			kn.Spec.APIFrontend.Enabled = ptr.To(false)
+			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
+
+			By("reconciling to apply the prune")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: crName}, &rbacv1.ClusterRole{})
+			Expect(errors.IsNotFound(err)).To(BeTrue(),
+				"console-reader ClusterRole should be pruned when AF is disabled")
+		})
+
+		It("IT-CONSOLE-009: deletes the console-reader ClusterRole by finalizer", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			knForNames := &kubernautv1alpha2.Kubernaut{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace}}
+			crName := resources.ConsoleReaderClusterRoleName(knForNames)
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crName}, &rbacv1.ClusterRole{})).To(Succeed())
+
+			By("deleting the CR")
+			kn := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
+			stripWorkflowNamespaceCreatedByAnnotation(ctx)
+
+			By("reconciling the finalizer")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: crName}, &rbacv1.ClusterRole{})
+			Expect(errors.IsNotFound(err)).To(BeTrue(),
+				"console-reader ClusterRole should be deleted by finalizer")
+		})
 	})
 
 	// ======================================================================
