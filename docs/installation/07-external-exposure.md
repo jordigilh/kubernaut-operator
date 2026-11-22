@@ -73,6 +73,19 @@ Do **not** use `edge` termination for `gateway-service` or `apifrontend`:
 those backends speak TLS on their `https` port, so a plain-HTTP edge hop
 will fail.
 
+**NetworkPolicy prerequisite:** by default the operator's Gateway and API
+Frontend NetworkPolicies admit ingress only from pods of the same
+Kubernaut instance. An OpenShift router or an ingress controller running
+in another namespace is not admitted, so where the CNI enforces
+NetworkPolicy the exposure below cannot reach `gateway-service` or
+`apifrontend` until you authorize the controller. Add the controller's
+namespace via the CR override — for example
+`spec.networkPolicies.gateway.ingressNamespaces: ["openshift-ingress"]`
+(and the matching `spec.networkPolicies.apifrontend` entry if you expose
+it) — or use `ingressCIDRs` for a hostNetwork-mode controller. Confirm
+the controller can reach the Service before relying on the exposure. The
+Console has no operator-managed NetworkPolicy and needs no override.
+
 The Console proxy speaks HTTP on `4180`, so a plain (non-TLS) Route or edge
 termination targeting `http` is correct:
 
@@ -151,17 +164,23 @@ HTTPS URL in `spec.console.auth.redirectURL`, exactly as above.
 Gateway API is equally supported as an administrator-owned path
 (`GatewayClass`/`Gateway`/`HTTPRoute`); see
 [Fleet: Kuadrant MCP Gateway](04-fleet-mcp-gateway.md) for a worked
-Gateway API + Route example on OpenShift.
+Gateway API + Route example on OpenShift. The NetworkPolicy prerequisite
+above applies to the generic Ingress path the same way — authorize your
+ingress controller's namespace before relying on it.
 
 ## Rules the operator holds regardless of your choice
 
 - Hostnames, ingress classes, edge certificates, and edge authorization
   are yours. The operator never infers or rewrites them.
 - `spec.console.auth.redirectURL` is the only place an external URL enters
-  the CR, and it must be an explicit HTTPS URL ending in
-  `/oauth2/callback`.
+  the CR, and it must be an absolute HTTPS URL whose path is exactly
+  `/oauth2/callback` — no query string, fragment, or userinfo, and a
+  sub-path like `https://example.com/console/oauth2/callback` is
+  rejected.
 - Status reports exposure as `ExposureReady=True` with reason
-  `InternalOnly`: the operator confirms its own Services remain internal
-  and exposure is administrator-owned. It does not monitor your Route,
-  Ingress, or Gateway objects.
+  `InternalOnly`: a statement of the operator's exposure boundary — its
+  managed Services are deployed as internal ClusterIPs and external
+  exposure is administrator-owned. It is not a live check of Service
+  types, and the operator does not monitor your Route, Ingress, or
+  Gateway objects.
 - Do not use Helm and the operator to manage the same exposure objects.
