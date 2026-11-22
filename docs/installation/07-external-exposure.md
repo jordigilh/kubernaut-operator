@@ -41,6 +41,17 @@ with the CA the operator provisioned (for service-CA mode this is the
 OpenShift service-signing CA, available via the `service-ca.crt` key of the
 `inter-service-ca` ConfigMap):
 
+> **Authorization prerequisite:** with default settings, Gateway
+> authentication is disabled, and a Route adds no edge authorization on its
+> own. Any client that can reach the Route can then submit requests to the
+> Gateway — including starting remediation workflows — without credentials.
+> Before applying the Route, put one of these in place:
+>
+> - an administrator-controlled edge authorization policy in front of the
+>   Route, or
+> - Gateway authentication enabled (`spec.gateway.auth.enabled: true`, see
+>   [Configure Services](02-configure-services.md)).
+
 ```bash
 oc apply -n kubernaut-system -f - <<'EOF'
 apiVersion: route.openshift.io/v1
@@ -62,12 +73,29 @@ spec:
 EOF
 ```
 
+**CA rotation:** the OpenShift service CA rotates before its 26-month
+expiry. After it does, the backend presents certificates signed by the new
+CA and this Route fails backend TLS validation until the copied PEM is
+refreshed. Read the current CA and re-apply the Route above with it as the
+`destinationCACertificate`:
+
+```bash
+oc get configmap inter-service-ca -n kubernaut-system \
+  -o jsonpath='{.data.service-ca\.crt}' > current-service-ca.pem
+```
+
 Avoid `passthrough` for these Services: the backend certificates are only
 valid for the internal Service DNS names (`gateway-service.<namespace>.svc`
 and friends), so external clients would fail hostname validation against
 the Route hostname. If you need passthrough, add the external hostname to
-the backend certificate SANs first — only possible when TLS provisioning
-is enabled, via `spec.tls.certManager.provisioning.extraSANs`.
+the backend certificate SANs first. Use one of these sources:
+
+- cert-manager provisioning: enable provisioning and set
+  `spec.tls.certManager.provisioning.extraSANs`.
+- manual TLS: set `spec.tls.mode: manual` and supply the serving Secret
+  named in `spec.tls.manual.serviceTLSSecretNames`. The operator validates
+  but never modifies these Secrets; the certificate must include the
+  external hostname as a SAN alongside the internal Service DNS names.
 
 Do **not** use `edge` termination for `gateway-service` or `apifrontend`:
 those backends speak TLS on their `https` port, so a plain-HTTP edge hop
@@ -124,8 +152,19 @@ auth contract.
 ## Generic Kubernetes / Kind: Ingress
 
 With an nginx-class ingress controller, terminate TLS at the ingress and
-proxy to the HTTPS backends. Adjust class, annotations, and certificate
-source (for example cert-manager) to your cluster:
+proxy to the HTTPS backends. The example verifies the backend certificate
+against the service-internal CA by default. First create the CA Secret the
+verification reads — the ingress controller requires it in the Ingress
+namespace:
+
+```bash
+kubectl get configmap inter-service-ca -n kubernaut-system \
+  -o jsonpath='{.data.service-ca\.crt}' > current-service-ca.pem
+kubectl create secret generic kubernaut-backend-ca -n kubernaut-system \
+  --from-file=ca.crt=current-service-ca.pem
+```
+
+Then apply the Ingress:
 
 ```bash
 kubectl apply -n kubernaut-system -f - <<'EOF'
@@ -136,10 +175,12 @@ metadata:
   annotations:
     # gateway-service and apifrontend serve HTTPS with the service-internal CA
     nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
-    # nginx does not verify the backend certificate by default. To harden,
-    # trust the service-internal CA with proxy-ssl-verify: "true" plus
-    # proxy-ssl-secret, proxy-ssl-server-name, and a proxy-ssl-name matching
-    # the backend cert SANs (gateway-service.kubernaut-system.svc).
+    # verify the backend certificate: the Secret above supplies the CA as
+    # ca.crt, and proxy-ssl-name must match a backend cert SAN
+    nginx.ingress.kubernetes.io/proxy-ssl-verify: "on"
+    nginx.ingress.kubernetes.io/proxy-ssl-secret: kubernaut-system/kubernaut-backend-ca
+    nginx.ingress.kubernetes.io/proxy-ssl-server-name: "on"
+    nginx.ingress.kubernetes.io/proxy-ssl-name: gateway-service.kubernaut-system.svc
 spec:
   ingressClassName: nginx
   rules:
@@ -159,9 +200,10 @@ spec:
 EOF
 ```
 
-The Console needs no `backend-protocol` annotation (it is HTTP on `4180`)
-— point an Ingress at `kubernaut-console` / `4180` and mirror the external
-HTTPS URL in `spec.console.auth.redirectURL`, exactly as above.
+The Console needs no `backend-protocol` or `proxy-ssl-*` annotations (it
+is HTTP on `4180`) — point an Ingress at `kubernaut-console` / `4180` and
+mirror the external HTTPS URL in `spec.console.auth.redirectURL`, exactly
+as above.
 
 Gateway API is equally supported as an administrator-owned path
 (`GatewayClass`/`Gateway`/`HTTPRoute`); see
