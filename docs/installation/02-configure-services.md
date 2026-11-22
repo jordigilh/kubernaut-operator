@@ -622,6 +622,28 @@ are verified; certificate verification is never disabled.
 
 If you don't need the standalone Console UI, omit the `console` block entirely (it defaults to disabled).
 
+### Console read API prerequisites (#638)
+
+The operator's Console NGINX configuration routes the authenticated read API
+(`GET /api/v1/console/policies/scope` and
+`GET /api/v1/console/inventory/managed-resources[/{resourceID}]`) to API
+Frontend through the same OAuth2 Proxy session used for A2A/MCP. Version
+prerequisites:
+
+- **API Frontend**: an image carrying the authenticated console read API
+  (kubernaut PR #2604, decision DD-AF-018). On older AF images the route
+  returns AF's own 404 instead of the Console SPA -- a safe failure that
+  discloses no credentials -- but the endpoints are unusable.
+- **Console**: an image carrying the read client from kubernaut-console
+  issue #164. Older Console images simply do not issue these requests.
+
+The routing itself (OAuth2 Proxy session forwarding, upstream TLS
+verification, rate limiting) needs no configuration and is applied by
+ordinary operator reconciliation on upgrade. Browser-level qualification of
+the full read path additionally requires the versions above; the operator's
+Kind qualification lane (`E2E-CN-638-HTTP-001`) verifies routing and access
+control against the deployed components.
+
 ## Verification
 
 Confirm all required prerequisite ConfigMaps exist before applying the Kubernaut CR:

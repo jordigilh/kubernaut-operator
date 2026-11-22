@@ -476,6 +476,14 @@ gzip_vary on;
 // Proxy-injected X-Forwarded-Access-Token only, so client-supplied identity
 // headers cannot reach AF. Server-level proxy_ssl_verify on and the trusted
 // service CA apply to this upstream.
+//
+// The prefix deliberately matches only the slashed /api/v1/console/
+// namespace: every endpoint the Console read client issues
+// (kubernaut-console#164) is a sub-path of that prefix, and the slashless
+// /api/v1/console root is left to the SPA fallback. Unlike the /a2a/
+// location, the long proxy_read_timeout/proxy_send_timeout streaming
+// overrides are intentionally omitted: these are plain authenticated GETs,
+// so NGINX's 60s defaults apply.
 func consoleAPIProxyLocation(afURL string) string {
 	return fmt.Sprintf(`location ^~ /api/v1/console/ {
   limit_req zone=api burst=50 nodelay;

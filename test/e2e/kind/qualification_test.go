@@ -72,6 +72,8 @@ const (
 	qualificationAccessResultID  = "E2E-CN-609-HTTP-002"
 	qualificationRefreshResultID = "E2E-CN-609-HTTP-003"
 	qualificationLogoutResultID  = "E2E-CN-609-HTTP-004"
+
+	qualificationConsoleAPIResultID = "E2E-CN-638-HTTP-001"
 )
 
 var qualificationExpectedResultIDs = []string{
@@ -79,6 +81,7 @@ var qualificationExpectedResultIDs = []string{
 	qualificationAccessResultID,
 	qualificationRefreshResultID,
 	qualificationLogoutResultID,
+	qualificationConsoleAPIResultID,
 }
 
 // init registers the opt-in Issue 609 qualification suite without changing
@@ -117,6 +120,9 @@ func init() {
 						"controlled signing-key fixture and are not executed by this lane",
 					"backward compatibility with prior OAuth2 Proxy deployments, including v7.9 rollback, " +
 						"is unsupported; qualification starts from a clean v7.15.5+ deployment",
+					"the /api/v1/console/ qualification proves routing and access control end to end; " +
+						"AF response payloads depend on the deployed API Frontend image carrying kubernaut#2604 " +
+						"and are not asserted beyond non-SPA semantics",
 				},
 				GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 			}
@@ -281,6 +287,75 @@ func init() {
 					Detail: "authenticated A2A/MCP requests returned success; forged identity and bearer values " +
 						"were not reflected in responses; unauthenticated A2A/MCP were not 200; initial OAuth2 " +
 						"Proxy logs did not contain the test values",
+				}
+			})
+
+		It(
+			"E2E-CN-638-HTTP-001 [AC-3, AC-6, IA-2; ASVS V4.1/V4.2]: routes the "+
+				"authenticated console read API to AF and rejects forged identity",
+			func() {
+				// Authenticated request with forged identity headers: the valid
+				// OAuth2 Proxy session must win, the request must reach AF
+				// (never the SPA fallback), and no forged value or credential
+				// may be reflected in the response.
+				response, err := qualificationRequest(ctx, client, "/api/v1/console/policies/scope",
+					map[string]string{
+						"Authorization":            "Bearer forged-token",
+						"X-Forwarded-Access-Token": "Bearer forged-token",
+						"X-Forwarded-User":         "forged",
+						"X-Forwarded-Email":        "forged@example.invalid",
+					})
+				Expect(err).NotTo(HaveOccurred())
+				body, bodyErr := qualificationResponseBody(response)
+				Expect(bodyErr).NotTo(HaveOccurred())
+				Expect(response.Header.Get("Content-Type")).NotTo(ContainSubstring("text/html"),
+					"the console read API must be served by AF, not the SPA fallback")
+				Expect(strings.ToLower(body)).NotTo(ContainSubstring("<!doctype html"),
+					"the console read API must not return the SPA index document")
+				Expect(strings.ToLower(body)).NotTo(ContainSubstring("forged-token"))
+				Expect(strings.ToLower(body)).NotTo(ContainSubstring("forged@example.invalid"))
+				Expect(strings.ToLower(body)).NotTo(ContainSubstring("access_token"))
+
+				// The ^~ prefix must win over the static-asset regex for an
+				// opaque resource ID ending in an asset-like extension; the
+				// static handler would answer text/html 404 from disk.
+				opaqueResponse, opaqueErr := qualificationRequest(ctx, client,
+					"/api/v1/console/inventory/managed-resources/opaque-id.js", nil)
+				Expect(opaqueErr).NotTo(HaveOccurred())
+				opaqueBody, opaqueBodyErr := qualificationResponseBody(opaqueResponse)
+				Expect(opaqueBodyErr).NotTo(HaveOccurred())
+				Expect(opaqueResponse.Header.Get("Content-Type")).NotTo(ContainSubstring("text/html"),
+					"opaque IDs with asset-like extensions must reach AF, not the static-asset handler")
+				Expect(strings.ToLower(opaqueBody)).NotTo(ContainSubstring("access_token"))
+
+				// Unauthenticated requests must be denied by OAuth2 Proxy
+				// before reaching AF.
+				unauthenticatedClient := qualificationHTTPClient(fixtureCA, adapter)
+				unauthenticatedResponse, unauthErr := qualificationRequest(ctx, unauthenticatedClient,
+					"/api/v1/console/policies/scope",
+					map[string]string{
+						"Authorization":            "Bearer forged-token",
+						"X-Forwarded-Access-Token": "Bearer forged-token",
+						"X-Forwarded-User":         "forged",
+					})
+				Expect(unauthErr).NotTo(HaveOccurred())
+				unauthenticatedBody, unauthBodyErr := qualificationResponseBody(unauthenticatedResponse)
+				Expect(unauthBodyErr).NotTo(HaveOccurred())
+				Expect(unauthenticatedResponse.StatusCode).NotTo(Equal(http.StatusOK),
+					"unauthenticated console read API access must be denied")
+				Expect(strings.ToLower(unauthenticatedBody)).NotTo(ContainSubstring("access_token"))
+
+				consoleLogs, logsErr := kubectl(ctx, "logs", "deployment/kubernaut-console", "-n", kubernautNamespace,
+					"-c", "oauth2-proxy", "--since=30m")
+				Expect(logsErr).NotTo(HaveOccurred())
+				for _, sensitiveValue := range qualificationSensitiveLogValues(session.setCookies) {
+					Expect(consoleLogs).NotTo(ContainSubstring(sensitiveValue))
+				}
+				evidence.Results[qualificationConsoleAPIResultID] = qualificationResult{
+					Passed: true,
+					Detail: "authenticated /api/v1/console/ reads reached AF (non-HTML) with forged identity " +
+						"headers replaced by the OAuth2 Proxy session; opaque asset-like IDs bypassed the " +
+						"static handler; unauthenticated reads were denied; session cookies stayed out of logs",
 				}
 			})
 
