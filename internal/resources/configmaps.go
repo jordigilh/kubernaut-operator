@@ -1047,8 +1047,7 @@ func kaReasoningFromSpec(r *kubernautv1alpha2.LLMReasoningSpec) *kaReasoningYAML
 }
 
 type kaInvestigationYAML struct {
-	MaxTurns                int `json:"maxTurns" yaml:"maxTurns"`
-	MaxEvidenceHandoffBytes int `json:"maxEvidenceHandoffBytes" yaml:"maxEvidenceHandoffBytes"`
+	MaxTurns int `json:"maxTurns" yaml:"maxTurns"`
 }
 
 type kaAlignmentYAML struct {
@@ -2077,7 +2076,6 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1a
 	ka := &kn.Spec.KubernautAgent
 	kaProfile, _ := ResolveLLMProfile(kn, EffectiveInvestigationLLMProfileRef(kn))
 	maxTurns := intPtrDefault(ka.Investigation.MaxTurns, 40)
-	maxEvidenceHandoffBytes := intPtrDefault(ka.WorkflowDiscovery.MaxEvidenceHandoffBytes, 262144)
 	maxConcurrentInvestigations := intDefault(ka.Session.MaxConcurrentInvestigations, 50)
 
 	cfg := kubernautAgentConfigYAML{
@@ -2103,8 +2101,7 @@ func KubernautAgentConfigMap(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1a
 				Provider: kaProfile.Provider,
 			},
 			Investigation: kaInvestigationYAML{
-				MaxTurns:                maxTurns,
-				MaxEvidenceHandoffBytes: maxEvidenceHandoffBytes,
+				MaxTurns: maxTurns,
 			},
 		},
 		Integrations: kaIntegrationsYAML{

@@ -250,19 +250,6 @@ var _ = Describe("Kind operator journey and portable NetworkPolicy contract", Or
 		})
 
 	It(
-		"E2E-KA-527-001 [CM-2, CM-3, CM-6, SA-11, SI-4; SOC2 CC7.2, CC8.1; "+
-			"ASVS v5.0.0-V2.2.1, v5.0.0-V14.2.4, v5.0.0-V16.5.2] reconciles the live KA evidence handoff "+
-			"default and explicit override",
-		func() {
-			assertLiveKAConfigOverride(ctx,
-				"maxEvidenceHandoffBytes: 262144",
-				`{"spec":{"kubernautAgent":{"workflowDiscovery":{"maxEvidenceHandoffBytes":131072}}}}`,
-				"maxEvidenceHandoffBytes: 131072",
-			)
-		},
-	)
-
-	It(
 		"E2E-KA-567-001 [CM-2, CM-3, CM-6, SA-11, SI-4; SOC2 CC7.2, CC8.1; "+
 			"ASVS v5.0.0-V2.2.1, v5.0.0-V14.2.4, v5.0.0-V16.5.2] reconciles the live KA investigation "+
 			"concurrency default and explicit override",

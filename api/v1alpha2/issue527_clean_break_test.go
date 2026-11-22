@@ -39,9 +39,8 @@ var _ = Describe("Issue #527: logical Agent configuration boundaries", func() {
 
 		workflowDiscovery := ka.Properties["workflowDiscovery"]
 		Expect(workflowDiscovery.Properties).To(HaveKey("llmProfileRef"))
-		Expect(string(workflowDiscovery.Properties["maxEvidenceHandoffBytes"].Default.Raw)).To(Equal("262144"))
-		Expect(workflowDiscovery.Properties["maxEvidenceHandoffBytes"].Minimum).NotTo(BeNil())
-		Expect(*workflowDiscovery.Properties["maxEvidenceHandoffBytes"].Minimum).To(Equal(float64(1)))
+		Expect(workflowDiscovery.Properties).NotTo(HaveKey("maxEvidenceHandoffBytes"),
+			"the evidence handoff budget is code-owned in Kubernaut Agent (#589)")
 
 		apiFrontend := schema.Properties["spec"].Properties["apiFrontend"]
 		Expect(apiFrontend.Properties["llmProfileRef"]).NotTo(BeNil())

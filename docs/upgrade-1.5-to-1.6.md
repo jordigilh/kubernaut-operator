@@ -75,7 +75,6 @@ spec:
       maxTurns: 40
     workflowDiscovery:
       llmProfileRef: workflow_discovery
-      maxEvidenceHandoffBytes: 262144
 ```
 
 One constraint on the new shape carried over from #187, with no automated
@@ -240,11 +239,14 @@ only the fields that reference them.
    replaces the base `llm` block and preserve `maxTurns` under
    `kubernautAgent.investigation`.
 3. Map the old `phaseModels.workflow_discovery` profile to
-   `spec.kubernautAgent.workflowDiscovery.llmProfileRef` and set
-   `workflowDiscovery.maxEvidenceHandoffBytes` to `262144` unless you have an
-   approved override. Old `rca` routing becomes the investigation profile;
-   `validation` phase overrides require manual review because validation is not
-   an independent LLM Agent in the current runtime.
+   `spec.kubernautAgent.workflowDiscovery.llmProfileRef`. Old `rca` routing
+   becomes the investigation profile; `validation` phase overrides require
+   manual review because validation is not an independent LLM Agent in the
+   current runtime. The `workflowDiscovery.maxEvidenceHandoffBytes` knob was
+   removed in v1.6 (#589): the Phase 3 handoff now carries only bounded
+   structured RCA/target-scoped Phase 2 context, and the structured context
+   budget is code-owned in Kubernaut Agent. Remove any override of the knob
+   from your manifest; fresh installs need no replacement setting.
 4. Remove `spec.kubernautAgent.llm` entirely.
 5. If you use API Frontend severity triage, set
    `spec.apiFrontend.severityTriage.llmProfileRef` explicitly (it no longer
