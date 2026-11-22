@@ -17,6 +17,7 @@ limitations under the License.
 package resources
 
 import (
+	"net/url"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -28,6 +29,7 @@ import (
 
 const (
 	malformedURL          = "not-a-url"
+	hostlessURL           = "https://:443"
 	testTelemetryCertFile = "/etc/telemetry/tls.crt"
 )
 
@@ -195,6 +197,16 @@ var _ = Describe("Console provider logout URL validation", func() {
 		Expect(strings.Join(errorStrings(errs), "; ")).To(ContainSubstring("cannot be validated without a valid effective OIDC issuer"))
 	})
 
+	It("UT-650-VALIDATE-005 [SI-10; ASVS V5.1.1]: fails closed when the effective OIDC issuer is hostless", func() {
+		kn := testKubernautWithConsole()
+		kn.Spec.APIFrontend.Auth.IssuerURL = hostlessURL
+		logoutURL, err := url.Parse("https://idp.example.com/logout?id_token_hint={id_token}")
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(validateConsoleLogoutAuthority(kn, logoutURL, "spec.console.auth.providerLogoutURL")).To(MatchError(
+			ContainSubstring("cannot be validated without a valid effective OIDC issuer")))
+	})
+
 	It("UT-483-VALIDATE-006 [SC-8; ASVS V5/V8]: rejects an HTTP effective issuer for logout configuration", func() {
 		kn := testKubernautWithConsole()
 		kn.Spec.APIFrontend.Auth.IssuerURL = "http://idp.example.com/realms/kubernaut"
@@ -352,6 +364,41 @@ var _ = Describe("APIFrontend Validation", func() {
 		kn.Spec.APIFrontend.AgentCardURL = ""
 		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
+	})
+
+	It("UT-650-VALIDATE-003 [SI-10; ASVS V5.1.1]: rejects a hostless agentCardURL like https://:443", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.AgentCardURL = hostlessURL
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("agentCardURL"))
+
+		By("a hostname with an explicit port remains valid")
+		kn.Spec.APIFrontend.AgentCardURL = "https://kubernaut.example.com:8443/.well-known/agent.json"
+		Expect(ValidateKubernaut(kn)).To(BeEmpty())
+	})
+
+	It("UT-650-VALIDATE-004 [SI-10; ASVS V5.1.1]: rejects hostless OIDC URLs like https://:443", func() {
+		kn := testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.IssuerURL = hostlessURL
+		errs := ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("issuerURL"))
+		Expect(errs[0].Error()).To(ContainSubstring("must be an absolute URL with scheme and host"))
+
+		By("the same contract applies to provider JWKS endpoints")
+		kn = testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha2.JWTProviderSpec{
+			{Name: "hostless", IssuerURL: "https://idp.example.com", JWKSURL: "https://:443/jwks", Audiences: []string{"kubernaut"}},
+		}
+		errs = ValidateKubernaut(kn)
+		Expect(errs).To(HaveLen(1))
+		Expect(errs[0].Error()).To(ContainSubstring("jwksURL"))
+
+		By("a hostname with an explicit port remains valid")
+		kn = testKubernautWithAF()
+		kn.Spec.APIFrontend.Auth.IssuerURL = "https://idp.example.com:8443/realms/test"
+		Expect(ValidateKubernaut(kn)).To(BeEmpty())
 	})
 
 	It("rejects empty configMapName in rbacRolesConfigMapRef", func() {
@@ -1200,6 +1247,14 @@ var _ = Describe("OTLP telemetry TLS contract", func() {
 		Expect(ValidateKubernaut(kn)).To(BeEmpty())
 	})
 
+	It("UT-650-VALIDATE-002 [SI-10; ASVS V2.2.1]: rejects hostless https:// telemetry endpoints at the URI parse site", func() {
+		Expect(validateTelemetryEndpoint(hostlessURL)).To(MatchError(ContainSubstring("plaintext HTTP and other URI forms")),
+			"hostless URI must fail fast at the parse site, not fall through to host:port normalization")
+
+		By("a hostname with an explicit port remains valid")
+		Expect(validateTelemetryEndpoint("https://otel-collector:4317")).To(Succeed())
+	})
+
 	DescribeTable("rejects non-TLS endpoint forms", func(endpoint string) {
 		kn := testKubernaut()
 		setGatewayTelemetry(kn, setNetworkTelemetry(endpoint))
@@ -1347,6 +1402,21 @@ var _ = Describe("shared monitoring TLS contract", func() {
 		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
 		Expect(joined).To(ContainSubstring("spec.monitoring.prometheus.url must be an https URL"))
 		Expect(joined).NotTo(ContainSubstring("spec.monitoring.alertManager.url must be an https URL"))
+	})
+
+	It("UT-650-VALIDATE-001 [SI-10; ASVS V2.2.1, V2.2.2]: rejects hostless monitoring URLs like https://:443", func() {
+		kn := testKubernaut()
+		kn.Spec.Monitoring.Prometheus.URL = hostlessURL
+		kn.Spec.Monitoring.AlertManager.URL = "https://:9093"
+
+		joined := strings.Join(errorStrings(ValidateKubernaut(kn)), "; ")
+		Expect(joined).To(ContainSubstring("spec.monitoring.prometheus.url must be an https URL"))
+		Expect(joined).To(ContainSubstring("spec.monitoring.alertManager.url must be an https URL"))
+
+		By("a hostname with an explicit port remains valid")
+		kn.Spec.Monitoring.Prometheus.URL = "https://prometheus.monitoring.svc:9090"
+		kn.Spec.Monitoring.AlertManager.URL = "https://alertmanager.monitoring.svc:9093"
+		Expect(ValidateKubernaut(kn)).To(BeEmpty())
 	})
 
 	It("TLS-VALIDATE-002 [SI-10; ASVS V2.2.1, V2.2.2] rejects monitoring URLs with leading or trailing whitespace", func() {
@@ -1618,6 +1688,22 @@ var _ = Describe("Fleet Config Validation", func() {
 		Expect(errs[1].Error()).To(ContainSubstring("spec.fleet.oauth2.tokenURL"))
 	})
 
+	It("UT-650-VALIDATE-006 [SI-10; ASVS V5.1.1]: rejects hostless Fleet endpoints like https://:443", func() {
+		kn := validFleet()
+		kn.Spec.Fleet.MCPGateway.Endpoint = hostlessURL
+		kn.Spec.Fleet.OAuth2.TokenURL = "https://:443/token"
+		errs := ValidateFleet(kn)
+		Expect(errs).To(HaveLen(2))
+		Expect(errs[0].Error()).To(ContainSubstring("spec.fleet.mcpGateway.endpoint"))
+		Expect(errs[1].Error()).To(ContainSubstring("spec.fleet.oauth2.tokenURL"))
+
+		By("hostnames with explicit ports remain valid")
+		kn = validFleet()
+		kn.Spec.Fleet.MCPGateway.Endpoint = "https://mcp-gateway.example.com:8443/sse"
+		kn.Spec.Fleet.OAuth2.TokenURL = "https://keycloak.example.com:8443/token"
+		Expect(ValidateFleet(kn)).To(BeEmpty())
+	})
+
 	It("rejects Fleet endpoints with surrounding whitespace", func() {
 		kn := validFleet()
 		kn.Spec.Fleet.MCPGateway.Endpoint = " https://mcp-gateway.example.com/sse"
@@ -1830,7 +1916,7 @@ var _ = Describe("FleetMetadataCache ACM source validation (#647)", func() {
 			"https://acm-search.example.com/graphql",
 			"https://user@acm-search.example.com",
 			" https://acm-search.example.com",
-			"https://:443",
+			hostlessURL,
 		} {
 			kn := validFleetWithACMSource()
 			kn.Spec.FleetMetadataCache.Sources.ACM.Endpoint = endpoint

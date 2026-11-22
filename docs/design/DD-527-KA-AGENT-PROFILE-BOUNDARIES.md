@@ -24,7 +24,6 @@ spec:
       maxTurns: 40
     workflowDiscovery:
       llmProfileRef: lightweight
-      maxEvidenceHandoffBytes: 262144
 
   apiFrontend:
     llmProfileRef: primary
@@ -52,7 +51,9 @@ than inventing an unsupported second turn-limit field.
 
 ## Alternatives rejected
 
-1. **Add only a flat `maxEvidenceHandoffBytes` field** — preserves the
+1. **Add only a flat evidence-handoff byte-budget field** (the knob this
+   document introduced was later removed in #589; the budget is code-owned in
+   Kubernaut Agent) — preserves the
    existing structural drift and leaves logical Agent ownership implicit.
 2. **Add a generic `kubernautAgent.llm` section** — makes profile ownership
    indirect even though the profile is consumed by a specific logical Agent.

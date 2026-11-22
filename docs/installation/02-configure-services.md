@@ -88,7 +88,6 @@ spec:
       maxTurns: 40
     workflowDiscovery:
       llmProfileRef: lightweight
-      maxEvidenceHandoffBytes: 262144
 ```
 
 Cross-credential Agent profile references are supported. The operator mounts each distinct credentials Secret read-only for its owning Agent invocation. Severity-triage retains its independent profile and fallback behavior.
@@ -151,7 +150,6 @@ spec:
       maxTurns: 40
     workflowDiscovery:
       llmProfileRef: lightweight   # gets its own reasoning policy, independent of primary's
-      maxEvidenceHandoffBytes: 262144
 ```
 
 `effort` is a unified, provider-agnostic depth knob: the same value means the same thing regardless of which provider a profile points at, but each provider's client maps it into its own wire dialect (e.g. Anthropic's thinking-level tiers, OpenAI/Azure o-series and gpt-5's `reasoning_effort`, DeepSeek's own two-tier dialect). Providers with no effort-dial concept simply ignore it.
