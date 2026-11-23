@@ -320,7 +320,11 @@ func init() {
 				Expect(strings.ToLower(body)).NotTo(ContainSubstring("access_token"))
 
 				// The managed-resource list read must preserve query
-				// parameters end to end.
+				// parameters end to end: valid filters must be accepted by
+				// AF's parser (a mangled or unsupported query would draw
+				// AF's 400 below), and an unsupported filter must draw AF's
+				// own 400 problem detail — proving the query string reaches
+				// AF rather than being dropped or rewritten by the proxy.
 				listResponse, listErr := qualificationRequest(ctx, client,
 					"/api/v1/console/inventory/managed-resources?cluster_id=local&limit=25",
 					map[string]string{
@@ -335,6 +339,20 @@ func init() {
 				Expect(strings.ToLower(listBody)).NotTo(ContainSubstring("forged@example.invalid"))
 				Expect(strings.ToLower(listBody)).NotTo(ContainSubstring("forged-token"))
 				Expect(strings.ToLower(listBody)).NotTo(ContainSubstring("access_token"))
+
+				invalidFilterResponse, invalidFilterErr := qualificationRequest(ctx, client,
+					"/api/v1/console/inventory/managed-resources?bogus_filter=1", nil)
+				Expect(invalidFilterErr).NotTo(HaveOccurred())
+				Expect(invalidFilterResponse.StatusCode).To(Equal(http.StatusBadRequest),
+					"an unsupported console read filter must draw AF's 400, proving query parameters reach AF intact")
+				Expect(invalidFilterResponse.Header.Get("Content-Type")).To(ContainSubstring("problem+json"),
+					"AF's invalid-filter response is an RFC 7807 problem detail")
+				invalidFilterBody, invalidFilterBodyErr := qualificationResponseBody(invalidFilterResponse)
+				Expect(invalidFilterBodyErr).NotTo(HaveOccurred())
+				invalidFilterProblem := map[string]any{}
+				Expect(json.Unmarshal([]byte(invalidFilterBody), &invalidFilterProblem)).To(Succeed())
+				Expect(invalidFilterProblem).To(HaveKeyWithValue("title", "Invalid request"),
+					"AF's invalid-filter problem detail carries the stable title")
 
 				// The ^~ prefix must win over the static-asset regex for an
 				// opaque resource ID ending in an asset-like extension; the
@@ -494,28 +512,35 @@ func init() {
 }
 
 // qualificationConsoleReadShape asserts that an authenticated Console read
-// response came from API Frontend with the expected shape: HTTP 200 with an
-// application/json body, or AF's own capability denial as an RFC 7807
-// application/problem+json document (AF writes denials via
-// pkg/apifrontend/httputil.WriteProblem). Any other status — including 401
-// (the session token was not forwarded) and redirects — fails the
-// qualification, so a broken route or auth cannot be recorded as success.
+// response came from API Frontend with the expected shape. AF's console read
+// API answers application/json for both the typed success projections
+// (policy scope result, ManagedResourcePage, resource detail — each carries a
+// state member) and the state envelopes; the capability denial is the
+// consoleStateEnvelope with state "forbidden" and message "access forbidden"
+// (pkg/apifrontend/handler/console_policyread.go projectionMessage). Any
+// other status — including 401 (the session token was not forwarded) and
+// redirects — fails the qualification, so a broken route or auth cannot be
+// recorded as success.
 func qualificationConsoleReadShape(response *http.Response, body string) {
-	if response.StatusCode == http.StatusOK {
-		Expect(response.Header.Get("Content-Type")).To(ContainSubstring("application/json"),
-			"an authenticated console read success must be an AF JSON response")
-		return
+	Expect(response.Header.Get("Content-Type")).To(ContainSubstring("json"),
+		"the console read API must be served by AF, not the SPA fallback or an nginx error page")
+	decoded := map[string]any{}
+	Expect(json.Unmarshal([]byte(body), &decoded)).To(Succeed(),
+		"an AF console read response must be a decodable JSON object")
+	switch response.StatusCode {
+	case http.StatusOK:
+		Expect(decoded).To(HaveKey("state"),
+			"a successful console read must be AF's typed projection carrying a state member")
+	case http.StatusForbidden:
+		Expect(decoded).To(HaveKeyWithValue("state", "forbidden"),
+			"a denied console read must be AF's consoleStateEnvelope")
+		Expect(decoded).To(HaveKeyWithValue("message", "access forbidden"),
+			"a denied console read must carry AF's stable capability-denial message")
+	default:
+		Fail(fmt.Sprintf("authenticated console read returned HTTP %d: expected 200 or AF's capability "+
+			"denial 403 (401 means the session token was not forwarded; redirects mean broken routing)",
+			response.StatusCode))
 	}
-	Expect(response.StatusCode).To(Equal(http.StatusForbidden),
-		"authenticated console reads must reach AF as 200 or an AF capability denial; "+
-			"401 means the session token was not forwarded, and redirects or other statuses mean broken routing")
-	Expect(response.Header.Get("Content-Type")).To(ContainSubstring("problem+json"),
-		"a denied console read must be AF's RFC 7807 application/problem+json capability denial")
-	problem := map[string]any{}
-	Expect(json.Unmarshal([]byte(body), &problem)).To(Succeed(),
-		"an AF capability denial must be a decodable problem document")
-	Expect(problem).To(HaveKey("title"),
-		"an AF capability denial must carry the RFC 7807 title member")
 }
 
 // loginQualificationUser performs the browser-equivalent authorization-code

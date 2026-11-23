@@ -88,13 +88,16 @@ Added by this change:
 
 - `E2E-CN-638-HTTP-001` (#660, extended): authenticated reads (policies/scope,
   the managed-resource list with query parameters, and an opaque asset-like
-  detail ID) reach AF and are shape-validated — HTTP 200 with an
-  `application/json` body or AF's own RFC 7807 `application/problem+json`
-  capability denial; 401, redirects, other statuses, and non-AF bodies fail
-  the case. Forged identity and bearer headers are not reflected;
-  unauthenticated requests are denied; **POST is rejected with 403 by the
-  read-only boundary**; no `access_token` appears in bodies or oauth2-proxy
-  logs.
+  detail ID) reach AF and are shape-validated against AF's actual contract —
+  HTTP 200 with a decodable `application/json` typed projection carrying a
+  `state` member, or AF's capability denial as the `consoleStateEnvelope`
+  (`state: "forbidden"`, `message: "access forbidden"`); 401, redirects,
+  other statuses, and non-AF bodies fail the case. Query-parameter reception
+  is proven end to end: valid filters are accepted while an unsupported
+  filter draws AF's own RFC 7807 `400 Invalid request` problem detail.
+  Forged identity and bearer headers are not reflected; unauthenticated
+  requests are denied; **POST is rejected with 403 by the read-only
+  boundary**; no `access_token` appears in bodies or oauth2-proxy logs.
 - The existing `E2E-CN-609-HTTP-002` continues to prove A2A/MCP routing is
   unaffected.
 
