@@ -1316,7 +1316,7 @@ func appendMCPGatewayOnlyFleetSecretMount(volumes []corev1.Volume, mounts []core
 
 // appendWorkflowExecutionFleetSecretMount mounts WE's own write-scoped
 // fleet-oauth2 credentials Secret (#235, DD-235). Unlike
-// appendMCPGatewayOnlyFleetSecretMount (SP/AF/EM/KA), this never falls back
+// appendMCPGatewayOnlyFleetSecretMount (SP/EM/KA), this never falls back
 // to the shared spec.fleet.oauth2.credentialsSecretRef: WE's write-scoped
 // client must always be independently configured (least-privilege).
 // validateFleetOAuth2 rejects fleet+oauth2 enablement without WE's own
