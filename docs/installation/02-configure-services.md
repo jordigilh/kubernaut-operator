@@ -738,16 +738,18 @@ additions land in v1.6: `sre` can also list pending approval requests
 (`list_clusters`); `ai-orchestrator` can discover fleet clusters but still
 cannot read or decide approvals (separation of duties, DD-278).
 
-**Console policy/inventory reads need a separate role.** The operator also
-renders `console-reader` (a seventh ClusterRole, cluster-scoped), granting
-only the three AF console read capabilities (`kubernaut_read_policy_scope`,
-`kubernaut_list_managed_resources`, `kubernaut_get_managed_resource`). It is
-**not bound by default** and no persona implies it, so login never grants
-console reads. Bind it through `roleBindings` with `clusterRoleName` — note
-the rendered name is namespace-prefixed, so reference
-`<namespace>-console-reader` exactly (the custom-binding path uses the name
-verbatim, no prefixing) — or your own ClusterRoleBinding. For a Kubernaut CR
-in `kubernaut-system`:
+**Console policy/inventory reads need a separate role — permanently.** The
+operator renders `console-reader` (a seventh ClusterRole, cluster-scoped),
+granting only the three AF console read capabilities
+(`kubernaut_read_policy_scope`, `kubernaut_list_managed_resources`,
+`kubernaut_get_managed_resource`). Per [DD-662](../design/DD-662-console-read-capability-model.md)
+this is the permanent model, not a placeholder: **no built-in persona
+implies it and login never grants console reads**. The operator never
+binds it implicitly; binding is an explicit administrator choice through
+`roleBindings` with `clusterRoleName` — note the rendered name is
+namespace-prefixed, so reference `<namespace>-console-reader` exactly (the
+custom-binding path uses the name verbatim, no prefixing) — or your own
+ClusterRoleBinding. For a Kubernaut CR in `kubernaut-system`:
 
 ```yaml
 spec:
@@ -758,9 +760,46 @@ spec:
           groups: ["console-readers"]
 ```
 
+Until a user holds the capability, console reads return AF's `forbidden`
+envelope and the Console renders its access-denied read state — the
+intended deny-by-default behavior. The boundary is the
+capability SAR, not this role's bind state: a user granted `use` on the
+same three `kubernaut.ai/tools` resourceNames through any other
+ClusterRole is equally authorized. The Console nginx `/api/v1/console/`
+proxy is transport only: it changes nothing about who can read.
+
 Local inventory reads additionally check the user's own Kubernetes
-`get`/`list` permissions on the exact projected resources, which remain your
-responsibility because the projected set depends on your managed scope.
+`get`/`list` permissions on the exact projected resources. The projected
+resource *set* is fixed by AF's Gateway-aligned allowlist (pods, services,
+nodes, persistent volumes, namespaces, deployments, statefulsets, daemonsets,
+replicasets, jobs, cronjobs — secrets and configmaps are excluded by design),
+so the operator renders those user-side grants as a dedicated
+`console-inventory-reader` ClusterRole
+(`<namespace>-console-inventory-reader`), granting only `get` and `list` on
+exactly those kinds. Like `console-reader` it is **not bound by default**: the
+operator renders roles, and your platform/SRE team owns every binding.
+
+Three scoping notes:
+
+- A bound user can also use the grant outside the Console (for example
+  `kubectl get pods`) — the Console projection authorizes with your own
+  Kubernetes permissions, so any grant satisfying it is a real grant.
+- The default inventory page is unfiltered, so it issues a cluster-scoped
+  list SAR; users need a cluster-level binding to see it.
+- A namespaced RoleBinding satisfies only namespace-filtered reads, and only
+  for the eight namespaced kinds in the namespaces you bind. `nodes`,
+  `persistentvolumes` and `namespaces` are cluster-scoped and always need a
+  cluster-level binding. Use namespace scoping deliberately: with it, any
+  unfiltered Console read returns `forbidden`.
+
+For a Kubernaut CR in `kubernaut-system`, bind the rendered role with your
+own RBAC objects (not through the Kubernaut CR):
+
+```bash
+oc create clusterrolebinding console-inventory-readers \
+  --clusterrole=kubernaut-system-console-inventory-reader \
+  --group=console-readers
+```
 
 **Console access is derived automatically — leave `consoleAccessGroups`
 unset.** `spec.apiFrontend.rbac.consoleAccessGroups` only has any effect
