@@ -57,8 +57,10 @@ func allowlistedResourceGroups(moduleDir string) map[string][]string {
 
 	groups := make(map[string][]string, len(entries))
 	for _, fields := range entries {
+		Expect(fields).To(HaveKey("Group"), "allowlist entry without a decoded Group literal")
+		Expect(fields).To(HaveKey("Resource"), "allowlist entry without a decoded Resource literal")
 		resource := fields["Resource"]
-		Expect(resource).NotTo(BeEmpty(), "allowlist entry without a Resource literal")
+		Expect(resource).NotTo(BeEmpty(), "allowlist entry with an empty Resource literal")
 		groups[fields["Group"]] = append(groups[fields["Group"]], resource)
 	}
 	return groups
@@ -103,14 +105,17 @@ func entriesInValueSpec(valueSpec *ast.ValueSpec) []map[string]string {
 	return nil
 }
 
-// decodeCompositeEntries decodes struct-literal elements into field maps,
-// skipping any element that is not a key/value struct literal.
+// decodeCompositeEntries decodes struct-literal elements into field maps.
+// It fails closed: an element that is not a struct literal is an upstream
+// shape this guard does not understand, and silently skipping it could make
+// the drift check pass while the rendered role omits a new kind.
 func decodeCompositeEntries(composite *ast.CompositeLit) []map[string]string {
 	entries := make([]map[string]string, 0, len(composite.Elts))
 	for _, element := range composite.Elts {
 		entry, isComposite := element.(*ast.CompositeLit)
 		if !isComposite {
-			continue
+			Fail("DefaultLocalResourceKinds contains an element this guard cannot decode; " +
+				"extend the parser before changing the role")
 		}
 		fields := make(map[string]string, len(entry.Elts))
 		for _, field := range entry.Elts {
