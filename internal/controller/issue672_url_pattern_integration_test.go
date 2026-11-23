@@ -17,6 +17,8 @@ limitations under the License.
 package controller
 
 import (
+	"fmt"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -36,6 +38,11 @@ var _ = Describe("Issue #672 CRD URL pattern admission [SI-10, CM-6]", Label("in
 	// scheme plus port-only authority, which net/url parses with an empty
 	// Hostname() and the admission validators reject at reconcile.
 	const hostlessURL = "https://:443"
+	// emptyBracketedHostURL carries a bracketed host with no content.
+	// net/url rejects it outright ("unable to parse IP"), and the pattern's
+	// bracketed-host alternative requires at least one character inside the
+	// brackets.
+	const emptyBracketedHostURL = "https://[]:443"
 
 	BeforeEach(func() {
 		deleteCRIfExists(ctx)
@@ -44,8 +51,50 @@ var _ = Describe("Issue #672 CRD URL pattern admission [SI-10, CM-6]", Label("in
 		deleteCRIfExists(ctx)
 	})
 
+	// rejectionEntries builds one entry per affected field for a value the
+	// CRD pattern must reject at apply time.
+	rejectionEntries := func(idBase int, raw string) []TableEntry {
+		return []TableEntry{
+			Entry(fmt.Sprintf("IT-672-PAT-%03d fleet oauth2 tokenURL", idBase), "tokenURL", raw,
+				func(kn *kubernautv1alpha2.Kubernaut) {
+					kn.Spec.Fleet.OAuth2.TokenURL = raw
+				}),
+			Entry(fmt.Sprintf("IT-672-PAT-%03d LLM profile oauth2 tokenURL", idBase+1), "tokenURL", raw,
+				func(kn *kubernautv1alpha2.Kubernaut) {
+					profile := kn.Spec.LLMProfiles["primary"]
+					profile.OAuth2.TokenURL = raw
+					kn.Spec.LLMProfiles["primary"] = profile
+				}),
+			Entry(fmt.Sprintf("IT-672-PAT-%03d ansible apiURL", idBase+2), "apiURL", raw,
+				func(kn *kubernautv1alpha2.Kubernaut) {
+					kn.Spec.WorkflowExecution.Ansible.APIURL = raw
+				}),
+			Entry(fmt.Sprintf("IT-672-PAT-%03d jwtProviders jwksURL", idBase+3), "jwksURL", raw,
+				func(kn *kubernautv1alpha2.Kubernaut) {
+					kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha2.JWTProviderSpec{{
+						Name:      "rhbk",
+						IssuerURL: "https://rhbk.example.com/realms/y",
+						JWKSURL:   raw,
+						Audiences: []string{"kubernaut-apifrontend"},
+					}}
+				}),
+			Entry(fmt.Sprintf("IT-672-PAT-%03d apiFrontend auth jwksURL", idBase+4), "jwksURL", raw,
+				func(kn *kubernautv1alpha2.Kubernaut) {
+					kn.Spec.APIFrontend.Auth.JWKSURL = raw
+				}),
+			Entry(fmt.Sprintf("IT-672-PAT-%03d prometheus url", idBase+5), "url", raw,
+				func(kn *kubernautv1alpha2.Kubernaut) {
+					kn.Spec.Monitoring.Prometheus.URL = raw
+				}),
+			Entry(fmt.Sprintf("IT-672-PAT-%03d alertManager url", idBase+6), "url", raw,
+				func(kn *kubernautv1alpha2.Kubernaut) {
+					kn.Spec.Monitoring.AlertManager.URL = raw
+				}),
+		}
+	}
+
 	DescribeTable("rejects hostless URLs at CRD admission",
-		func(fieldJSON string, mutate func(kn *kubernautv1alpha2.Kubernaut)) {
+		func(fieldJSON, raw string, mutate func(kn *kubernautv1alpha2.Kubernaut)) {
 			kn := newMinimalCR()
 			mutate(kn)
 			err := k8sClient.Create(ctx, kn)
@@ -59,44 +108,26 @@ var _ = Describe("Issue #672 CRD URL pattern admission [SI-10, CM-6]", Label("in
 			Expect(k8sClient.Get(ctx, singletonKey(), fetched)).To(MatchError(ContainSubstring("not found")),
 				"a rejected create must persist nothing")
 		},
-		Entry("IT-672-PAT-001 fleet oauth2 tokenURL", "tokenURL",
-			func(kn *kubernautv1alpha2.Kubernaut) {
-				kn.Spec.Fleet.OAuth2.TokenURL = hostlessURL
-			}),
-		Entry("IT-672-PAT-002 LLM profile oauth2 tokenURL", "tokenURL",
-			func(kn *kubernautv1alpha2.Kubernaut) {
-				profile := kn.Spec.LLMProfiles["primary"]
-				profile.OAuth2.TokenURL = hostlessURL
-				kn.Spec.LLMProfiles["primary"] = profile
-			}),
-		Entry("IT-672-PAT-003 ansible apiURL", "apiURL",
-			func(kn *kubernautv1alpha2.Kubernaut) {
-				kn.Spec.WorkflowExecution.Ansible.APIURL = hostlessURL
-			}),
-		Entry("IT-672-PAT-004 jwtProviders jwksURL", "jwksURL",
-			func(kn *kubernautv1alpha2.Kubernaut) {
-				kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha2.JWTProviderSpec{{
-					Name:      "rhbk",
-					IssuerURL: "https://rhbk.example.com/realms/y",
-					JWKSURL:   hostlessURL,
-					Audiences: []string{"kubernaut-apifrontend"},
-				}}
-			}),
-		Entry("IT-672-PAT-005 apiFrontend auth jwksURL", "jwksURL",
-			func(kn *kubernautv1alpha2.Kubernaut) {
-				kn.Spec.APIFrontend.Auth.JWKSURL = hostlessURL
-			}),
-		Entry("IT-672-PAT-006 prometheus url", "url",
-			func(kn *kubernautv1alpha2.Kubernaut) {
-				kn.Spec.Monitoring.Prometheus.URL = hostlessURL
-			}),
-		Entry("IT-672-PAT-007 alertManager url", "url",
-			func(kn *kubernautv1alpha2.Kubernaut) {
-				kn.Spec.Monitoring.AlertManager.URL = hostlessURL
-			}),
+		rejectionEntries(1, hostlessURL),
 	)
 
-	It("IT-672-PAT-008 accepts representative validator-compatible URLs at CRD admission", func() {
+	DescribeTable("rejects empty bracketed hosts at CRD admission",
+		func(fieldJSON, raw string, mutate func(kn *kubernautv1alpha2.Kubernaut)) {
+			kn := newMinimalCR()
+			mutate(kn)
+			err := k8sClient.Create(ctx, kn)
+			Expect(err).To(MatchError(SatisfyAll(
+				ContainSubstring(fieldJSON),
+				ContainSubstring("should match"),
+			)), "an empty bracketed host must be rejected by the CRD pattern at apply time")
+			fetched := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), fetched)).To(MatchError(ContainSubstring("not found")),
+				"a rejected create must persist nothing")
+		},
+		rejectionEntries(10, emptyBracketedHostURL),
+	)
+
+	It("IT-672-PAT-020 accepts representative validator-compatible URLs at CRD admission", func() {
 		kn := newMinimalCR()
 		kn.Spec.Fleet.OAuth2.TokenURL = "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token"
 		profile := kn.Spec.LLMProfiles["primary"]
@@ -116,7 +147,21 @@ var _ = Describe("Issue #672 CRD URL pattern admission [SI-10, CM-6]", Label("in
 			"host, host:port, bracketed IPv6, path-carrying, and http-under-validator-contract URLs must stay admissible")
 	})
 
-	It("IT-672-PAT-009 accepts colon-prefixed userinfo where the validators tolerate it", func() {
+	It("IT-672-PAT-021 accepts uppercase schemes, which the validators normalize", func() {
+		// net/url lowercases the scheme before the admission validators inspect
+		// it, so "HTTPS://host" is validator-accepted; the patterns match the
+		// scheme case-insensitively to stay a superset of that accept-set.
+		kn := newMinimalCR()
+		kn.Spec.Fleet.OAuth2.TokenURL = "HTTPS://keycloak.example.com/token"
+		kn.Spec.WorkflowExecution.Ansible.APIURL = "HTTP://awx.example.com:8052"
+		kn.Spec.APIFrontend.Auth.JWKSURL = "HTTPS://idp.example.com/realms/y/certs"
+		kn.Spec.Monitoring.Prometheus.URL = "HTTPS://prometheus.monitoring.svc:9090"
+		kn.Spec.Monitoring.AlertManager.URL = "HTTPS://alertmanager.monitoring.svc:9093"
+		Expect(k8sClient.Create(ctx, kn)).To(Succeed(),
+			"uppercase schemes must stay admissible because the validators accept them")
+	})
+
+	It("IT-672-PAT-022 accepts colon-prefixed userinfo where the validators tolerate it", func() {
 		// net/url splits userinfo before the host, so the host is nonempty
 		// and the OIDC validators accept it. The userinfo-tolerant pattern
 		// must still require a host character after the userinfo.
@@ -128,8 +173,7 @@ var _ = Describe("Issue #672 CRD URL pattern admission [SI-10, CM-6]", Label("in
 			JWKSURL:   "https://:example@rhbk.example.com/realms/y/certs",
 			Audiences: []string{"kubernaut-apifrontend"},
 		}}
-		expectErr := k8sClient.Create(ctx, kn)
-		Expect(expectErr).NotTo(HaveOccurred(),
+		Expect(k8sClient.Create(ctx, kn)).NotTo(HaveOccurred(),
 			"a host-bearing JWKS URL whose userinfo starts with ':' must stay admissible")
 	})
 })

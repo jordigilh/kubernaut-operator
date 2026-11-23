@@ -41,10 +41,23 @@ optional userinfo) is precisely the host-present requirement.
 
 | Field(s) | Pattern | Rationale |
 |---|---|---|
-| #1, #2 (fleet/LLM tokenURL) | `^$|^https://[^:/?#]` | validator pins https and rejects userinfo — same host form as the Console fields in #670; `^$|` keeps the empty value admissible (see below) |
-| #3 (ansible apiURL) | `^$|^https?://([^/?#]*@)?[^:/?#]` | no validator; minimal delta — http AWX endpoints stay admissible (see newly-rejected-set analysis below) |
-| #4, #5 (both jwksURL) | #4 `^https?://([^/?#]*@)?[^:/?#]`; #5 `^$|^https?://([^/?#]*@)?[^:/?#]` | OIDC contract: http admissible under allowInsecure flag, userinfo tolerated — same host form as the issuerURL fields in #670; #4 is required (MinLength=1) so it takes no `^$|` alternative, #5 is optional |
-| #6, #7 (prometheus/alertManager url) | `^$|^https://[^:/?#]` | `validateMonitoringEndpoints` pins https and rejects userinfo |
+| #1, #2 (fleet/LLM tokenURL) | `(?i)^$|^https://(?:[^:/?#\[]|\[[^]]+\])` | validator pins https and rejects userinfo; `^$|` keeps the empty value admissible; the bracketed alternative rejects an empty bracketed host (`https://[]:443`) while keeping IPv6 |
+| #3 (ansible apiURL) | `(?i)^$|^https?://(?:[^/?#]*@)?(?:[^:/?#\[]|\[[^]]+\])` | no validator; minimal delta — http AWX endpoints stay admissible (newly-rejected-set analysis below) |
+| #4, #5 (both jwksURL) | #4 `(?i)^https?://(?:[^/?#]*@)?(?:[^:/?#\[]|\[[^]]+\])`; #5 `(?i)^$|^https?://(?:[^/?#]*@)?(?:[^:/?#\[]|\[[^]]+\])` | OIDC contract: http admissible under allowInsecure flag, userinfo tolerated; #4 is required (MinLength=1) so it takes no `^$|` alternative, #5 is optional |
+| #6, #7 (prometheus/alertManager url) | `(?i)^$|^https://(?:[^:/?#\[]|\[[^]]+\])` | `validateMonitoringEndpoints` pins https and rejects userinfo |
+
+**Bracketed host.** The plain `[^:/?#]` host probe accepts `https://[]:443`
+(the first character after the scheme is `[`). The bracketed alternative
+`\[[^]]+\]` requires non-empty content inside the brackets, so an empty
+bracketed host is schema-rejected exactly as net/url rejects it
+("unable to parse IP"), while `[2001:db8::1]` style hosts stay
+admissible.
+
+**Scheme case.** `url.Parse` lowercases the scheme, so the admission
+validators accept `HTTPS://host`; the patterns therefore carry inline
+`(?i)` so the schema stays a superset of the validator accept-set. The
+http-versus-https restriction is unaffected (the inline flag only
+removes case sensitivity).
 
 **Empty-string handling (six optional fields).** Kubernetes structural
 schemas validate `pattern` against a *present* empty string, and all six
@@ -78,18 +91,11 @@ reject at reconcile (a hostless CR degrades today, so no working
 deployment can regress); for #3/#5 the newly-rejected set is enumerated
 above and contains no consumer-usable value.
 
-Known accepted residue (documented; both inherited from the #670
-methodology):
-
-- RE2 has no lookahead: userinfo-with-empty-host (`https://user@:443`)
-  cannot be rejected by a prefix pattern — remains schema-admitted,
-  validator-rejected (#1/#2/#4/#6/#7) or consumer-rejected (#3/#5)
-  exactly as today.
-- RE2 patterns are case-sensitive while the validators lowercase the
-  scheme via `url.Parse`, so an uppercase-scheme value (`HTTPS://host`)
-  is validator-accepted but schema-rejected. #670 shipped the same
-  divergence for its five fields; keeping it here is a deliberate
-  consistency choice, not an oversight.
+Known accepted residue (documented; inherited from the #670
+methodology): RE2 has no lookahead, so userinfo-with-empty-host
+(`https://user@:443`) cannot be rejected by a prefix pattern — it
+remains schema-admitted, validator-rejected (#1/#2/#4/#6/#7) or
+consumer-rejected (#3/#5) exactly as today.
 
 ## 3. TDD plan
 
