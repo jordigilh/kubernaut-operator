@@ -335,6 +335,7 @@ func init() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(postResponse.StatusCode).To(Equal(http.StatusForbidden),
 				"the Console read API must be read-only at the nginx boundary")
+			// Drain the body only; its content is irrelevant to the denial assertion.
 			_, _ = qualificationResponseBody(postResponse)
 
 			evidence.Results[qualificationConsoleReadResultID] = qualificationResult{
