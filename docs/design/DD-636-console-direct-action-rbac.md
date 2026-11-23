@@ -202,7 +202,7 @@ namespace and remain administrator-bound.
 | Authenticate without receiving every action | Inventory rows 1–2; console-access rule shape test; console-reader unbound IT | Met |
 | Workflow listing/reading and each direct action require the explicit role | Rows 4a–4c matrix; golden persona matrix; allow/deny boundary test | Met |
 | Missing roles produce a clear denial without executing | Upstream AF enforcement (fail-closed 403 / permission-denied); deny-by-default asserted here | Met (operator side); upstream tests cited |
-| Complete inventory, no unclassified direct actions | Full table above; row 4d deferred with F3; row 5 user-side grants implemented in v1.1 (#663) | Met |
+| Complete inventory, no unclassified direct actions | Full table above; row 4d deferred with F3; row 5 user-side grants implemented in v1.2 (#663) | Met |
 | Tests and documentation cover the role matrix | This document + tests table | Met |
 
 ## Follow-Ups
