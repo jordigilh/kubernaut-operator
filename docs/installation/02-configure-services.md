@@ -769,8 +769,37 @@ ClusterRole is equally authorized. The Console nginx `/api/v1/console/`
 proxy is transport only: it changes nothing about who can read.
 
 Local inventory reads additionally check the user's own Kubernetes
-`get`/`list` permissions on the exact projected resources, which remain your
-responsibility because the projected set depends on your managed scope.
+`get`/`list` permissions on the exact projected resources. The projected
+resource *set* is fixed by AF's Gateway-aligned allowlist (pods, services,
+nodes, persistent volumes, namespaces, deployments, statefulsets, daemonsets,
+replicasets, jobs, cronjobs — secrets and configmaps are excluded by design),
+so the operator renders those user-side grants as a dedicated
+`console-inventory-reader` ClusterRole
+(`<namespace>-console-inventory-reader`), granting only `get` and `list` on
+exactly those kinds. Like `console-reader` it is **not bound by default**: the
+operator renders roles, and your platform/SRE team owns every binding.
+
+Three scoping notes:
+
+- A bound user can also use the grant outside the Console (for example
+  `kubectl get pods`) — the Console projection authorizes with your own
+  Kubernetes permissions, so any grant satisfying it is a real grant.
+- The default inventory page is unfiltered, so it issues a cluster-scoped
+  list SAR; users need a cluster-level binding to see it.
+- A namespaced RoleBinding satisfies only namespace-filtered reads, and only
+  for the eight namespaced kinds in the namespaces you bind. `nodes`,
+  `persistentvolumes` and `namespaces` are cluster-scoped and always need a
+  cluster-level binding. Use namespace scoping deliberately: with it, any
+  unfiltered Console read returns `forbidden`.
+
+For a Kubernaut CR in `kubernaut-system`, bind the rendered role with your
+own RBAC objects (not through the Kubernaut CR):
+
+```bash
+oc create clusterrolebinding console-inventory-readers \
+  --clusterrole=kubernaut-system-console-inventory-reader \
+  --group=console-readers
+```
 
 **Console access is derived automatically — leave `consoleAccessGroups`
 unset.** `spec.apiFrontend.rbac.consoleAccessGroups` only has any effect
