@@ -173,6 +173,27 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		Expect(consoleAuth.Properties["providerLogoutURL"].Pattern).To(Equal(`^https://[^:/?#]`))
 	})
 
+	It("UT-672-API-001 [SI-10, CM-6] requires a host character in previously pattern-less URL fields", func() {
+		crd := loadKubernautCRD()
+		spec := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+		oauth2 := spec.Properties["fleet"].Properties["oauth2"]
+		Expect(oauth2.Properties["tokenURL"].Pattern).To(Equal(`(?i)^$|^https://(?:[^:/?#\[]|\[[^]]+\])`))
+
+		llmProfile := spec.Properties["llmProfiles"].AdditionalProperties.Schema
+		Expect(llmProfile.Properties["oauth2"].Properties["tokenURL"].Pattern).To(Equal(`(?i)^$|^https://(?:[^:/?#\[]|\[[^]]+\])`))
+
+		ansible := spec.Properties["workflowExecution"].Properties["ansible"]
+		Expect(ansible.Properties["apiURL"].Pattern).To(Equal(`(?i)^$|^https?://(?:[^/?#]*@)?(?:[^:/?#\[]|\[[^]]+\])`))
+
+		apiFrontendAuth := spec.Properties["apiFrontend"].Properties["auth"]
+		Expect(apiFrontendAuth.Properties["jwtProviders"].Items.Schema.Properties["jwksURL"].Pattern).To(Equal(`(?i)^https?://(?:[^/?#]*@)?(?:[^:/?#\[]|\[[^]]+\])`))
+		Expect(apiFrontendAuth.Properties["jwksURL"].Pattern).To(Equal(`(?i)^$|^https?://(?:[^/?#]*@)?(?:[^:/?#\[]|\[[^]]+\])`))
+
+		monitoring := spec.Properties["monitoring"]
+		Expect(monitoring.Properties["prometheus"].Properties["url"].Pattern).To(Equal(`(?i)^$|^https://(?:[^:/?#\[]|\[[^]]+\])`))
+		Expect(monitoring.Properties["alertManager"].Properties["url"].Pattern).To(Equal(`(?i)^$|^https://(?:[^:/?#\[]|\[[^]]+\])`))
+	})
+
 	It("UT-DS-550-API-001 publishes the semantic DataStorage contract with secure defaults", func() {
 		crd := loadKubernautCRD()
 		schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
