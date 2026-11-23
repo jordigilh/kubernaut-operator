@@ -51,8 +51,9 @@ A #662 spike verified the upstream facts before deciding:
   identity via `ScopeChecker`). Upstream defines *how* reads are
   authorized, never *who* should hold them.
 - The kubernaut#2584 implementation plan §8.2 explicitly deferred "add the
-  named read capabilities to selected built-in personas" without selecting
-  any personas — an open TODO, not an implicit mapping.
+  named read capabilities to selected built-in
+  personas/custom-role documentation" without selecting any personas — an
+  open documentation/grant TODO, not an implicit mapping.
 - The inference that "sre" owns the reads traces to the operator's Kind
   qualification realm having a single `sre` group/user — a test fixture,
   not a security decision (the same class of evidence DD-636 decision 4
@@ -130,7 +131,7 @@ No new components. Documentation and pinning tests only:
 
 | ID | Tier | Business behavior | Control |
 |---|---|---|---|
-| Issue #662 no implicit binding | UT | persona/custom/console-access CRBs never reference console-reader | AC-6, CC6.3 |
+| Issue #662 no implicit binding | UT | persona and derived console-access CRBs never reference console-reader; the custom path references it only on an explicit `clusterRoleName` | AC-6, CC6.3 |
 | Issue #662 explicit bind path | UT | `clusterRoleName` reference binds verbatim with the documented name | AC-3 |
 | Issue #662 coarse role shape | UT | one rule, three capabilities, `use` only | AC-6(2) |
 | IT-CONSOLE-010 | IT | after a real reconcile with persona bindings and the derived console-access CRB, no CRB in the cluster references console-reader | AC-6, CC6.3 |
