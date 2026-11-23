@@ -134,9 +134,9 @@ across both surfaces and (2) the operator granting both names. The decision is
   `issue636_console_rbac_test.go`; the #664 UT additionally asserts the two
   alert tool names per persona). SAR on a tool name
   that is never invoked is inert, so the alias is harmless if upstream renames.
-- This is a deliberate, documented divergence from the upstream Helm
-  `values.yaml` persona tool lists (see the inline comment in
-  `internal/resources/rbac.go`): a future values.yaml resync must not drop it.
+- This is a deliberate, documented divergence from the upstream persona tool
+  lists (see the inline comment in
+  `internal/resources/rbac.go`): a future persona tool-list resync must not drop it.
 - **Option 1 remains the end-state**: once upstream AF unifies the name (one
   authorization identity per capability) and its E2E drops the sre-only compat
   ClusterRole, the operator removes the alias and this decision collapses to a

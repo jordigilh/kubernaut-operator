@@ -3951,7 +3951,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(cr.Rules).To(HaveLen(1))
 			Expect(cr.Rules[0].ResourceNames).To(ContainElements(
 				"kubernaut_list_approval_requests", "list_clusters",
-			), "tool-sre must carry the #636 audited tools through the reconciler")
+				// #664: raw-MCP alias for the A2A list_alerts name (DD-636 row 4d).
+				"kubernaut_list_alerts",
+			), "tool-sre must carry the #636 audited tools and the #664 MCP alert alias through the reconciler")
 		})
 
 		It("IT-CONSOLE-008: prunes the console-reader role after AF is disabled", func() {

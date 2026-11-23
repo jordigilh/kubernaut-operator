@@ -767,9 +767,9 @@ var toolPersonas = []toolPersona{
 			// surface registers list_alerts while the raw MCP bridge registers
 			// kubernaut_list_alerts, and the per-action SAR checks the invoked
 			// name, so a persona holding only the A2A name is denied through
-			// raw /mcp. Deliberate divergence from the upstream Helm values.yaml
-			// tool lists (rows above cite PRs #1231/#1233/#1236): do not drop
-			// this alias in a values.yaml resync. Interim per DD-636 row 4d /
+			// raw /mcp. Deliberate divergence from the upstream persona tool
+			// lists (rows above cite PRs #1231/#1233/#1236): do not drop
+			// this alias in a persona tool-list resync. Interim per DD-636 row 4d /
 			// follow-up F3 -- the end-state is one authorization identity per
 			// capability upstream, at which point this alias is removed.
 			"kubernaut_list_alerts",
