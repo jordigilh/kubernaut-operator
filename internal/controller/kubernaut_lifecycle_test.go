@@ -3939,6 +3939,50 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}
 		})
 
+		It("IT-CONSOLE-010: keeps console-reader unbound even when persona and console-access bindings exist (#662/DD-662)", func() {
+			createBYOSecrets(ctx)
+			cr := newMinimalCR()
+			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
+				// Persona bindings plus the derived console-access default
+				// exercise every operator-rendered CRB path: none of them
+				// may reference the console-reader role.
+				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
+					{Role: "sre", Groups: []string{"sre-team"}},
+					{Role: "ai-orchestrator", Groups: []string{"ai-team"}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			reconcileToDeployPhase(ctx)
+
+			By("precondition: persona and derived console-access CRBs exist")
+			personaCRB := &rbacv1.ClusterRoleBinding{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: testNamespace + "-tool-sre-binding",
+			}, personaCRB)).To(Succeed(), "persona CRB should exist after deploy")
+			gateCRB := &rbacv1.ClusterRoleBinding{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: resources.ConsoleAccessCRBName(&kubernautv1alpha2.Kubernaut{
+					ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
+				}),
+			}, gateCRB)).To(Succeed(), "derived console-access CRB should exist after deploy")
+			Expect(gateCRB.Subjects).To(ConsistOf(
+				rbacv1.Subject{Kind: "Group", APIGroup: rbacv1.GroupName, Name: "sre-team"},
+				rbacv1.Subject{Kind: "Group", APIGroup: rbacv1.GroupName, Name: "ai-team"},
+			), "the derived console-access default must have been exercised")
+
+			By("no CRB in the cluster references the console-reader role")
+			knForNames := &kubernautv1alpha2.Kubernaut{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace}}
+			crbs := &rbacv1.ClusterRoleBindingList{}
+			Expect(k8sClient.List(ctx, crbs)).To(Succeed())
+			Expect(crbs.Items).NotTo(BeEmpty(), "precondition: the reconcile rendered CRBs")
+			for _, crb := range crbs.Items {
+				Expect(crb.RoleRef.Name).NotTo(Or(
+					Equal(resources.ConsoleReaderClusterRoleName(knForNames)),
+					HaveSuffix("-console-reader"),
+				), "binding %q must not implicitly reference console-reader (DD-662)", crb.Name)
+			}
+		})
+
 		It("IT-CONSOLE-007: renders tool-sre with the audited approval-visibility and fleet-discovery tools", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())

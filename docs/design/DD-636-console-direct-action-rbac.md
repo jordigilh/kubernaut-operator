@@ -26,6 +26,7 @@
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-11-22 | Operator Team | Initial audit, role matrix, console-reader role |
+| 1.1 | 2026-11-23 | Operator Team | Follow-up F1 resolved by DD-662: the coarse console-reader role is the permanent model; the Console proxy stays transport-only and the role stays unbound by default |
 
 ---
 
@@ -72,7 +73,7 @@ AF's backend identity (DD-FLEET-017 D5). Browser tokens are never forwarded.
 | 4b | Approval: `kubernaut_approve`, `kubernaut_list_approval_requests`, `kubernaut_get_approval_request`, `kubernaut_complete_no_action` | same | same | `tool-sre`, `tool-remediation-approver` | Granted; separation of duties per DD-278 |
 | 4c | Remediation + workflow catalog: `kubernaut_remediate`, `kubernaut_cancel_remediation`, `kubernaut_watch`, `kubernaut_list_remediations`, `kubernaut_get_remediation`, `kubernaut_list_workflows`, `kubernaut_discover_workflows`, `kubernaut_get_remediation_history`, `kubernaut_get_effectiveness`, `kubernaut_get_audit_trail` | same | same | `tool-*` personas | Granted per persona |
 | 4d | Raw MCP alias `kubernaut_list_alerts` (A2A name is `list_alerts`) | same | same | none | **Open** — dual-surface naming; see follow-up F3 |
-| 5 | Console REST read projection: `GET /api/v1/console/policies/scope`, `/inventory/managed-resources[/{id}]` (kubernaut#2584) | capability SARs `kubernaut_read_policy_scope`, `kubernaut_list_managed_resources`, `kubernaut_get_managed_resource` + user-scoped local target get/list; remote via ScopeChecker | ClusterRole `console-reader`: `kubernaut.ai/tools` `use` on the three capability names. Local target reads additionally need user-bound get/list on the exact hub resources, which remain administrator-owned (deployment-specific) | `ConsoleReaderClusterRole` (unbound by default) | New in this change; not reachable through the operator-managed Console nginx, which proxies only `/a2a/`, `/mcp`, `/.well-known/` — the role serves direct AF and future console/plugin clients |
+| 5 | Console REST read projection: `GET /api/v1/console/policies/scope`, `/inventory/managed-resources[/{id}]` (kubernaut#2584) | capability SARs `kubernaut_read_policy_scope`, `kubernaut_list_managed_resources`, `kubernaut_get_managed_resource` + user-scoped local target get/list; remote via ScopeChecker | ClusterRole `console-reader`: `kubernaut.ai/tools` `use` on the three capability names. Local target reads additionally need user-bound get/list on the exact hub resources, which remain administrator-owned (deployment-specific) | `ConsoleReaderClusterRole` (unbound by default) | New in this change; since #638/#660 the Console nginx `^~ /api/v1/console/` location proxies these reads to AF transport-only (GET-restricted, session-token forwarding) — kept permanently per DD-662, with capability authorization entirely at AF |
 | 6 | `/.well-known/agent-card` | authenticated surface, no per-action SAR | none | — | No grant |
 | 7 | AF ServiceAccount metadata inventory read (`<ns>-apifrontend-inventory-read`) | not a user check; backend transport identity | get/list on namespaces, nodes, pods, services, PVs, PVCs, deployments, replicasets, statefulsets, daemonsets, jobs, cronjobs, HPAs + admin-approved `spec.additionalClusterRoles` read projection (`internal/resources/inventory_rbac.go`) | bound to the AF SA | Classified: backend reads, never a substitute for a user capability |
 
@@ -98,8 +99,10 @@ picks up the console gate automatically; that is an upgrade-safety default
    and from per-action authorization (rows 4–5). No login or console-access
    grant may be widened to include tool or capability names.
 2. Render a new, least-privilege `console-reader` ClusterRole exposing exactly
-   the three console REST read capabilities, unbound by default, because
-   upstream has not decided which persona owns those reads. The three
+   the three console REST read capabilities, unbound by default. Per
+   [DD-662](DD-662-console-read-capability-model.md) (v1.1) no persona ever
+   owns these reads — the coarse role is the permanent model and binding is
+   an explicit administrator choice. The three
    capabilities are intentionally one coarse role ("coarse-grained user
    roles" per #636); splitting them further would add roles without an
    upstream authorization distinction.
@@ -173,10 +176,11 @@ namespace and remain administrator-bound.
 
 ## Follow-Ups
 
-- **F1** — (#662) Upstream must decide the persona↔console-read capability
-  mapping and whether the operator-managed Console (or the OCP console plugin)
-  should proxy `GET /api/v1/console/*` at all; until then `console-reader`
-  stays unbound and the standalone Console cannot reach the projection routes.
+- **F1** — (#662) **Resolved 2026-11-23 by [DD-662](DD-662-console-read-capability-model.md)**:
+  no persona ever carries the console read capabilities — the coarse
+  `console-reader` role is the permanent model, bound only explicitly by an
+  administrator; the Console nginx `/api/v1/console/` proxy (#638/#660)
+  stays transport-only, with capability authorization entirely at AF.
 - **F2** — (#663) User-side local-target Kubernetes get/list grants for the
   console inventory projection: the projected resource set depends on
   upstream's allowlist and the deployment's managed scope, so the operator

@@ -135,7 +135,10 @@ func ClusterRoles(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kuber
 		roles = append(roles, ConsoleAccessClusterRole(kn))
 		// #636: console REST read projection capabilities. Rendered but
 		// deliberately unbound -- the console-access (login) grant must not
-		// imply action authorization.
+		// imply action authorization. #662/DD-662 made this the permanent
+		// model: no persona carries these capabilities; binding is an
+		// explicit administrator choice via
+		// spec.apiFrontend.rbac.roleBindings[].clusterRoleName.
 		roles = append(roles, ConsoleReaderClusterRole(kn))
 	}
 
@@ -1067,11 +1070,11 @@ func ConsoleReaderClusterRoleName(kn *kubernautv1alpha2.Kubernaut) string {
 // so the capabilities are explicit resourceNames rather than a wildcard.
 //
 // The role is rendered whenever AF is enabled and deliberately has no
-// binding: upstream has not defined which persona owns these reads, and no
-// login/console-access grant may imply them (#636). Administrators bind it
-// through spec.apiFrontend.rbac.roleBindings[].clusterRoleName (the operator
-// creates the CRB) or their own ClusterRoleBinding. See
-// docs/design/DD-636-console-direct-action-rbac.md.
+// binding: no persona ever carries these reads (DD-662 permanent model),
+// and no login/console-access grant may imply them (#636). Administrators
+// bind it through spec.apiFrontend.rbac.roleBindings[].clusterRoleName (the
+// operator creates the CRB) or their own ClusterRoleBinding. See
+// docs/design/DD-662-console-read-capability-model.md.
 //
 // The read additionally requires user-scoped Kubernetes get/list on the exact
 // local target resources; those grants remain administrator-owned because the
