@@ -91,7 +91,7 @@ v1.0 and are rendered since v1.1 (Decision 6, #663).
 | `console-access` | console-access groups (derived or explicit) | `kubernaut.ai/console` `use` — the UI gate | Login-level only; never implies a tool |
 | `tool-<persona>` | OIDC groups from `spec.apiFrontend.rbac.roleBindings` | named tool actions | One ClusterRole per persona |
 | `console-reader` | nothing by default | the three console REST read capabilities | Bind via `roleBindings[].clusterRoleName` (rendered name is `<ns>-console-reader`, used verbatim) or an external CRB |
-| `console-inventory-reader` | nothing by default | user-side local-target `get`/`list` on AF's pinned 11-kind allowlist for the inventory projection | Bind like `console-reader` (cluster-wide). A namespaced RoleBinding satisfies only namespace-filtered reads (eight namespaced kinds); the default unfiltered list SAR is cluster-scoped, so the default inventory page needs a cluster-level binding (#663) |
+| `console-inventory-reader` | nothing by default | user-side local-target `get`/`list` on AF's pinned 11-kind allowlist for the inventory projection | Operator renders the role only; bind with an external CRB (cluster-wide) or namespaced RoleBinding. A namespaced binding satisfies only namespace-filtered reads (eight namespaced kinds); the default unfiltered list SAR is cluster-scoped, so the default inventory page needs a cluster-level binding (#663) |
 | `<ns>-apifrontend-inventory-read` | AF ServiceAccount | backend metadata reads for the projection | Never a user grant |
 
 A group bound to a persona also joins `effectiveConsoleAccessGroups`, so it
@@ -133,15 +133,17 @@ picks up the console gate automatically; that is an upgrade-safety default
    secrets and configmaps excluded upstream). The allowlist turned out to be
    upstream-fixed, not deployment-specific, so the grant is renderable
    without guessing; what stays administrator-owned is *who* is bound
-   (persona mapping remains #662). Binding is cluster-wide via
-   `roleBindings[].clusterRoleName` or an external CRB; a namespaced
-   RoleBinding satisfies only namespace-filtered reads, so the default
-   unfiltered list still needs a cluster-level binding. Any widening of the
+   (persona mapping remains #662; #682 moves every binding out of the CR to
+   the platform team). The operator renders the role and never binds it:
+   administrators create their own ClusterRoleBinding (cluster-wide) or a
+   namespaced RoleBinding (namespace-filtered reads only; the default
+   unfiltered list still needs a cluster-level binding). Any widening of the
    kind set must follow an upstream allowlist change: the UT
    `issue663_console_inventory_rbac_test.go` parses the pinned module's
    `DefaultLocalResourceKinds` and fails when the rendered rules drift, so a
    kubernaut bump that changes the allowlist must update the role
-   deliberately.
+   deliberately. The upstream ecosystem impact of the roles-only binding
+   model (#682) is tracked in kubernaut#2701 (E2E #2702, demo #2703).
 
 ## Amendment to DD-278 (v1.1)
 

@@ -773,12 +773,11 @@ Local inventory reads additionally check the user's own Kubernetes
 resource *set* is fixed by AF's Gateway-aligned allowlist (pods, services,
 nodes, persistent volumes, namespaces, deployments, statefulsets, daemonsets,
 replicasets, jobs, cronjobs — secrets and configmaps are excluded by design),
-so the operator renders those user-side grants as an eighth cluster role,
-`console-inventory-reader` (`<namespace>-console-inventory-reader`), granting
-only `get` and `list` on exactly those kinds. Like `console-reader` it is
-**not bound by default** and no persona implies it. Bind it the same way
-(`clusterRoleName: <namespace>-console-inventory-reader`) or your own
-ClusterRoleBinding for cluster-wide reads.
+so the operator renders those user-side grants as a dedicated
+`console-inventory-reader` ClusterRole
+(`<namespace>-console-inventory-reader`), granting only `get` and `list` on
+exactly those kinds. Like `console-reader` it is **not bound by default**: the
+operator renders roles, and your platform/SRE team owns every binding.
 
 Three scoping notes:
 
@@ -793,17 +792,14 @@ Three scoping notes:
   cluster-level binding. Use namespace scoping deliberately: with it, any
   unfiltered Console read returns `forbidden`.
 
-For a Kubernaut CR in `kubernaut-system`:
+For a Kubernaut CR in `kubernaut-system`, bind the rendered role with your
+own RBAC objects (not through the Kubernaut CR):
 
-```yaml
-spec:
-  apiFrontend:
-    rbac:
-      roleBindings:
-        - clusterRoleName: kubernaut-system-console-inventory-reader
-          groups: ["console-readers"]
+```bash
+oc create clusterrolebinding console-inventory-readers \
+  --clusterrole=kubernaut-system-console-inventory-reader \
+  --group=console-readers
 ```
-
 
 **Console access is derived automatically — leave `consoleAccessGroups`
 unset.** `spec.apiFrontend.rbac.consoleAccessGroups` only has any effect

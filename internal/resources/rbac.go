@@ -1132,13 +1132,14 @@ func ConsoleInventoryReaderClusterRoleName(kn *kubernautv1alpha2.Kubernaut) stri
 // The role is rendered whenever AF is enabled and deliberately has no
 // binding: which users or groups may read the local target is the
 // administrator's decision, and the upstream persona↔capability mapping is
-// still open (#662). Administrators bind it through their own
-// ClusterRoleBinding (cluster-wide) or the
-// spec.apiFrontend.rbac.roleBindings[].clusterRoleName convenience with the
-// fully-qualified rendered name. A namespaced RoleBinding satisfies only
-// namespace-filtered reads for the eight namespaced kinds; nodes,
-// persistentvolumes and namespaces are cluster-scoped and always require a
-// cluster-level binding, and the default unfiltered list needs one too. See
+// still open (#662). Administrators bind it with their own
+// ClusterRoleBinding (cluster-wide) or a namespaced RoleBinding
+// (namespace-filtered reads only); the operator never renders the binding
+// (#682 moves every user-facing binding out of the CR). A namespaced
+// RoleBinding satisfies only namespace-filtered reads for the eight
+// namespaced kinds; nodes, persistentvolumes and namespaces are
+// cluster-scoped and always require a cluster-level binding, and the
+// default unfiltered list needs one too. See
 // docs/design/DD-636-console-direct-action-rbac.md and
 // docs/installation/02-configure-services.md.
 func ConsoleInventoryReaderClusterRole(kn *kubernautv1alpha2.Kubernaut) *rbacv1.ClusterRole {
