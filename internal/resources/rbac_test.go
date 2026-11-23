@@ -68,10 +68,10 @@ func apiFrontendVerbs(role *rbacv1.ClusterRole, resource string) []string {
 }
 
 var _ = Describe("ClusterRoles", func() {
-	It("returns exactly 18 roles (14 base + 2 monitoring + 1 console-access + 1 console-reader)", func() {
+	It("returns exactly 19 roles (14 base + 2 monitoring + 1 console-access + 1 console-reader + 1 console-inventory-reader)", func() {
 		kn := testKubernaut()
 		roles := ClusterRoles(kn, testKnV2(kn))
-		Expect(roles).To(HaveLen(18), "ClusterRoles() should return exactly 18 roles (14 base + 2 monitoring + 1 console-access, #289 + 1 console-reader, #636), got %d", len(roles))
+		Expect(roles).To(HaveLen(19), "ClusterRoles() should return exactly 19 roles (14 base + 2 monitoring + 1 console-access, #289 + 1 console-reader, #636 + 1 console-inventory-reader, #663), got %d", len(roles))
 	})
 
 	It("contains expected role names", func() {
@@ -100,6 +100,7 @@ var _ = Describe("ClusterRoles", func() {
 			ns + "-alertmanager-view",
 			ns + "-gateway-signal-source",
 			ns + "-console-reader",
+			ns + "-console-inventory-reader",
 		}
 
 		for _, name := range expectedNames {

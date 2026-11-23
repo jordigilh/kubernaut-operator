@@ -140,6 +140,11 @@ func ClusterRoles(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kuber
 		// explicit administrator choice via
 		// spec.apiFrontend.rbac.roleBindings[].clusterRoleName.
 		roles = append(roles, ConsoleReaderClusterRole(kn))
+		// #663: user-side local-target get/list for the console inventory
+		// projection. Rendered but deliberately unbound, exactly like
+		// console-reader -- which users may read the local target stays an
+		// administrator decision (#662 tracks the upstream persona mapping).
+		roles = append(roles, ConsoleInventoryReaderClusterRole(kn))
 	}
 
 	// #224 Finding 5: once the shared spec.fleet.mcpGateway.namespace
@@ -1076,9 +1081,10 @@ func ConsoleReaderClusterRoleName(kn *kubernautv1alpha2.Kubernaut) string {
 // operator creates the CRB) or their own ClusterRoleBinding. See
 // docs/design/DD-662-console-read-capability-model.md.
 //
-// The read additionally requires user-scoped Kubernetes get/list on the exact
-// local target resources; those grants remain administrator-owned because the
-// projected resource set is deployment-specific.
+// The read additionally requires the invoking user's own Kubernetes get/list
+// grants on the local target resources; those are rendered separately as
+// ConsoleInventoryReaderClusterRole (#663), and binding them stays an
+// administrator decision.
 func ConsoleReaderClusterRole(kn *kubernautv1alpha2.Kubernaut) *rbacv1.ClusterRole {
 	if !kn.Spec.APIFrontendEnabled() {
 		return nil
@@ -1098,6 +1104,59 @@ func ConsoleReaderClusterRole(kn *kubernautv1alpha2.Kubernaut) *rbacv1.ClusterRo
 			},
 			Verbs: []string{"use"},
 		}},
+	}
+}
+
+// ConsoleInventoryReaderClusterRoleName returns the name of the
+// console-inventory-reader ClusterRole (#663).
+func ConsoleInventoryReaderClusterRoleName(kn *kubernautv1alpha2.Kubernaut) string {
+	return clusterRoleName(kn, "console-inventory-reader")
+}
+
+// ConsoleInventoryReaderClusterRole builds the user-side local-target grant
+// for the console managed-inventory projection (#663, closing DD-636 F2).
+//
+// AF authorizes a console user's local-target reads through
+// ResourceAttributes SubjectAccessReviews AS THE INVOKING USER, not the AF
+// ServiceAccount: list reads check verb "list" per allowlisted kind (carrying
+// the namespace/name filters when the caller supplied them, so the default
+// unfiltered list is a cluster-scoped SAR) and exact reads check verb "get"
+// with the exact group/version/resource/namespace/name (kubernaut
+// pkg/apifrontend/policyread service.go authorize/authorizeTarget against
+// DefaultLocalResourceKinds, pinned at
+// v1.6.0-rc9.0.20261120145050-6bd88d5dc344). The kind set below mirrors that
+// pinned allowlist exactly: 11 Gateway-aligned kinds; secrets and configmaps
+// are intentionally excluded upstream and stay excluded here. Any widening
+// must follow an upstream allowlist change, not an operator-side decision.
+//
+// The role is rendered whenever AF is enabled and deliberately has no
+// binding: which users or groups may read the local target is the
+// administrator's decision, and the upstream persona↔capability mapping is
+// still open (#662). Administrators bind it through their own
+// ClusterRoleBinding (cluster-wide) or the
+// spec.apiFrontend.rbac.roleBindings[].clusterRoleName convenience with the
+// fully-qualified rendered name. A namespaced RoleBinding satisfies only
+// namespace-filtered reads for the eight namespaced kinds; nodes,
+// persistentvolumes and namespaces are cluster-scoped and always require a
+// cluster-level binding, and the default unfiltered list needs one too. See
+// docs/design/DD-636-console-direct-action-rbac.md and
+// docs/installation/02-configure-services.md.
+func ConsoleInventoryReaderClusterRole(kn *kubernautv1alpha2.Kubernaut) *rbacv1.ClusterRole {
+	if !kn.Spec.APIFrontendEnabled() {
+		return nil
+	}
+	return &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   ConsoleInventoryReaderClusterRoleName(kn),
+			Labels: CommonLabels(kn),
+		},
+		Rules: []rbacv1.PolicyRule{
+			// Mirrors pkg/apifrontend/policyread DefaultLocalResourceKinds
+			// (pinned module version in the doc comment above).
+			{APIGroups: []string{""}, Resources: []string{"pods", "services", "nodes", "persistentvolumes", "namespaces"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"apps"}, Resources: []string{"deployments", "statefulsets", "daemonsets", "replicasets"}, Verbs: []string{"get", "list"}},
+			{APIGroups: []string{"batch"}, Resources: []string{"jobs", "cronjobs"}, Verbs: []string{"get", "list"}},
+		},
 	}
 }
 
