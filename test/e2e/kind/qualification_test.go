@@ -68,15 +68,17 @@ type qualificationResult struct {
 }
 
 const (
-	qualificationLoginResultID   = "E2E-CN-609-HTTP-001"
-	qualificationAccessResultID  = "E2E-CN-609-HTTP-002"
-	qualificationRefreshResultID = "E2E-CN-609-HTTP-003"
-	qualificationLogoutResultID  = "E2E-CN-609-HTTP-004"
+	qualificationLoginResultID       = "E2E-CN-609-HTTP-001"
+	qualificationAccessResultID      = "E2E-CN-609-HTTP-002"
+	qualificationConsoleReadResultID = "E2E-CN-638-HTTP-001"
+	qualificationRefreshResultID     = "E2E-CN-609-HTTP-003"
+	qualificationLogoutResultID      = "E2E-CN-609-HTTP-004"
 )
 
 var qualificationExpectedResultIDs = []string{
 	qualificationLoginResultID,
 	qualificationAccessResultID,
+	qualificationConsoleReadResultID,
 	qualificationRefreshResultID,
 	qualificationLogoutResultID,
 }
@@ -283,6 +285,66 @@ func init() {
 						"Proxy logs did not contain the test values",
 				}
 			})
+
+		It("E2E-CN-638-HTTP-001 [AC-3, AC-6, CC6.1, CC6.3]: routes Console policy and inventory reads to AF", func() {
+			// The three authenticated Console read endpoints must reach AF
+			// (a JSON API response, never the SPA fallback HTML), with query
+			// parameters and opaque identifiers preserved, while client-
+			// supplied identity headers cannot influence the forwarded token.
+			consoleReadPaths := []string{
+				"/api/v1/console/policies/scope?cluster_id=local",
+				"/api/v1/console/inventory/managed-resources?cluster_id=local&limit=25",
+				"/api/v1/console/inventory/managed-resources/urn:kubernaut:qualification.read.js",
+			}
+			forgedHeaders := map[string]string{
+				"Authorization":            "Bearer forged-token",
+				"X-Forwarded-Access-Token": "Bearer forged-token",
+				"X-Forwarded-User":         "forged",
+				"X-Forwarded-Email":        "forged@example.invalid",
+			}
+
+			for _, path := range consoleReadPaths {
+				response, err := qualificationRequest(ctx, client, path, forgedHeaders)
+				Expect(err).NotTo(HaveOccurred(), path)
+				body, bodyErr := qualificationResponseBody(response)
+				Expect(bodyErr).NotTo(HaveOccurred(), path)
+				Expect(response.Header.Get("Content-Type")).NotTo(ContainSubstring("text/html"),
+					"%s must reach API Frontend rather than the SPA fallback", path)
+				Expect(strings.ToLower(body)).NotTo(ContainSubstring("<!doctype html"),
+					"%s must not return SPA HTML", path)
+				Expect(strings.ToLower(body)).NotTo(ContainSubstring("forged@example.invalid"),
+					"%s must not reflect forged identity headers", path)
+				Expect(strings.ToLower(body)).NotTo(ContainSubstring("forged-token"),
+					"%s must not reflect a client-supplied bearer token", path)
+				Expect(strings.ToLower(body)).NotTo(ContainSubstring("access_token"),
+					"%s must not disclose credentials", path)
+
+				unauthenticatedClient := qualificationHTTPClient(fixtureCA, adapter)
+				unauthenticatedResponse, unauthenticatedErr := qualificationRequest(ctx, unauthenticatedClient, path, forgedHeaders)
+				Expect(unauthenticatedErr).NotTo(HaveOccurred(), path)
+				unauthenticatedBody, unauthenticatedBodyErr := qualificationResponseBody(unauthenticatedResponse)
+				Expect(unauthenticatedBodyErr).NotTo(HaveOccurred(), path)
+				Expect(unauthenticatedResponse.StatusCode).NotTo(Equal(http.StatusOK),
+					"%s must be denied without a session", path)
+				Expect(strings.ToLower(unauthenticatedBody)).NotTo(ContainSubstring("access_token"))
+			}
+
+			By("denying non-GET methods at the proxy boundary")
+			postResponse, err := qualificationRequestURL(ctx, client, http.MethodPost,
+				"https://"+qualificationConsoleHost+":8843/api/v1/console/policies/scope", strings.NewReader("{}"), forgedHeaders)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(postResponse.StatusCode).To(Equal(http.StatusForbidden),
+				"the Console read API must be read-only at the nginx boundary")
+			_, _ = qualificationResponseBody(postResponse)
+
+			evidence.Results[qualificationConsoleReadResultID] = qualificationResult{
+				Passed: true,
+				Detail: "authenticated policy scope and managed-inventory reads (list, detail with query " +
+					"parameters and an opaque dotted identifier) returned API Frontend JSON responses rather " +
+					"than SPA HTML; forged identity and bearer values were not reflected; unauthenticated " +
+					"requests were denied and POST was rejected with 403",
+			}
+		})
 
 		It("E2E-CN-609-HTTP-003 [IA-2, SC-23]: refreshes a live session without changing the CRD contract", func() {
 			By("temporarily accelerating cookie-refresh on the deployed OAuth2 Proxy for this test only")

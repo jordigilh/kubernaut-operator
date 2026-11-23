@@ -1828,7 +1828,10 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 	for _, cm := range configMaps {
 		changed := false
 		var err error
-		if cm.Name == string(resources.ComponentConsole)+"-oauth2-proxy" {
+		// Both Console ConfigMaps are subPath-mounted into the console
+		// containers, so drift repairs must be reported to roll the pod.
+		if cm.Name == string(resources.ComponentConsole)+"-oauth2-proxy" ||
+			cm.Name == string(resources.ComponentConsole)+"-nginx" {
 			changed, err = r.ensureNamespacedChanged(ctx, kn, cm)
 		} else {
 			err = r.ensureNamespaced(ctx, kn, cm)
@@ -1839,12 +1842,12 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 		if changed {
 			live := &corev1.ConfigMap{}
 			if err := r.ownershipReader().Get(ctx, client.ObjectKeyFromObject(cm), live); err != nil {
-				return nil, fmt.Errorf("reading console oauth2-proxy configmap revision: %w", err)
+				return nil, fmt.Errorf("reading console ConfigMap revision: %w", err)
 			}
-			// The alpha config is mounted with subPath, so a repaired ConfigMap
-			// is not reflected in an already-running oauth2-proxy container. The
-			// uncached resourceVersion changes after a drift repair and forces the
-			// Console Deployment pod template to roll.
+			// The nginx and alpha configurations are mounted with subPath, so
+			// a repaired ConfigMap is not reflected in already-running console
+			// containers. The uncached resourceVersion changes after a drift
+			// repair and forces the Console Deployment pod template to roll.
 			cmHashes["console"] += "+resourceVersion:" + live.ResourceVersion
 		}
 	}

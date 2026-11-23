@@ -599,6 +599,105 @@ var _ = Describe("Console Resources", func() {
 		})
 	})
 
+	Context("ConsoleNginxConfigMap API read proxy (#638)", func() {
+		consoleReadMatchers := []string{
+			"= /api/v1/console/policies/scope",
+			"= /api/v1/console/inventory/managed-resources",
+			"~ ^/api/v1/console/inventory/managed-resources/",
+		}
+
+		consoleLocationBlock := func(conf, matcher string) string {
+			idx := strings.Index(conf, "location "+matcher)
+			Expect(idx).To(BeNumerically(">=", 0), "location %s must exist in server.conf", matcher)
+			next := strings.Index(conf[idx+1:], "\nlocation ")
+			if next < 0 {
+				return conf[idx:]
+			}
+			return conf[idx : idx+1+next]
+		}
+
+		It("UT-CN-638-001 [AC-3, CC6.1]: routes the three Console read endpoints to API Frontend", func() {
+			kn := testKubernautWithConsole()
+			serverConf := ConsoleNginxConfigMap(kn).Data["server.conf"]
+			expectedUpstream := fmt.Sprintf("proxy_pass https://%s.%s.svc:%d;",
+				ComponentAPIFrontend, testSystemNamespace, PortHTTPS)
+			for _, matcher := range consoleReadMatchers {
+				block := consoleLocationBlock(serverConf, matcher)
+				Expect(block).To(ContainSubstring(expectedUpstream),
+					"location %s must proxy to the namespace-scoped API Frontend over HTTPS", matcher)
+			}
+		})
+
+		It("UT-CN-638-002: preserves the request path, query parameters and opaque identifiers", func() {
+			kn := testKubernautWithConsole()
+			serverConf := ConsoleNginxConfigMap(kn).Data["server.conf"]
+			expectedUpstream := fmt.Sprintf("proxy_pass https://%s.%s.svc:%d;\n",
+				ComponentAPIFrontend, testSystemNamespace, PortHTTPS)
+			for _, matcher := range consoleReadMatchers {
+				block := consoleLocationBlock(serverConf, matcher)
+				Expect(block).To(ContainSubstring(expectedUpstream),
+					"proxy_pass must carry no URI suffix so the original path and query string reach AF unchanged")
+			}
+			// The opaque resourceID location is a regex evaluated before the
+			// static-asset regex so identifiers containing dots (foo.js) still
+			// reach AF instead of the SPA asset handler. Multi-segment tails
+			// and a trailing slash intentionally match and receive AF's 404.
+			regexIdx := strings.Index(serverConf, "location ~ ^/api/v1/console/inventory/managed-resources/")
+			assetIdx := strings.Index(serverConf, `location ~* \.(js|css|`)
+			Expect(regexIdx).To(BeNumerically(">=", 0), "managed-resources regex location must exist")
+			Expect(assetIdx).To(BeNumerically(">=", 0), "static-asset regex location must exist")
+			Expect(regexIdx).To(BeNumerically("<", assetIdx),
+				"the managed-resources regex must be declared before the static-asset regex")
+		})
+
+		It("UT-CN-638-003 [AC-3, CC6.3]: restricts the Console read routes to GET requests", func() {
+			kn := testKubernautWithConsole()
+			serverConf := ConsoleNginxConfigMap(kn).Data["server.conf"]
+			for _, matcher := range consoleReadMatchers {
+				block := consoleLocationBlock(serverConf, matcher)
+				Expect(block).To(ContainSubstring("limit_except GET { deny all; }"),
+					"location %s must deny non-GET methods at the proxy boundary (HEAD stays permitted, matching AF's Go mux)", matcher)
+			}
+		})
+
+		It("UT-CN-638-004 [AC-6, CC6.1]: forwards only the trusted session identity", func() {
+			kn := testKubernautWithConsole()
+			serverConf := ConsoleNginxConfigMap(kn).Data["server.conf"]
+			for _, matcher := range consoleReadMatchers {
+				block := consoleLocationBlock(serverConf, matcher)
+				Expect(block).To(ContainSubstring(`proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";`),
+					"location %s must overwrite any client Authorization header with the oauth2-proxy session token", matcher)
+				Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-Access-Token "";`),
+					"location %s must not forward the raw access token to AF in a second header", matcher)
+				Expect(block).To(ContainSubstring("limit_req zone=api burst=50 nodelay;"),
+					"location %s must keep the shared API rate limit", matcher)
+			}
+		})
+
+		It("UT-CN-638-005 [SC-8]: keeps upstream certificate verification and HTTPS-only proxying", func() {
+			kn := testKubernautWithConsole()
+			serverConf := ConsoleNginxConfigMap(kn).Data["server.conf"]
+			Expect(serverConf).To(ContainSubstring("proxy_ssl_verify on"),
+				"the server-level AF certificate verification must stay enabled for the new locations")
+			Expect(serverConf).NotTo(ContainSubstring("proxy_ssl_verify off"))
+			Expect(serverConf).NotTo(ContainSubstring("proxy_pass http://"),
+				"plaintext HTTP proxy_pass to AF must not appear")
+		})
+
+		It("UT-CN-638-006: does not route unrelated API paths", func() {
+			kn := testKubernautWithConsole()
+			serverConf := ConsoleNginxConfigMap(kn).Data["server.conf"]
+			Expect(serverConf).NotTo(ContainSubstring("location /api/"),
+				"no generic /api prefix location may proxy unrelated APIs to AF")
+			Expect(serverConf).NotTo(ContainSubstring("location /api/v1/"))
+			// Existing routes and the SPA fallback remain unchanged.
+			Expect(serverConf).To(ContainSubstring("location /a2a/"))
+			Expect(serverConf).To(ContainSubstring("location = /mcp"))
+			Expect(serverConf).To(ContainSubstring("location /.well-known/"))
+			Expect(serverConf).To(ContainSubstring("try_files $uri $uri/ /index.html"))
+		})
+	})
+
 	Context("ConsoleDeployment oauth2-proxy TLS (#309)", func() {
 		const tlsCAMountPath = "/etc/tls-ca"
 

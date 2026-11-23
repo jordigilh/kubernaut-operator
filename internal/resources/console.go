@@ -466,10 +466,47 @@ gzip_vary on;
 `
 }
 
+// consoleAPIReadLocation renders one #638 Console API read location block.
+// The matcher is the nginx location match (exact or regex). proxy_pass carries
+// no URI suffix, so nginx forwards the original request URI, query parameters,
+// and opaque resource identifiers unchanged. oauth2-proxy is the only ingress
+// and injects X-Forwarded-Access-Token from the verified session; the
+// Authorization rewrite discards any client-supplied bearer token, and the raw
+// forwarded token is not passed on to API Frontend in a second header.
+// limit_except restricts the boundary to reads (HEAD stays permitted, matching
+// AF's Go ServeMux "GET" pattern registration).
+func consoleAPIReadLocation(matcher, afURL string) string {
+	return fmt.Sprintf(`location %s {
+  limit_req zone=api burst=50 nodelay;
+  proxy_pass %s;
+  proxy_http_version 1.1;
+  proxy_set_header Connection "";
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";
+  proxy_set_header X-Forwarded-Access-Token "";
+  limit_except GET { deny all; }
+}
+`, matcher, afURL)
+}
+
+// consoleAPIReadLocations renders the #638 Console API read routing: the
+// upstream URL has no URI suffix so the full request path and query string are
+// preserved. The resourceID location is a regex declared before the
+// static-asset regex so opaque identifiers containing dots (e.g. foo.js) reach
+// AF instead of the SPA asset handler; multi-segment tails intentionally match
+// and receive AF's own 404. Unrelated /api/v1 paths are not routed.
+func consoleAPIReadLocations(afURL string) string {
+	return consoleAPIReadLocation(`= /api/v1/console/policies/scope`, afURL) +
+		consoleAPIReadLocation(`= /api/v1/console/inventory/managed-resources`, afURL) +
+		consoleAPIReadLocation(`~ ^/api/v1/console/inventory/managed-resources/`, afURL)
+}
+
 // consoleNginxServerConf returns the server-level nginx directives: security
 // headers, TLS trust for the AF upstream, and the location blocks proxying
-// /a2a/, /mcp, /.well-known/, static assets, /runtime-config.js (#314), and
-// the SPA fallback.
+// /a2a/, /mcp, /.well-known/, the #638 Console API reads, static assets,
+// /runtime-config.js (#314), and the SPA fallback.
 func consoleNginxServerConf(afURL string, enableRawThinking bool, caFiles ...string) string {
 	caFile := InterServiceTLSCAFile
 	if len(caFiles) > 0 && caFiles[0] != "" {
@@ -523,6 +560,7 @@ location /.well-known/ {
   proxy_set_header Host $host;
 }
 
+%s
 location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?|ttf|eot)$ {
   expires 1y;
   add_header Cache-Control "public, immutable";
@@ -544,7 +582,7 @@ location / {
   add_header Cache-Control "no-cache, must-revalidate";
   try_files $uri $uri/ /index.html;
 }
-`, caFile, afURL, afURL, afURL, enableRawThinking)
+`, caFile, afURL, afURL, afURL, consoleAPIReadLocations(afURL), enableRawThinking)
 }
 
 func consoleRedirectURL(kn *kubernautv1alpha2.Kubernaut) string {

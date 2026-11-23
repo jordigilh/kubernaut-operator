@@ -1045,6 +1045,93 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}, timeout, interval).ShouldNot(Equal(updatedHash), "disabling raw thinking must roll the Console pod again")
 		})
 
+		It("IT-CN-638-001 [AC-3, CC6.1]: console enabled routes the authenticated Console read API to API Frontend", func() {
+			createBYOSecrets(ctx)
+			cr := newMinimalCR()
+			t := true
+			cr.Spec.Console.Enabled = &t
+			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+			cr.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
+			Expect(k8sClient.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
+				Data: map[string][]byte{
+					"client-id":     []byte("cid"),
+					"client-secret": []byte("csec"),
+					"cookie-secret": []byte("cook"),
+				},
+			})).To(Succeed())
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			reconcileToRunning(ctx)
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: string(resources.ComponentConsole) + "-nginx", Namespace: testNamespace,
+			}, cm)).To(Succeed())
+			serverConf := cm.Data["server.conf"]
+			Expect(serverConf).To(ContainSubstring("location = /api/v1/console/policies/scope"),
+				"the reconciled Console nginx must route the policy scope read to AF")
+			Expect(serverConf).To(ContainSubstring("location = /api/v1/console/inventory/managed-resources"),
+				"the reconciled Console nginx must route the managed-resource list read to AF")
+			Expect(serverConf).To(ContainSubstring("location ~ ^/api/v1/console/inventory/managed-resources/"),
+				"the reconciled Console nginx must route the managed-resource detail read to AF")
+			Expect(serverConf).To(ContainSubstring(`proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";`),
+				"identity forwarding must use the oauth2-proxy session token, not client-supplied headers")
+			Expect(serverConf).To(ContainSubstring(`proxy_set_header X-Forwarded-Access-Token "";`),
+				"the raw access token must not be forwarded to AF in a second header")
+			Expect(serverConf).To(ContainSubstring("limit_except GET { deny all; }"),
+				"the Console read API must be read-only at the proxy boundary")
+		})
+
+		It("IT-CN-638-002 [CM-6, CC6.1]: nginx ConfigMap drift is repaired and rolls the Console pod", func() {
+			createBYOSecrets(ctx)
+			cr := newMinimalCR()
+			cr.Spec.Console.Enabled = ptr.To(true)
+			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
+			cr.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
+			Expect(k8sClient.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
+				Data: map[string][]byte{
+					"client-id": []byte("cid"), "client-secret": []byte("csec"), "cookie-secret": []byte("cook"),
+				},
+			})).To(Succeed())
+			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			deployment := &appsv1.Deployment{}
+			deploymentKey := types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}
+			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+			initialHash := deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
+			Expect(initialHash).NotTo(BeEmpty(), "Console Deployment must carry the nginx ConfigMap hash")
+
+			By("stripping the Console read API routing to simulate a pre-#638 deployment")
+			cmKey := types.NamespacedName{Name: string(resources.ComponentConsole) + "-nginx", Namespace: testNamespace}
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
+			start := strings.Index(cm.Data["server.conf"], "location = /api/v1/console/policies/scope")
+			end := strings.Index(cm.Data["server.conf"], `location ~* \.(js|css|`)
+			Expect(start).To(BeNumerically(">=", 0), "precondition: the #638 routing must exist")
+			Expect(end).To(BeNumerically(">", start), "precondition: the asset location must follow the #638 routing")
+			cm.Data["server.conf"] = cm.Data["server.conf"][:start] + cm.Data["server.conf"][end:]
+			Expect(k8sClient.Update(ctx, cm)).To(Succeed())
+
+			By("re-reconciling repairs the drift")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(func() string {
+				Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
+				return cm.Data["server.conf"]
+			}, timeout, interval).Should(ContainSubstring("location = /api/v1/console/policies/scope"),
+				"the drifted nginx ConfigMap must be repaired to the operator-rendered configuration")
+
+			By("the repair rolls the subPath-mounted Console pod")
+			Eventually(func() string {
+				Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+				return deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
+			}, timeout, interval).ShouldNot(Equal(initialHash),
+				"a repaired nginx ConfigMap must change the Console pod-template hash so the running nginx reloads it")
+		})
+
 		It("IT-CL-483-001 [AC-2/AC-12, CC6.1/CC6.3; ASVS V3.3/V7.2.1]: renders and regenerates provider logout configuration", func() {
 			const (
 				logoutURL1 = "https://idp.example.com/realms/kubernaut/logout?id_token_hint={id_token}"
