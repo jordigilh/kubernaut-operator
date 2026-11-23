@@ -148,8 +148,29 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		logout := auth.Properties["providerLogoutURL"]
 
 		Expect(logout.Type).To(Equal("string"))
-		Expect(logout.Pattern).To(Equal(`^https://.+`))
+		Expect(logout.Pattern).To(Equal(`^https://[^:/?#]`))
 		Expect(auth.Required).NotTo(ContainElement("providerLogoutURL"))
+	})
+
+	// UT-658-API-001 [SI-10, CM-6]: every URL-typed field's schema pattern
+	// requires a host character after the scheme, so hostless values like
+	// "https://:443" are rejected at apply time instead of degrading at
+	// reconcile (#658). The negated class mirrors the admission validators'
+	// accept-set: it excludes only the authority separators that leave
+	// net/url's Hostname() empty.
+	It("UT-658-API-001 [SI-10, CM-6] requires a host character in URL-typed fields", func() {
+		crd := loadKubernautCRD()
+		spec := crd.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"]
+		apiFrontend := spec.Properties["apiFrontend"]
+		auth := apiFrontend.Properties["auth"]
+
+		Expect(auth.Properties["issuerURL"].Pattern).To(Equal(`^https?://([^/?#]*@)?[^:/?#]`))
+		Expect(auth.Properties["jwtProviders"].Items.Schema.Properties["issuerURL"].Pattern).To(Equal(`^https?://([^/?#]*@)?[^:/?#]`))
+		Expect(apiFrontend.Properties["agentCardURL"].Pattern).To(Equal(`^$|^https?://([^/?#]*@)?[^:/?#]`))
+
+		consoleAuth := spec.Properties["console"].Properties["auth"]
+		Expect(consoleAuth.Properties["redirectURL"].Pattern).To(Equal(`^https://[^:/?#]`))
+		Expect(consoleAuth.Properties["providerLogoutURL"].Pattern).To(Equal(`^https://[^:/?#]`))
 	})
 
 	It("UT-DS-550-API-001 publishes the semantic DataStorage contract with secure defaults", func() {
