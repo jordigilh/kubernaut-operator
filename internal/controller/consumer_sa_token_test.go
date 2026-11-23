@@ -65,6 +65,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			{resources.ComponentWorkflowExecution, resources.ServiceAccountName(resources.ComponentWorkflowExecution)},
 			{resources.ComponentNotification, resources.ServiceAccountName(resources.ComponentNotification)},
 			{resources.ComponentAIAnalysis, resources.ServiceAccountName(resources.ComponentAIAnalysis)},
+			// #655 scope extension: AuthWebhook's DataStorage audit store
+			// and its in-cluster Kubernetes API client read the SA token on
+			// the same default path.
+			{resources.ComponentAuthWebhook, resources.ServiceAccountName(resources.ComponentAuthWebhook)},
 		}
 
 		It("IT-648-RECONCILE-TOKEN-001 [IA-5, CM-6]: reconciliation renders consumer SA automount off plus projected short-TTL tokens at the default path", func() {

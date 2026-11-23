@@ -44,6 +44,7 @@ var _ = Describe("SA projected tokens", func() {
 		ComponentEffectivenessMonitor,
 		ComponentSignalProcessing, ComponentWorkflowExecution,
 		ComponentNotification, ComponentAIAnalysis,
+		ComponentAuthWebhook,
 	}
 
 	Context("ServiceAccount", func() {
@@ -142,6 +143,8 @@ var _ = Describe("SA projected tokens", func() {
 				dep, err = NotificationDeployment(kn, knV2)
 			case ComponentAIAnalysis:
 				dep, err = AIAnalysisDeployment(kn, knV2)
+			case ComponentAuthWebhook:
+				dep, err = AuthWebhookDeployment(kn, knV2)
 			}
 			Expect(err).NotTo(HaveOccurred(), component)
 			Expect(dep).NotTo(BeNil(), component)

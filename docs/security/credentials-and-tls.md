@@ -79,8 +79,8 @@ The following table summarizes primary east-west trust patterns for the managed 
 | APIFrontend | DataStorage | Mutual TLS using the selected runtime CA, plus projected ServiceAccount token |
 | EffectivenessMonitor | DataStorage | Mutual TLS using the selected runtime CA, plus projected ServiceAccount token |
 | SignalProcessing / WorkflowExecution / Notification / AIAnalysis | DataStorage | Mutual TLS using the selected runtime CA, plus projected ServiceAccount token |
-| AuthWebhook | DataStorage | Mutual TLS using the selected runtime CA, plus ServiceAccount token (automounted; out of #655's scope) |
-| AuthWebhook | Kubernetes API server | TokenReview and SubjectAccessReview APIs |
+| AuthWebhook | DataStorage | Mutual TLS using the selected runtime CA, plus projected ServiceAccount token |
+| AuthWebhook | Kubernetes API server | CR reads/writes via the controller-runtime manager (in-cluster config), authenticated with the pod's projected ServiceAccount token |
 | EffectivenessMonitor | Prometheus / AlertManager | TLS verified against the administrator-supplied monitoring trust bundle (bearer token via the auth transport; no client certificate), plus projected ServiceAccount token (no audience is set on the projection; audience binding is tracked upstream in kubernaut#1900) |
 | Kubernaut Agent | External LLM provider | HTTPS with API key or OAuth2 bearer credentials |
 | AlertManager | Gateway | Mutual TLS using the selected runtime CA, plus ServiceAccount token (bound via `gateway-signal-source` ClusterRoleBinding) |

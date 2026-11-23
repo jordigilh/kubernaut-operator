@@ -598,13 +598,14 @@ var _ = Describe("Kubernaut Operator E2E (OCP)", Ordered, func() {
 			}
 		})
 
-		It("should create the Kubernaut Agent client RoleBinding", func() {
+		It("should not render the stale Kubernaut Agent client RoleBinding (#655)", func() {
+			// The AIAnalysis→Kubernaut Agent channel is the AgentSession CRD
+			// (DD-AA-KA-001); the aianalysis RoleBinding is pruned, not created.
 			cmd := exec.Command("kubectl", "get", "rolebinding",
 				"kubernaut-agent-client-aianalysis",
-				"-n", crNS, "-o", "jsonpath={.roleRef.name}")
-			output, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Kubernaut Agent client RoleBinding should exist")
-			Expect(output).To(Equal(crNS + "-kubernaut-agent-client"))
+				"-n", crNS)
+			_, err := utils.Run(cmd)
+			Expect(err).To(HaveOccurred(), "Kubernaut Agent client RoleBinding must not exist")
 		})
 	})
 

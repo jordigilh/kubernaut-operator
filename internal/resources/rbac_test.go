@@ -1024,25 +1024,6 @@ var _ = Describe("AnsibleRBAC", func() {
 	})
 })
 
-var _ = Describe("KubernautAgentClientRoleBinding", func() {
-	It("grants AI analysis access", func() {
-		kn := testKubernaut()
-		rb := KubernautAgentClientRoleBinding(kn)
-
-		Expect(rb.Name).To(Equal("kubernaut-agent-client-aianalysis"), "Name = %q, want %q", rb.Name, "kubernaut-agent-client-aianalysis")
-		Expect(rb.Namespace).To(Equal(kn.Namespace), "Namespace = %q, want %q", rb.Namespace, kn.Namespace)
-		wantRoleRef := kn.Namespace + "-kubernaut-agent-client"
-		Expect(rb.RoleRef.Name).To(Equal(wantRoleRef), "RoleRef.Name = %q, want %q", rb.RoleRef.Name, wantRoleRef)
-		Expect(rb.RoleRef.Kind).To(Equal(testClusterRoleKind), "RoleRef.Kind = %q, want ClusterRole", rb.RoleRef.Kind)
-		Expect(rb.Subjects).NotTo(BeEmpty(), "RoleBinding has no subjects")
-		subj := rb.Subjects[0]
-		Expect(subj.Name).To(Equal(ServiceAccountName(ComponentAIAnalysis)),
-			"Subject.Name = %q, want %q", subj.Name, ServiceAccountName(ComponentAIAnalysis))
-		Expect(subj.Namespace).To(Equal(kn.Namespace),
-			"Subject.Namespace = %q, want %q", subj.Namespace, kn.Namespace)
-	})
-})
-
 var _ = Describe("KubernautAgentClientAPIfrontendRoleBinding", func() {
 	It("grants apifrontend SA access to kubernaut-agent-client ClusterRole (#1287)", func() {
 		kn := testKubernautWithAF()

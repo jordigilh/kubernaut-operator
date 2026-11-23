@@ -829,16 +829,27 @@ func projectedServiceAccountTokenVolume() (corev1.Volume, corev1.VolumeMount) {
 // RemediationWorkflow CUD, ActionType CUD) will be rejected during this
 // window. SREs should plan operator upgrades during low-activity windows.
 func AuthWebhookDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-	volumes := []corev1.Volume{
+	// Capacity 4: config + webhook-certs + inter-service CA + sa-token.
+	volumes := make([]corev1.Volume, 0, 4)
+	volumes = append(volumes,
 		configMapVolume("config", "authwebhook-config"),
 		secretVolume("webhook-certs", TLSSecretName(kn, TLSServiceAuthWebhook)),
-	}
-	mounts := []corev1.VolumeMount{
-		{Name: "config", MountPath: "/etc/authwebhook", ReadOnly: true},
-		{Name: "webhook-certs", MountPath: "/tmp/k8s-webhook-server/serving-certs", ReadOnly: true},
-	}
+	)
+	mounts := make([]corev1.VolumeMount, 0, 4)
+	mounts = append(mounts,
+		corev1.VolumeMount{Name: "config", MountPath: "/etc/authwebhook", ReadOnly: true},
+		corev1.VolumeMount{Name: "webhook-certs", MountPath: "/tmp/k8s-webhook-server/serving-certs", ReadOnly: true},
+	)
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(kn, volumes, mounts, env)
+	// #655: projected short-TTL SA token replaces the automounted token —
+	// AuthWebhook's DataStorage audit store and its in-cluster Kubernetes
+	// API client (controller-runtime manager, CR reads/writes) read the SA
+	// token on the default path (authwebhook SA disables automount — see
+	// serviceaccounts.go).
+	saTokenVolume, saTokenMount := projectedServiceAccountTokenVolume()
+	volumes = append(volumes, saTokenVolume)
+	mounts = append(mounts, saTokenMount)
 
 	ports := make([]corev1.ContainerPort, 0, 3)
 	ports = append(ports,

@@ -57,6 +57,9 @@ func ServiceAccountName(component string) string {
 // monitoring) run on the same default path; #655 adds the remaining
 // DataStorage client identities (SP/WE/Notification/AIAnalysis), whose
 // DataStorage clients (pkg/audit.NewOpenAPIClientAdapter) read the SA token
+// on the same default path, plus AuthWebhook (owner-approved scope
+// extension), whose DataStorage audit store and in-cluster Kubernetes API
+// client (controller-runtime manager, CR reads/writes) read the SA token
 // on the same default path.
 var projectedTokenComponents = map[string]bool{
 	ComponentKubernautAgent:          true,
@@ -68,6 +71,7 @@ var projectedTokenComponents = map[string]bool{
 	ComponentWorkflowExecution:       true,
 	ComponentNotification:            true,
 	ComponentAIAnalysis:              true,
+	ComponentAuthWebhook:             true,
 }
 
 // ServiceAccount builds a ServiceAccount for the given component.

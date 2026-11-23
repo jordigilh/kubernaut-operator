@@ -339,30 +339,6 @@ func DataStorageClientRoleBindings(kn *kubernautv1alpha2.Kubernaut) []*rbacv1.Ro
 	return rbs
 }
 
-// KubernautAgentClientRoleBinding creates a namespace-scoped RoleBinding granting
-// the aianalysis SA access to the kubernaut-agent-client ClusterRole.
-// Scoped to namespace instead of cluster-wide because the ClusterRole only
-// targets a named service.
-func KubernautAgentClientRoleBinding(kn *kubernautv1alpha2.Kubernaut) *rbacv1.RoleBinding {
-	return &rbacv1.RoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "kubernaut-agent-client-aianalysis",
-			Namespace: kn.Namespace,
-			Labels:    CommonLabels(kn),
-		},
-		RoleRef: rbacv1.RoleRef{
-			APIGroup: rbacv1.GroupName,
-			Kind:     "ClusterRole",
-			Name:     clusterRoleName(kn, "kubernaut-agent-client"),
-		},
-		Subjects: []rbacv1.Subject{{
-			Kind:      rbacv1.ServiceAccountKind,
-			Name:      ServiceAccountName(ComponentAIAnalysis),
-			Namespace: kn.Namespace,
-		}},
-	}
-}
-
 // KubernautAgentClientAPIfrontendRoleBinding creates a namespace-scoped
 // RoleBinding granting the apifrontend SA access to the kubernaut-agent-client
 // ClusterRole (trusted intermediary model, #1287).
