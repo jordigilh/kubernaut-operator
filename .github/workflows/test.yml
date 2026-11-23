@@ -15,8 +15,8 @@ env:
   KUBERNAUT_KIND_IMAGE_PLATFORM: linux/amd64
 
 jobs:
-  test:
-    name: Unit & Integration Tests
+  test-unit:
+    name: Unit Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -31,9 +31,66 @@ jobs:
       - name: Run independent unit tests
         run: make test-unit
 
+      - name: Upload unit test evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-test-evidence
+          path: |
+            cover-unit.out
+            cover-unit-baseline.out
+            cover-business-unit.json
+          if-no-files-found: warn
+
+  test-integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7.1.0
+        with:
+          go-version-file: go.mod
+
       - name: Run independent integration tests
-        if: ${{ !cancelled() }}
         run: make test-integration
+
+      - name: Upload integration test evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-test-evidence
+          path: |
+            cover-integration.out
+            cover-integration-controller.out
+          if-no-files-found: warn
+
+  test:
+    name: Unit & Integration Tests
+    needs: [test-unit, test-integration]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7.1.0
+        with:
+          go-version-file: go.mod
+
+      - name: Download unit test evidence
+        uses: actions/download-artifact@v8
+        with:
+          name: unit-test-evidence
+
+      - name: Download integration test evidence
+        uses: actions/download-artifact@v8
+        with:
+          name: integration-test-evidence
 
       - name: Merge passing independent profiles
         run: |
@@ -43,7 +100,6 @@ jobs:
           tail -n +2 cover-integration.out >> cover.out
 
       - name: Upload independent verification evidence
-        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: independent-test-evidence
@@ -57,11 +113,9 @@ jobs:
           if-no-files-found: warn
 
       - name: Shellcheck executable hack/ scripts
-        if: ${{ !cancelled() }}
         run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/verify-helm-chart.sh hack/verify-business-unit-coverage.sh hack/verify-monitoring-contract.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
 
       - name: Run hack/ script tests
-        if: ${{ !cancelled() }}
         run: make test-hack-scripts
 
       - name: Check coverage threshold
