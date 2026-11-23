@@ -116,4 +116,22 @@ var _ = Describe("Issue #658 CRD URL pattern admission [SI-10, CM-6]", Label("in
 		Expect(k8sClient.Create(ctx, kn)).To(Succeed(),
 			"bracketed IPv6 hosts (with and without port) must stay admissible")
 	})
+
+	It("IT-658-PAT-009 accepts host-bearing URLs with colon-prefixed userinfo", func() {
+		// CodeRabbit compatibility case: a userinfo may itself start with
+		// ":" — net/url splits userinfo before the host, so the host is
+		// nonempty and the issuer/agentCard validators accept it. The
+		// pattern must check host presence after optional userinfo.
+		kn := newMinimalCR()
+		kn.Spec.APIFrontend.Auth.IssuerURL = "https://:example@idp.example.com/realms/kubernaut"
+		kn.Spec.APIFrontend.AgentCardURL = "https://:example@host/a2a/invoke"
+		kn.Spec.APIFrontend.Auth.JWTProviders = []kubernautv1alpha2.JWTProviderSpec{{
+			Name:      "rhbk",
+			IssuerURL: "https://:example@rhbk.example.com/realms/y",
+			JWKSURL:   "https://rhbk.example.com/realms/y/protocol/openid-connect/certs",
+			Audiences: []string{"kubernaut-apifrontend"},
+		}}
+		Expect(k8sClient.Create(ctx, kn)).To(Succeed(),
+			"a host-bearing URL whose userinfo starts with ':' must stay admissible")
+	})
 })

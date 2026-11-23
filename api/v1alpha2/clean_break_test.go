@@ -164,9 +164,9 @@ var _ = Describe("v1alpha2 CRD clean-break contract", func() {
 		apiFrontend := spec.Properties["apiFrontend"]
 		auth := apiFrontend.Properties["auth"]
 
-		Expect(auth.Properties["issuerURL"].Pattern).To(Equal(`^https?://[^:/?#]`))
-		Expect(auth.Properties["jwtProviders"].Items.Schema.Properties["issuerURL"].Pattern).To(Equal(`^https?://[^:/?#]`))
-		Expect(apiFrontend.Properties["agentCardURL"].Pattern).To(Equal(`^$|^https?://[^:/?#]`))
+		Expect(auth.Properties["issuerURL"].Pattern).To(Equal(`^https?://([^/?#]*@)?[^:/?#]`))
+		Expect(auth.Properties["jwtProviders"].Items.Schema.Properties["issuerURL"].Pattern).To(Equal(`^https?://([^/?#]*@)?[^:/?#]`))
+		Expect(apiFrontend.Properties["agentCardURL"].Pattern).To(Equal(`^$|^https?://([^/?#]*@)?[^:/?#]`))
 
 		consoleAuth := spec.Properties["console"].Properties["auth"]
 		Expect(consoleAuth.Properties["redirectURL"].Pattern).To(Equal(`^https://[^:/?#]`))

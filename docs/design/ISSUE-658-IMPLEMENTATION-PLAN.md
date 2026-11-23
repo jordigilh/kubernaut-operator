@@ -52,25 +52,29 @@ Authoritative admission validators (unchanged; the fail-closed layer):
 
 ## 2. Spike: exact pattern form
 
-**Decision: `^https?://[^:/?#]` (https-only fields: `^https://[^:/?#]`;
-agentCardURL: `^$|^https?://[^:/?#]`).**
+**Decision: `^https?://([^/?#]*@)?[^:/?#]` for the three userinfo-tolerant
+fields (both issuerURL fields, agentCardURL; agentCardURL additionally
+allows the empty value); `^https://[^:/?#]` for the two Console fields,
+whose validators reject userinfo outright.**
 
 Derivation from the validators' accept-set:
 
 - `url.URL.Hostname()` is empty exactly when the authority is empty or
-  starts with `:` (port-only, e.g. `https://:443`) — because the
-  authority runs to the first `/`, `?`, or `#`. So the hostless class
-  the validators reject is precisely: authority missing or starting
-  with `:`, `/`, `?`, `#`.
-- Therefore `[^:/?#]` after the scheme requires at least one authority
-  character that can begin a host (or userinfo), which:
+  its host part is missing (port-only, e.g. `https://:443`) — because
+  the authority runs to the first `/`, `?`, or `#` and net/url splits
+  an optional `userinfo@` prefix before the host. So the hostless
+  class the validators reject is precisely: no host character after
+  the optional userinfo.
+- Therefore `([^/?#]*@)?[^:/?#]` after the scheme requires a host
+  character after optional userinfo, which:
   - rejects `https://:443`, `https://`, `https:///path`,
     `https://?q`, `https://#f` — exactly the hostless class;
   - accepts everything else the old pattern accepted, including
     `localhost`, IPv4 (`https://10.0.0.1:8443`), bracketed IPv6
     (`https://[2001:db8::1]:443/realms/x`), `host:port`, path-carrying
     and query-carrying URLs, and `userinfo@host` forms the issuer/agent
-    validators still accept.
+    validators still accept — including a userinfo that itself starts
+    with `:` (`https://:example@host`, CodeRabbit compatibility case).
 - Rationale vs the issue's illustrative `[a-zA-Z0-9\[]`: a negated
   class is the minimal delta from the current accept-set — it changes
   nothing except removing the hostless class, so "no valid in-use value
@@ -78,13 +82,17 @@ Derivation from the validators' accept-set:
   newly-rejected strings are ones whose `Hostname()` is empty, which
   the admission validators already reject at reconcile → a hostless CR
   degrades today, so no working deployment can regress).
-- Known degenerate residue (documented, accepted): a userinfo that
-  itself starts with `:` (`https://:secret@host`) is
-  validator-accepted but pattern-rejected; a leading-`@` authority
-  (`https://@:443`) is pattern-accepted but validator-rejected. Both
-  are absurd in practice, both were already schema-lenient before this
-  change, and neither is newly rejected relative to a working
-  deployment.
+- The two Console fields keep the userinfo-less form `^https://[^:/?#]`
+  on purpose: `validateConsoleRedirectURL` and
+  `parseConsoleProviderLogoutURL` reject any userinfo (`u.User != nil`),
+  so the schema may reject it too with no compatibility impact.
+- Known degenerate residue (documented, accepted): a userinfo followed
+  by an empty host (`https://user@:443`) remains schema-admitted — RE2
+  has no lookahead, so a prefix pattern cannot require a host char
+  specifically after the last `@` — and is validator-rejected at
+  reconcile; it was schema-admitted before this change too, so it is
+  not a regression. No string the admission validators accept is newly
+  rejected by the patterns.
 - Kubernetes structural-schema patterns are partial matches (RE2
   search), as today: the `^` anchor keeps the semantics identical to
   the current patterns, just with the host requirement added.
