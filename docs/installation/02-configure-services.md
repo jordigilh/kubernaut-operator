@@ -744,8 +744,8 @@ granting only the three AF console read capabilities
 (`kubernaut_read_policy_scope`, `kubernaut_list_managed_resources`,
 `kubernaut_get_managed_resource`). Per [DD-662](../design/DD-662-console-read-capability-model.md)
 this is the permanent model, not a placeholder: **no built-in persona
-implies it and login never grants console reads**. The operator never binds
-it for you; binding is an explicit administrator choice through
+implies it and login never grants console reads**. The operator never
+binds it implicitly; binding is an explicit administrator choice through
 `roleBindings` with `clusterRoleName` — note the rendered name is
 namespace-prefixed, so reference `<namespace>-console-reader` exactly (the
 custom-binding path uses the name verbatim, no prefixing) — or your own
@@ -761,8 +761,8 @@ spec:
 ```
 
 Until a user holds the capability, console reads return AF's `forbidden`
-envelope and the Console renders the corresponding "Access denied" read
-state — the intended deny-by-default behavior. The boundary is the
+envelope and the Console renders its access-denied read state — the
+intended deny-by-default behavior. The boundary is the
 capability SAR, not this role's bind state: a user granted `use` on the
 same three `kubernaut.ai/tools` resourceNames through any other
 ClusterRole is equally authorized. The Console nginx `/api/v1/console/`

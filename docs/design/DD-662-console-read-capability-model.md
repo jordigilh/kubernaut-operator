@@ -40,7 +40,8 @@ A #662 spike verified the upstream facts before deciding:
 - The three capability names (`kubernaut_read_policy_scope`,
   `kubernaut_list_managed_resources`, `kubernaut_get_managed_resource`)
   appear in exactly one non-test upstream source file
-  (`pkg/apifrontend/policyread/service.go`, `authorize`) plus upstream
+  (`pkg/apifrontend/policyread/service.go`, capability constants consumed
+  by its `authorize` path) plus upstream
   design/test-plan docs (DD-AF-018, DD-FLEET-017, the kubernaut#2584
   implementation plan, the #2661 test plan). No upstream persona
   definition, Helm values entry, ClusterRole, or E2E fixture binds them to
