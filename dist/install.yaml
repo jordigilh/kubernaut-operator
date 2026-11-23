@@ -215,7 +215,7 @@ spec:
                       External URL for the A2A agent card discovery endpoint.
                       When empty, auto-derived from the in-cluster service FQDN.
                       Must be a valid HTTPS URL when set.
-                    pattern: ^$|^https?://
+                    pattern: ^$|^https?://[^:/?#]
                     type: string
                   auth:
                     description: OIDC authentication configuration.
@@ -237,7 +237,7 @@ spec:
                           empty; when jwtProviders is non-empty, multi-provider config takes precedence.
                           An explicit value must be an absolute HTTPS URL, or HTTP when
                           allowInsecureIssuers is true.
-                        pattern: ^https?://.+
+                        pattern: ^https?://[^:/?#]
                         type: string
                       jwksURL:
                         description: |-
@@ -287,7 +287,7 @@ spec:
                             issuerURL:
                               description: OIDC issuer URL for token validation.
                               minLength: 1
-                              pattern: ^https?://.+
+                              pattern: ^https?://[^:/?#]
                               type: string
                             jwksURL:
                               description: |-
@@ -743,14 +743,14 @@ spec:
                           placeholder where the provider requires an ID token hint; oauth2-proxy
                           replaces it server-side. The endpoint must use HTTPS and match the
                           effective Console OIDC provider authority.
-                        pattern: ^https://.+
+                        pattern: ^https://[^:/?#]
                         type: string
                       redirectURL:
                         description: |-
                           Explicit public Console URL used for the oauth2-proxy callback. The
                           administrator owns the Route, Ingress, or Gateway API resource serving
                           this URL; the operator does not infer it from a platform ingress domain.
-                        pattern: ^https://.+
+                        pattern: ^https://[^:/?#]
                         type: string
                       secretName:
                         description: |-

@@ -1164,7 +1164,7 @@ type JWTProviderSpec struct {
 
 	// OIDC issuer URL for token validation.
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:Pattern=`^https?://.+`
+	// +kubebuilder:validation:Pattern=`^https?://[^:/?#]`
 	IssuerURL string `json:"issuerURL"`
 
 	// JWKS endpoint URL for token signature verification (F6 -- required in
@@ -1640,7 +1640,7 @@ type ConsoleAuthSpec struct {
 	// Explicit public Console URL used for the oauth2-proxy callback. The
 	// administrator owns the Route, Ingress, or Gateway API resource serving
 	// this URL; the operator does not infer it from a platform ingress domain.
-	// +kubebuilder:validation:Pattern=`^https://.+`
+	// +kubebuilder:validation:Pattern=`^https://[^:/?#]`
 	// +optional
 	RedirectURL string `json:"redirectURL,omitempty"`
 
@@ -1649,7 +1649,7 @@ type ConsoleAuthSpec struct {
 	// placeholder where the provider requires an ID token hint; oauth2-proxy
 	// replaces it server-side. The endpoint must use HTTPS and match the
 	// effective Console OIDC provider authority.
-	// +kubebuilder:validation:Pattern=`^https://.+`
+	// +kubebuilder:validation:Pattern=`^https://[^:/?#]`
 	// +optional
 	ProviderLogoutURL string `json:"providerLogoutURL,omitempty"`
 }
@@ -1995,7 +1995,7 @@ type APIFrontendSpec struct {
 	// External URL for the A2A agent card discovery endpoint.
 	// When empty, auto-derived from the in-cluster service FQDN.
 	// Must be a valid HTTPS URL when set.
-	// +kubebuilder:validation:Pattern=`^$|^https?://`
+	// +kubebuilder:validation:Pattern=`^$|^https?://[^:/?#]`
 	// +optional
 	AgentCardURL string `json:"agentCardURL,omitempty"`
 
@@ -2164,7 +2164,7 @@ type APIFrontendAuthSpec struct {
 	// empty; when jwtProviders is non-empty, multi-provider config takes precedence.
 	// An explicit value must be an absolute HTTPS URL, or HTTP when
 	// allowInsecureIssuers is true.
-	// +kubebuilder:validation:Pattern=`^https?://.+`
+	// +kubebuilder:validation:Pattern=`^https?://[^:/?#]`
 	// +optional
 	IssuerURL string `json:"issuerURL,omitempty"`
 
