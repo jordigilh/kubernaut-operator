@@ -474,7 +474,10 @@ gzip_vary on;
 // regex in consoleNginxServerConf from matching IDs that happen to end in
 // an asset-like extension. Authorization is forwarded from the OAuth2
 // Proxy-injected X-Forwarded-Access-Token only, so client-supplied identity
-// headers cannot reach AF. Server-level proxy_ssl_verify on and the trusted
+// headers cannot reach AF, and the raw forwarded token is not passed on to
+// AF in a second header. limit_except restricts the boundary to reads
+// (HEAD stays permitted, matching AF's Go ServeMux "GET" pattern
+// registration). Server-level proxy_ssl_verify on and the trusted
 // service CA apply to this upstream.
 //
 // The prefix deliberately matches only the slashed /api/v1/console/
@@ -494,6 +497,8 @@ func consoleAPIProxyLocation(afURL string) string {
   proxy_set_header X-Real-IP $remote_addr;
   proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
   proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";
+  proxy_set_header X-Forwarded-Access-Token "";
+  limit_except GET { deny all; }
   proxy_buffering off;
   proxy_cache off;
 }

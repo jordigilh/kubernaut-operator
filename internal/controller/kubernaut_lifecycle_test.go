@@ -1081,6 +1081,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(serverConf).To(ContainSubstring(
 				`proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";`),
 				"AF authorization must flow from the OAuth2 Proxy-injected access token only")
+			Expect(serverConf).To(ContainSubstring(`proxy_set_header X-Forwarded-Access-Token "";`),
+				"the raw access token must not be forwarded to AF in a second header")
+			Expect(serverConf).To(ContainSubstring("limit_except GET { deny all; }"),
+				"the Console read API must be read-only at the proxy boundary")
 
 			deployment := &appsv1.Deployment{}
 			deploymentKey := types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}
@@ -1096,24 +1100,24 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
-			// The nginx ConfigMap files are subPath-mounted, so a running
-			// Console pod never observes the tamper in the first place, and
-			// drift repair restores the original content, which re-hashes to
-			// the original cmHashes["console"] value: the deployment
-			// annotation is correctly unchanged (no spurious roll). A real
-			// config change, like the #638 location added by this operator
-			// version, produces a new ConfigMapDataHash and rolls the pod on
-			// the next deployment re-render (spec-change rolls are covered by
-			// IT-CN-476-002).
+			// The nginx ConfigMap files are subPath-mounted, so a repaired
+			// ConfigMap is not reflected in an already-running console
+			// container. The console-nginx ConfigMap therefore participates
+			// in the same resourceVersion-based roll mechanism as
+			// console-oauth2-proxy: the drift repair changes the live
+			// resourceVersion, which is folded into the Console pod-template
+			// hash so the running nginx reloads the repaired configuration.
 			Eventually(func() string {
 				Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
 				return cm.Data["server.conf"]
 			}, timeout, interval).Should(ContainSubstring("location ^~ /api/v1/console/ {"),
 				"re-reconciliation must restore the drifted console API location")
 
-			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
-			Expect(deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]).To(Equal(initialHash),
-				"drift repair restores the original content, so the deployment hash must be unchanged")
+			Eventually(func() string {
+				Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
+				return deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
+			}, timeout, interval).ShouldNot(Equal(initialHash),
+				"a repaired nginx ConfigMap must roll the subPath-mounted Console pod so the running nginx reloads it")
 		})
 
 		It("IT-CL-483-001 [AC-2/AC-12, CC6.1/CC6.3; ASVS V3.3/V7.2.1]: renders and regenerates provider logout configuration", func() {

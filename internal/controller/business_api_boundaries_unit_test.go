@@ -690,7 +690,7 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		Expect(r.ensureDeployments(ctx, kn, kn, builders, nil, telemetryMaterialRevisionSet{})).To(HaveOccurred())
 	})
 
-	It("UT-AUDIT-515-API-020: reports OAuth2 Proxy ConfigMap revision read failures", func() {
+	It("UT-AUDIT-515-API-020: reports Console ConfigMap revision read failures", func() {
 		kn := newMinimalCR()
 		kn.Spec.Console.Enabled = ptr.To(true)
 		kn.Spec.Console.Auth.SecretName = externalConsoleOIDCSecretName
@@ -709,7 +709,7 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		}})
 
 		_, err := r.deployConfigMaps(ctx, kn, kn, "kubernaut", "kubernaut", "")
-		Expect(err).To(MatchError(ContainSubstring("reading console oauth2-proxy configmap revision")))
+		Expect(err).To(MatchError(ContainSubstring("reading console ConfigMap revision")))
 	})
 
 	It("uses the uncached API reader for the Console ConfigMap revision", func() {
@@ -718,17 +718,28 @@ var _ = Describe("independent activation trust boundaries", Label("unit"), func(
 		kn.Spec.Console.Auth.SecretName = externalConsoleOIDCSecretName
 		kn.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
 		r := businessUnitReconciler(kn, interceptor.Funcs{})
-		r.APIReader = fake.NewClientBuilder().WithScheme(r.Scheme).WithObjects(&corev1.ConfigMap{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:            string(resources.ComponentConsole) + "-oauth2-proxy",
-				Namespace:       kn.Namespace,
-				ResourceVersion: "fresh-resource-version",
+		r.APIReader = fake.NewClientBuilder().WithScheme(r.Scheme).WithObjects(
+			&corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            string(resources.ComponentConsole) + "-oauth2-proxy",
+					Namespace:       kn.Namespace,
+					ResourceVersion: "fresh-resource-version",
+				},
 			},
-		}).Build()
+			&corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:            string(resources.ComponentConsole) + "-nginx",
+					Namespace:       kn.Namespace,
+					ResourceVersion: "fresh-nginx-resource-version",
+				},
+			},
+		).Build()
 
 		hashes, err := r.deployConfigMaps(ctx, kn, kn, "kubernaut", "kubernaut", "")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(hashes["console"]).To(ContainSubstring("+resourceVersion:fresh-resource-version"))
+		Expect(hashes["console"]).To(ContainSubstring("+resourceVersion:fresh-nginx-resource-version"),
+			"the subPath-mounted nginx ConfigMap revision must also roll the Console pod after a drift repair")
 	})
 
 	It("UT-AUDIT-515-API-019: rejects unreadable readiness, roles, cleanup resources and migration images", func() {

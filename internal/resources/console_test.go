@@ -667,6 +667,37 @@ var _ = Describe("Console Resources", func() {
 		})
 	})
 
+	Context("ConsoleNginxConfigMap console API read-only boundary and token hygiene (#638)", func() {
+		consoleAPIBlock := func() string {
+			serverConf := ConsoleNginxConfigMap(testKubernautWithConsole()).Data["server.conf"]
+			start := strings.Index(serverConf, "location ^~ /api/v1/console/ {")
+			if start < 0 {
+				return ""
+			}
+			end := strings.Index(serverConf[start:], "\n}\n")
+			if end < 0 {
+				return serverConf[start:]
+			}
+			return serverConf[start : start+end+3]
+		}
+
+		It("UT-CN-638-006 [AC-3, CC6.3]: restricts the console API location to GET requests", func() {
+			block := consoleAPIBlock()
+			Expect(block).NotTo(BeEmpty(), "server.conf must contain a location ^~ /api/v1/console/ block")
+			Expect(block).To(ContainSubstring("limit_except GET { deny all; }"),
+				"the console API location must deny non-GET methods at the proxy boundary "+
+					"(HEAD stays permitted, matching AF's Go ServeMux GET pattern registration)")
+		})
+
+		It("UT-CN-638-007 [AC-6, CC6.1]: does not forward the raw access token to AF in a second header", func() {
+			block := consoleAPIBlock()
+			Expect(block).NotTo(BeEmpty())
+			Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-Access-Token "";`),
+				"AF authenticates solely via Authorization: Bearer; the OAuth2 Proxy-injected raw token "+
+					"must not also be forwarded in X-Forwarded-Access-Token")
+		})
+	})
+
 	Context("ConsoleDeployment oauth2-proxy TLS (#309)", func() {
 		const tlsCAMountPath = "/etc/tls-ca"
 
