@@ -244,6 +244,7 @@ spec:
                           Explicit JWKS endpoint URL for token signature verification
                           (FedRAMP IA-5: authenticator management). When empty, derived from
                           issuerURL + "/protocol/openid-connect/certs".
+                        pattern: ^$|^https?://([^/?#]*@)?[^:/?#]
                         type: string
                       jwtProviders:
                         description: |-
@@ -298,6 +299,7 @@ spec:
                                 parent's allowInsecureJWKS/allowInsecureIssuers flag is true.
                               maxLength: 2048
                               minLength: 1
+                              pattern: ^https?://([^/?#]*@)?[^:/?#]
                               type: string
                             name:
                               description: Human-readable name for this provider (e.g.
@@ -1412,6 +1414,7 @@ spec:
                         type: object
                       tokenURL:
                         description: OAuth2 token endpoint URL.
+                        pattern: ^$|^https://[^:/?#]
                         type: string
                     type: object
                 type: object
@@ -2351,6 +2354,7 @@ spec:
                           type: array
                         tokenURL:
                           description: Token endpoint URL.
+                          pattern: ^$|^https://[^:/?#]
                           type: string
                       type: object
                     provider:
@@ -2494,6 +2498,7 @@ spec:
                         description: |-
                           AlertManager HTTPS URL. On generic Kubernetes this field is required when
                           AlertManager-backed features are enabled.
+                        pattern: ^$|^https://[^:/?#]
                         type: string
                     type: object
                   prometheus:
@@ -2512,6 +2517,7 @@ spec:
                           Prometheus-compatible HTTPS URL. On OpenShift, an empty URL may use the
                           capability-gated platform endpoint; generic Kubernetes requires this
                           field when Prometheus-backed features are enabled.
+                        pattern: ^$|^https://[^:/?#]
                         type: string
                     type: object
                   tls:
@@ -3629,6 +3635,7 @@ spec:
                     properties:
                       apiURL:
                         description: AWX/AAP API URL. Required when Enabled is true.
+                        pattern: ^$|^https?://([^/?#]*@)?[^:/?#]
                         type: string
                       caCertSecretRef:
                         description: |-

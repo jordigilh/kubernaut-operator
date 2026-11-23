@@ -353,6 +353,7 @@ type FleetMCPGatewaySpec struct {
 // credentials; there is intentionally no Enabled field.
 type FleetOAuth2Spec struct {
 	// OAuth2 token endpoint URL.
+	// +kubebuilder:validation:Pattern=`^$|^https://[^:/?#]`
 	// +optional
 	TokenURL string `json:"tokenURL,omitempty"`
 
@@ -556,6 +557,7 @@ type AnsibleSpec struct {
 	Enabled bool `json:"enabled,omitempty"`
 
 	// AWX/AAP API URL. Required when Enabled is true.
+	// +kubebuilder:validation:Pattern=`^$|^https?://([^/?#]*@)?[^:/?#]`
 	// +optional
 	APIURL string `json:"apiURL,omitempty"`
 
@@ -1174,6 +1176,7 @@ type JWTProviderSpec struct {
 	// parent's allowInsecureJWKS/allowInsecureIssuers flag is true.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=2048
+	// +kubebuilder:validation:Pattern=`^https?://([^/?#]*@)?[^:/?#]`
 	JWKSURL string `json:"jwksURL"`
 
 	// Expected audience claim values for session authenticity (FedRAMP SC-23).
@@ -1517,6 +1520,7 @@ type OAuth2Spec struct {
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 	// Token endpoint URL.
+	// +kubebuilder:validation:Pattern=`^$|^https://[^:/?#]`
 	// +optional
 	TokenURL string `json:"tokenURL,omitempty"`
 	// OAuth2 scopes.
@@ -2176,6 +2180,7 @@ type APIFrontendAuthSpec struct {
 	// Explicit JWKS endpoint URL for token signature verification
 	// (FedRAMP IA-5: authenticator management). When empty, derived from
 	// issuerURL + "/protocol/openid-connect/certs".
+	// +kubebuilder:validation:Pattern=`^$|^https?://([^/?#]*@)?[^:/?#]`
 	// +optional
 	JWKSURL string `json:"jwksURL,omitempty"`
 
@@ -2598,6 +2603,7 @@ type PrometheusSpec struct {
 	// Prometheus-compatible HTTPS URL. On OpenShift, an empty URL may use the
 	// capability-gated platform endpoint; generic Kubernetes requires this
 	// field when Prometheus-backed features are enabled.
+	// +kubebuilder:validation:Pattern=`^$|^https://[^:/?#]`
 	// +optional
 	URL string `json:"url,omitempty"`
 }
@@ -2625,6 +2631,7 @@ type AlertManagerSpec struct {
 
 	// AlertManager HTTPS URL. On generic Kubernetes this field is required when
 	// AlertManager-backed features are enabled.
+	// +kubebuilder:validation:Pattern=`^$|^https://[^:/?#]`
 	// +optional
 	URL string `json:"url,omitempty"`
 }
