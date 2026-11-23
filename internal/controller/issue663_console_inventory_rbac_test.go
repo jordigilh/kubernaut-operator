@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -26,11 +27,23 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
 )
+
+// deleteBindingFixture removes an administrator-style binding fixture and
+// fails the spec if cleanup cannot be confirmed. NotFound counts as success:
+// the bindings carry no operator ownership label, so the shared AfterEach
+// cleanup does not sweep them, and a retried spec may already have removed
+// one.
+func deleteBindingFixture(ctx context.Context, object client.Object) {
+	if err := k8sClient.Delete(ctx, object); err != nil && !apierrors.IsNotFound(err) {
+		Fail(fmt.Sprintf("deleting binding fixture %q: %v", object.GetName(), err))
+	}
+}
 
 // Issue #663 integration proof (Pyramid Invariant: IT proves wiring): the
 // user-side local-target grant for the console inventory projection must
@@ -125,9 +138,7 @@ var _ = Describe("Console inventory user-side target grants (#663)", func() {
 			}},
 		}
 		Expect(k8sClient.Create(ctx, crb)).To(Succeed())
-		defer func() {
-			_ = k8sClient.Delete(ctx, crb)
-		}()
+		defer deleteBindingFixture(ctx, crb)
 
 		By("running the exact local-target SAR shape AF performs, as the bound user")
 		sar := func(verb, group, resource string) *authorizationv1.SubjectAccessReview {
@@ -143,9 +154,16 @@ var _ = Describe("Console inventory user-side target grants (#663)", func() {
 			Expect(k8sClient.Create(ctx, review)).To(Succeed())
 			return review
 		}
-		Expect(sar("list", "", "pods").Status.Allowed).To(BeTrue(),
+		// RBAC is resolved through API-server informer listers, so a freshly
+		// created binding may take a moment to take effect. Each attempt sends
+		// a fresh SAR and the denies are only asserted once the grant is live.
+		Eventually(func() bool {
+			return sar("list", "", "pods").Status.Allowed
+		}, "30s", "1s").Should(BeTrue(),
 			"a bound user must satisfy the projection's list SAR on pods")
-		Expect(sar("get", "apps", "deployments").Status.Allowed).To(BeTrue(),
+		Eventually(func() bool {
+			return sar("get", "apps", "deployments").Status.Allowed
+		}, "30s", "1s").Should(BeTrue(),
 			"a bound user must satisfy the projection's exact-get SAR on deployments")
 
 		By("denying what the role excludes")
@@ -177,9 +195,7 @@ var _ = Describe("Console inventory user-side target grants (#663)", func() {
 			}},
 		}
 		Expect(k8sClient.Create(ctx, rb)).To(Succeed())
-		defer func() {
-			_ = k8sClient.Delete(ctx, rb)
-		}()
+		defer deleteBindingFixture(ctx, rb)
 
 		sar := func(resource, namespace string) *authorizationv1.SubjectAccessReview {
 			review := &authorizationv1.SubjectAccessReview{
@@ -195,7 +211,11 @@ var _ = Describe("Console inventory user-side target grants (#663)", func() {
 			return review
 		}
 
-		Expect(sar("pods", testNamespace).Status.Allowed).To(BeTrue(),
+		// Wait for the namespaced grant to become visible to the authorizer
+		// before asserting the deny boundaries.
+		Eventually(func() bool {
+			return sar("pods", testNamespace).Status.Allowed
+		}, "30s", "1s").Should(BeTrue(),
 			"a namespaced RoleBinding must satisfy a namespace-filtered list SAR in its namespace")
 		Expect(sar("pods", "another-namespace").Status.Allowed).To(BeFalse(),
 			"a namespaced RoleBinding must not satisfy a list SAR in another namespace")

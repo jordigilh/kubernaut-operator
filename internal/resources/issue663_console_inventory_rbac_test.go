@@ -51,52 +51,94 @@ func allowlistedResourceGroups(moduleDir string) map[string][]string {
 	file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
 	Expect(err).NotTo(HaveOccurred(), "parsing pinned upstream allowlist at %s", path)
 
-	groups := make(map[string][]string)
-	for _, decl := range file.Decls {
-		gen, ok := decl.(*ast.GenDecl)
-		if !ok || gen.Tok != token.VAR {
+	entries := defaultLocalResourceKindEntries(file)
+	Expect(entries).NotTo(BeEmpty(),
+		"DefaultLocalResourceKinds not found as a composite literal in %s", path)
+
+	groups := make(map[string][]string, len(entries))
+	for _, fields := range entries {
+		resource := fields["Resource"]
+		Expect(resource).NotTo(BeEmpty(), "allowlist entry without a Resource literal")
+		groups[fields["Group"]] = append(groups[fields["Group"]], resource)
+	}
+	return groups
+}
+
+// defaultLocalResourceKindEntries returns the decoded field maps of every
+// element in the DefaultLocalResourceKinds composite literal. Empty when the
+// declaration is absent or not a composite literal (the caller fails the
+// spec with a clear message).
+func defaultLocalResourceKindEntries(file *ast.File) []map[string]string {
+	for _, declaration := range file.Decls {
+		gen, isGenDecl := declaration.(*ast.GenDecl)
+		if !isGenDecl || gen.Tok != token.VAR {
 			continue
 		}
 		for _, spec := range gen.Specs {
-			valueSpec, ok := spec.(*ast.ValueSpec)
-			if !ok {
+			valueSpec, isValueSpec := spec.(*ast.ValueSpec)
+			if !isValueSpec {
 				continue
 			}
-			for i, name := range valueSpec.Names {
-				if name.Name != "DefaultLocalResourceKinds" || i >= len(valueSpec.Values) {
-					continue
-				}
-				composite, ok := valueSpec.Values[i].(*ast.CompositeLit)
-				if !ok {
-					continue
-				}
-				for _, element := range composite.Elts {
-					entry, ok := element.(*ast.CompositeLit)
-					if !ok {
-						continue
-					}
-					fields := make(map[string]string, len(entry.Elts))
-					for _, field := range entry.Elts {
-						kv, ok := field.(*ast.KeyValueExpr)
-						if !ok {
-							continue
-						}
-						key, ok := kv.Key.(*ast.Ident)
-						if !ok {
-							continue
-						}
-						if lit, ok := kv.Value.(*ast.BasicLit); ok {
-							fields[key.Name] = strings.Trim(lit.Value, `"`)
-						}
-					}
-					resource := fields["Resource"]
-					Expect(resource).NotTo(BeEmpty(), "allowlist entry without a Resource literal")
-					groups[fields["Group"]] = append(groups[fields["Group"]], resource)
-				}
+			if entries := entriesInValueSpec(valueSpec); len(entries) > 0 {
+				return entries
 			}
 		}
 	}
-	return groups
+	return nil
+}
+
+// entriesInValueSpec finds the DefaultLocalResourceKinds name in one var
+// specification and decodes its composite literal elements.
+func entriesInValueSpec(valueSpec *ast.ValueSpec) []map[string]string {
+	for index, name := range valueSpec.Names {
+		if name.Name != "DefaultLocalResourceKinds" || index >= len(valueSpec.Values) {
+			continue
+		}
+		composite, isComposite := valueSpec.Values[index].(*ast.CompositeLit)
+		if !isComposite {
+			return nil
+		}
+		return decodeCompositeEntries(composite)
+	}
+	return nil
+}
+
+// decodeCompositeEntries decodes struct-literal elements into field maps,
+// skipping any element that is not a key/value struct literal.
+func decodeCompositeEntries(composite *ast.CompositeLit) []map[string]string {
+	entries := make([]map[string]string, 0, len(composite.Elts))
+	for _, element := range composite.Elts {
+		entry, isComposite := element.(*ast.CompositeLit)
+		if !isComposite {
+			continue
+		}
+		fields := make(map[string]string, len(entry.Elts))
+		for _, field := range entry.Elts {
+			key, value, isStringField := stringField(field)
+			if isStringField {
+				fields[key] = value
+			}
+		}
+		entries = append(entries, fields)
+	}
+	return entries
+}
+
+// stringField decodes a `Field: "literal"` struct-literal element.
+func stringField(field ast.Expr) (string, string, bool) {
+	keyValue, isKeyValue := field.(*ast.KeyValueExpr)
+	if !isKeyValue {
+		return "", "", false
+	}
+	key, isIdent := keyValue.Key.(*ast.Ident)
+	if !isIdent {
+		return "", "", false
+	}
+	literal, isBasicLit := keyValue.Value.(*ast.BasicLit)
+	if !isBasicLit {
+		return "", "", false
+	}
+	return key.Name, strings.Trim(literal.Value, `"`), true
 }
 
 // Issue #663: user-side local-target Kubernetes grants for the console
