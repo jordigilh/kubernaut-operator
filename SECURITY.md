@@ -77,7 +77,7 @@ The operator requires these elevated permissions:
 | ClusterRole | Purpose | Scoped Resources |
 |---|---|---|
 | `<ns>-kubernaut-agent-investigator` | Cluster-wide read-only access for root-cause analysis | Core K8s (pods, deployments, secrets, events, RBAC, etc.), OCP platform (routes, SCCs, DeploymentConfigs, ImageStreams, Builds), OCP machine management (Machines, MachineSets, MachineConfigs, MCPs), OLM (CSVs, Subscriptions, InstallPlans, CatalogSources), admission webhooks, CRDs, PriorityClasses, Istio/Linkerd/cert-manager/ArgoCD/Prometheus. See `internal/resources/rbac.go` for the full rule set. |
-| `<ns>-kubernaut-agent-client` | AIAnalysis service calls the KA service | Services (get/create on `kubernaut-agent-service`) |
+| `<ns>-kubernaut-agent-client` | Legacy KA HTTP client path — the AIAnalysis→Kubernaut Agent channel is now the `AgentSession` CRD via the Kubernetes API server (DD-AA-KA-001); this Service grant is retained pending RBAC cleanup | Services (get/create on `kubernaut-agent`) |
 | `<ns>-gateway-role` | Signal fingerprinting and owner-chain resolution | Core K8s read-only (nodes, pods, services, PVs, PVCs), apps (deployments, replicasets, statefulsets, daemonsets), autoscaling (HPAs), batch (jobs), networking (ingresses) |
 | `<ns>-signalprocessing-controller` | Process signals and manage remediation lifecycle | Full CRUD on `kubernaut.ai` CRs (signalprocessings, remediationrequests), status/finalizer updates, read-only core K8s (pods, services, namespaces, nodes, deployments, replicasets, statefulsets, daemonsets, HPAs, PDBs, NetworkPolicies), event creation, leader election leases |
 | `<ns>-aianalysis-controller` | Manage AI analysis lifecycle | Full CRUD on `kubernaut.ai` CRs (aianalyses), status/finalizer updates, read-only core K8s, event creation, leader election leases |
@@ -147,7 +147,9 @@ the operator.
 - Projected token: expiration 3600s (1 hour), mount path `/var/run/secrets/kubernetes.io/serviceaccount/token`; no audience is set, so the API server selects its own portable service-account audience.
 - The consumer fleet identities (#648) — Gateway, RemediationOrchestrator, and APIFrontend — use the same model: their SAs disable automount and their Deployments mount a projected 3600s SA token at the default path (the credential they present to the Fleet Metadata Cache, kubernaut#2661 peer→facade contract).
 - EffectivenessMonitor (#653) also uses the projected-token model: its SA-token reads (DataStorage querier, OCP monitoring) run on the same default path.
-- All other service SAs use standard automounted tokens; extending the projected-token model to the remaining DataStorage clients is tracked in #655.
+- The remaining DataStorage client identities (#655) — SignalProcessing, WorkflowExecution, Notification, and AIAnalysis — use the same model: their DataStorage clients (upstream `pkg/audit.NewOpenAPIClientAdapter`) read the SA token on the same default path, so their SAs disable automount and their Deployments mount a projected 3600s SA token at that path.
+- AuthWebhook also authenticates to DataStorage with its default-path SA token but is out of #655's scope and keeps the standard automounted token.
+- All other service SAs use standard automounted tokens.
 
 ## Container Hardening
 

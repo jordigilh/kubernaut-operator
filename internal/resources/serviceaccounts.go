@@ -54,13 +54,20 @@ func ServiceAccountName(component string) string {
 // consumer fleet identities (GW/RO/AF) that authenticate to FMC with their
 // in-cluster SA token (kubernaut#2661 peer→facade contract); #653 adds
 // EffectivenessMonitor, whose SA-token reads (DataStorage querier, OCP
-// monitoring) run on the same default path.
+// monitoring) run on the same default path; #655 adds the remaining
+// DataStorage client identities (SP/WE/Notification/AIAnalysis), whose
+// DataStorage clients (pkg/audit.NewOpenAPIClientAdapter) read the SA token
+// on the same default path.
 var projectedTokenComponents = map[string]bool{
 	ComponentKubernautAgent:          true,
 	ComponentGateway:                 true,
 	ComponentRemediationOrchestrator: true,
 	ComponentAPIFrontend:             true,
 	ComponentEffectivenessMonitor:    true,
+	ComponentSignalProcessing:        true,
+	ComponentWorkflowExecution:       true,
+	ComponentNotification:            true,
+	ComponentAIAnalysis:              true,
 }
 
 // ServiceAccount builds a ServiceAccount for the given component.
