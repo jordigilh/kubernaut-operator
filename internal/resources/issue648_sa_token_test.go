@@ -31,10 +31,21 @@ import (
 // #653: EffectivenessMonitor joins the projected-token set — its SA-token
 // reads (DataStorage querier, OCP monitoring) also run on the default path
 // and get the same bounded lifetime.
+// #655: the remaining DataStorage client identities — SignalProcessing,
+// WorkflowExecution, Notification, AIAnalysis — join the projected-token
+// set; each builds its DataStorage client via pkg/audit's
+// NewOpenAPIClientAdapter, which reads the SA token on the same default
+// path (see projectedTokenComponents in serviceaccounts.go).
 // IA-5 (authenticator management) / CM-6: bounded token lifetime, no
 // long-lived automounted credential.
 var _ = Describe("SA projected tokens", func() {
-	consumers := []string{ComponentGateway, ComponentRemediationOrchestrator, ComponentAPIFrontend, ComponentEffectivenessMonitor}
+	consumers := []string{
+		ComponentGateway, ComponentRemediationOrchestrator, ComponentAPIFrontend,
+		ComponentEffectivenessMonitor,
+		ComponentSignalProcessing, ComponentWorkflowExecution,
+		ComponentNotification, ComponentAIAnalysis,
+		ComponentAuthWebhook,
+	}
 
 	Context("ServiceAccount", func() {
 		It("UT-648-SA-001 [IA-5]: disables token automount for consumer fleet SAs", func() {
@@ -124,6 +135,16 @@ var _ = Describe("SA projected tokens", func() {
 				dep, err = APIFrontendDeployment(kn, knV2)
 			case ComponentEffectivenessMonitor:
 				dep, err = EffectivenessMonitorDeployment(kn, knV2)
+			case ComponentSignalProcessing:
+				dep, err = SignalProcessingDeployment(kn, knV2)
+			case ComponentWorkflowExecution:
+				dep, err = WorkflowExecutionDeployment(kn, knV2)
+			case ComponentNotification:
+				dep, err = NotificationDeployment(kn, knV2)
+			case ComponentAIAnalysis:
+				dep, err = AIAnalysisDeployment(kn, knV2)
+			case ComponentAuthWebhook:
+				dep, err = AuthWebhookDeployment(kn, knV2)
 			}
 			Expect(err).NotTo(HaveOccurred(), component)
 			Expect(dep).NotTo(BeNil(), component)

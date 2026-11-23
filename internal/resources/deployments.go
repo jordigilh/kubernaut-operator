@@ -233,18 +233,28 @@ func dataStorageVolumesAndMounts(kn *kubernautv1alpha2.Kubernaut) ([]corev1.Volu
 // AIAnalysisDeployment builds the aianalysis Deployment.
 func AIAnalysisDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 	policyName := AIAnalysisPolicyName(kn)
-	volumes := []corev1.Volume{
+	// Capacity 4: config + rego-policies + inter-service CA + sa-token.
+	volumes := make([]corev1.Volume, 0, 4)
+	volumes = append(volumes,
 		configMapVolume("config", "aianalysis-config"),
 		configMapVolume("rego-policies", policyName),
-	}
-	mounts := []corev1.VolumeMount{
-		{Name: "config", MountPath: "/etc/aianalysis", ReadOnly: true},
-		{Name: "rego-policies", MountPath: "/etc/aianalysis/policies", ReadOnly: true},
-	}
+	)
+	mounts := make([]corev1.VolumeMount, 0, 4)
+	mounts = append(mounts,
+		corev1.VolumeMount{Name: "config", MountPath: "/etc/aianalysis", ReadOnly: true},
+		corev1.VolumeMount{Name: "rego-policies", MountPath: "/etc/aianalysis/policies", ReadOnly: true},
+	)
 	env := []corev1.EnvVar{
 		{Name: "CONFIG_PATH", Value: "/etc/aianalysis/config.yaml"},
 	}
 	volumes, mounts, env = appendInterServiceTLSCA(kn, volumes, mounts, env)
+	// #655: projected short-TTL SA token replaces the automounted token —
+	// AIAnalysis's DataStorage client and its in-cluster Kubernetes client
+	// (AgentSession CRD, DD-AA-KA-001) read the SA token on the default
+	// path (aianalysis SA disables automount — see serviceaccounts.go).
+	saTokenVolume, saTokenMount := projectedServiceAccountTokenVolume()
+	volumes = append(volumes, saTokenVolume)
+	mounts = append(mounts, saTokenMount)
 	ports := make([]corev1.ContainerPort, 0, 4)
 	ports = append(ports,
 		corev1.ContainerPort{Name: "https", ContainerPort: PortHTTPS, Protocol: corev1.ProtocolTCP},
@@ -264,12 +274,14 @@ func AIAnalysisDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alph
 // SignalProcessingDeployment builds the signalprocessing Deployment.
 func SignalProcessingDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 	policyName := SignalProcessingPolicyName(kn)
-	volumes := make([]corev1.Volume, 0, 3)
+	// Capacity 8: 3 config/policy/proactive + inter-service CA +
+	// up to 3 fleet + sa-token.
+	volumes := make([]corev1.Volume, 0, 8)
 	volumes = append(volumes,
 		configMapVolume("config", "signalprocessing-config"),
 		configMapVolume("policy", policyName),
 	)
-	mounts := make([]corev1.VolumeMount, 0, 3)
+	mounts := make([]corev1.VolumeMount, 0, 8)
 	mounts = append(mounts,
 		corev1.VolumeMount{Name: "config", MountPath: "/etc/signalprocessing/config.yaml", SubPath: "config.yaml"},
 		corev1.VolumeMount{Name: "policy", MountPath: "/etc/signalprocessing/policies", ReadOnly: true},
@@ -284,6 +296,13 @@ func SignalProcessingDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernaut
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(kn, volumes, mounts, env)
 	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, knV2, "/etc/signalprocessing", effectiveFleetOAuth2SecretRef(knV2.Spec.SignalProcessing.Fleet, ""))
+	// #655: projected short-TTL SA token replaces the automounted token —
+	// SignalProcessing's DataStorage client reads the SA token on the
+	// default path (signalprocessing SA disables automount — see
+	// serviceaccounts.go).
+	saTokenVolume, saTokenMount := projectedServiceAccountTokenVolume()
+	volumes = append(volumes, saTokenVolume)
+	mounts = append(mounts, saTokenMount)
 	ports := make([]corev1.ContainerPort, 0, 3)
 	ports = append(ports,
 		corev1.ContainerPort{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
@@ -338,6 +357,15 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernau
 
 	volumes, mounts, env = appendInterServiceTLSCA(kn, volumes, mounts, env)
 	volumes, mounts = appendWorkflowExecutionFleetSecretMount(volumes, mounts, knV2, "/etc/workflowexecution")
+
+	// #655: projected short-TTL SA token replaces the automounted token —
+	// WorkflowExecution's DataStorage client reads the SA token on the
+	// default path (workflowexecution SA disables automount — see
+	// serviceaccounts.go). The build-ca-bundle init container does not
+	// read the SA token.
+	saTokenVolume, saTokenMount := projectedServiceAccountTokenVolume()
+	volumes = append(volumes, saTokenVolume)
+	mounts = append(mounts, saTokenMount)
 
 	if ref := kn.Spec.WorkflowExecution.Ansible.CACertSecretRef; ref != nil {
 		key := ref.Key
@@ -483,13 +511,15 @@ func NotificationDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1al
 	if kn.Spec.Notification.Routing != nil && kn.Spec.Notification.Routing.ConfigMapName != "" {
 		routingCMName = kn.Spec.Notification.Routing.ConfigMapName
 	}
-	volumes := make([]corev1.Volume, 0, 4)
+	// Capacity 6: 4 baseline (config, routing, output, credentials) +
+	// inter-service CA + sa-token.
+	volumes := make([]corev1.Volume, 0, 6)
 	volumes = append(volumes,
 		configMapVolume("config", "notification-controller-config"),
 		configMapVolume("routing-config", routingCMName),
 		corev1.Volume{Name: "notification-output", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 	)
-	mounts := make([]corev1.VolumeMount, 0, 4)
+	mounts := make([]corev1.VolumeMount, 0, 6)
 	mounts = append(mounts,
 		corev1.VolumeMount{Name: "config", MountPath: "/etc/notification", ReadOnly: true},
 		corev1.VolumeMount{Name: "routing-config", MountPath: "/etc/notification-routing", ReadOnly: true},
@@ -526,6 +556,12 @@ func NotificationDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1al
 		}},
 	}
 	volumes, mounts, env = appendInterServiceTLSCA(kn, volumes, mounts, env)
+	// #655: projected short-TTL SA token replaces the automounted token —
+	// Notification's DataStorage client reads the SA token on the default
+	// path (notification SA disables automount — see serviceaccounts.go).
+	saTokenVolume, saTokenMount := projectedServiceAccountTokenVolume()
+	volumes = append(volumes, saTokenVolume)
+	mounts = append(mounts, saTokenMount)
 	ports := make([]corev1.ContainerPort, 0, 3)
 	ports = append(ports,
 		corev1.ContainerPort{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
@@ -739,10 +775,10 @@ func kaResources(kn *kubernautv1alpha2.Kubernaut) corev1.ResourceRequirements {
 }
 
 // projectedServiceAccountTokenVolume builds the projected short-TTL ServiceAccount
-// token volume that replaces the default automounted token for the
-// projected-token components (kubernaut-agent plus the #648 consumer fleet
-// identities: gateway, remediationorchestrator, apifrontend — see
-// projectedTokenComponents in serviceaccounts.go). Requires
+// token volume that replaces the default automounted token for every
+// projectedTokenComponents member (see serviceaccounts.go; membership
+// history: kubernaut-agent #118, #648 GW/RO/AF, #653 EM, #655 SP/WE/
+// Notification/AIAnalysis). Requires
 // AutomountServiceAccountToken=false on the component's ServiceAccount.
 func projectedServiceAccountTokenVolume() (corev1.Volume, corev1.VolumeMount) {
 	volume := corev1.Volume{
@@ -793,16 +829,27 @@ func projectedServiceAccountTokenVolume() (corev1.Volume, corev1.VolumeMount) {
 // RemediationWorkflow CUD, ActionType CUD) will be rejected during this
 // window. SREs should plan operator upgrades during low-activity windows.
 func AuthWebhookDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-	volumes := []corev1.Volume{
+	// Capacity 4: config + webhook-certs + inter-service CA + sa-token.
+	volumes := make([]corev1.Volume, 0, 4)
+	volumes = append(volumes,
 		configMapVolume("config", "authwebhook-config"),
 		secretVolume("webhook-certs", TLSSecretName(kn, TLSServiceAuthWebhook)),
-	}
-	mounts := []corev1.VolumeMount{
-		{Name: "config", MountPath: "/etc/authwebhook", ReadOnly: true},
-		{Name: "webhook-certs", MountPath: "/tmp/k8s-webhook-server/serving-certs", ReadOnly: true},
-	}
+	)
+	mounts := make([]corev1.VolumeMount, 0, 4)
+	mounts = append(mounts,
+		corev1.VolumeMount{Name: "config", MountPath: "/etc/authwebhook", ReadOnly: true},
+		corev1.VolumeMount{Name: "webhook-certs", MountPath: "/tmp/k8s-webhook-server/serving-certs", ReadOnly: true},
+	)
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(kn, volumes, mounts, env)
+	// #655: projected short-TTL SA token replaces the automounted token —
+	// AuthWebhook's DataStorage audit store and its in-cluster Kubernetes
+	// API client (controller-runtime manager, CR reads/writes) read the SA
+	// token on the default path (authwebhook SA disables automount — see
+	// serviceaccounts.go).
+	saTokenVolume, saTokenMount := projectedServiceAccountTokenVolume()
+	volumes = append(volumes, saTokenVolume)
+	mounts = append(mounts, saTokenMount)
 
 	ports := make([]corev1.ContainerPort, 0, 3)
 	ports = append(ports,
@@ -1258,15 +1305,6 @@ func appendFleetSecretMounts(volumes []corev1.Volume, mounts []corev1.VolumeMoun
 	return volumes, mounts
 }
 
-// appendMCPGatewayOnlyFleetSecretMount mounts only the fleet-oauth2
-// credentials Secret, never fleet-ca/fleet-token (#224). Used by
-// SP/EM/KA, which only ever consume MCP Gateway remote reads and never
-// read the Backend/Endpoint scope-check adapter -- their upstream config
-// schemas have no field for the Backend/Endpoint TLS CA or ACM bearer
-// token at all (see resolveMCPGatewayOnlyFleetConfig /
-// resolveSignalProcessingFleetConfig / resolveKAFleetConfig), so mounting
-// those Secrets would be dead weight. AF used to be in this list too, but
-// #464 moved it to appendFleetSecretMounts above (kubernaut#2025/#2022).
 // appendMCPGatewayOnlyFleetSecretMount mounts only the fleet-oauth2
 // credentials Secret (#224). Used by SP/EM/KA, which only ever consume MCP
 // Gateway remote reads and never call the scope-check adapter. #647 made

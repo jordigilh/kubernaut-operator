@@ -1127,8 +1127,14 @@ func (r *KubernautReconciler) deployNamespacedCoreRBAC(ctx context.Context, kn *
 			return fmt.Errorf("ensuring ds client rb %s: %w", rb.Name, err)
 		}
 	}
-	if err := r.ensureNamespaced(ctx, kn, resources.KubernautAgentClientRoleBinding(kn)); err != nil {
-		return err
+	// #655 scope extension: the AIAnalysis→Kubernaut Agent channel is the
+	// AgentSession CRD via the Kubernetes API server (DD-AA-KA-001) — no
+	// HTTP client reads the kubernaut-agent-client grant, so the aianalysis
+	// RoleBinding is no longer rendered; prune it from existing installs.
+	if err := r.deleteIfExists(ctx, kn, &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "kubernaut-agent-client-aianalysis", Namespace: kn.Namespace},
+	}); err != nil {
+		return fmt.Errorf("removing stale aianalysis KA client RoleBinding: %w", err)
 	}
 	if kn.Spec.APIFrontendEnabled() {
 		if err := r.ensureNamespaced(ctx, kn, resources.KubernautAgentClientAPIfrontendRoleBinding(kn)); err != nil {

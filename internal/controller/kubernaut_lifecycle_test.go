@@ -2162,23 +2162,34 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	// ======================================================================
 
 	Context("Kubernaut Agent Client RoleBinding", func() {
-		It("should create kubernaut-agent-client-aianalysis RoleBinding during deploy", func() {
+		It("should prune the stale kubernaut-agent-client-aianalysis RoleBinding during deploy (#655)", func() {
+			// The AIAnalysis→Kubernaut Agent channel is the AgentSession CRD
+			// (DD-AA-KA-001); the RoleBinding is no longer rendered. Pre-seed
+			// it with the operator ownership labels — as a previous operator
+			// version would have — and assert the reconcile deletes it.
+			kn := newMinimalCR()
 			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+			stale := &rbacv1.RoleBinding{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "kubernaut-agent-client-aianalysis",
+					Namespace: testNamespace,
+					Labels:    resources.CommonLabels(kn),
+				},
+				RoleRef: rbacv1.RoleRef{
+					APIGroup: rbacv1.GroupName,
+					Kind:     "ClusterRole",
+					Name:     testNamespace + "-kubernaut-agent-client",
+				},
+			}
+			Expect(k8sClient.Create(ctx, stale)).To(Succeed())
+			Expect(k8sClient.Create(ctx, kn)).To(Succeed())
 			reconcileToRunning(ctx)
 
-			rb := &rbacv1.RoleBinding{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{
+			err := k8sClient.Get(ctx, types.NamespacedName{
 				Name: "kubernaut-agent-client-aianalysis", Namespace: testNamespace,
-			}, rb)).To(Succeed())
-
-			Expect(rb.RoleRef.Kind).To(Equal("ClusterRole"))
-			expectedRoleRef := testNamespace + "-kubernaut-agent-client"
-			Expect(rb.RoleRef.Name).To(Equal(expectedRoleRef))
-
-			Expect(rb.Subjects).NotTo(BeEmpty())
-			Expect(rb.Subjects[0].Name).To(Equal(resources.ServiceAccountName(resources.ComponentAIAnalysis)))
-			Expect(rb.Subjects[0].Namespace).To(Equal(testNamespace))
+			}, &rbacv1.RoleBinding{})
+			Expect(errors.IsNotFound(err)).To(BeTrue(),
+				"the stale aianalysis KA client RoleBinding must be pruned; got err %v", err)
 		})
 	})
 

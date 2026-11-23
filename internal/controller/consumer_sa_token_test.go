@@ -30,7 +30,10 @@ import (
 
 // #648: the consumer fleet identities (GW/RO/AF) authenticate to FMC with
 // their in-cluster ServiceAccount token (kubernaut#2661 peer→facade
-// contract, #647). Through a real envtest reconcile, their live
+// contract, #647). #653 added EM; #655 adds the remaining DataStorage
+// client identities (SP/WE/Notification/AIAnalysis), whose DataStorage
+// clients read the SA token on the same default path. Through a real
+// envtest reconcile, their live
 // ServiceAccounts must disable automount and their live Deployments must
 // mount a projected short-TTL SA token at the default path — same path,
 // same identity, bounded lifetime, so no behavior change (IA-5/CM-6).
@@ -45,7 +48,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 		cleanupClusterScoped(ctx)
 	})
 
-	Describe("SA projected tokens through reconciliation (#648 consumers, #653 EM)", func() {
+	Describe("SA projected tokens through reconciliation (#648 consumers, #653 EM, #655 DS clients)", func() {
 		deploymentSAComponents := []struct {
 			component, saName string
 		}{
@@ -55,6 +58,17 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			// #653: EM reads its SA token for DataStorage and OCP monitoring
 			// on the same default path — same hardening.
 			{resources.ComponentEffectivenessMonitor, resources.ServiceAccountName(resources.ComponentEffectivenessMonitor)},
+			// #655: the remaining DataStorage client identities — their
+			// DataStorage clients (pkg/audit.NewOpenAPIClientAdapter) read
+			// the SA token on the same default path.
+			{resources.ComponentSignalProcessing, resources.ServiceAccountName(resources.ComponentSignalProcessing)},
+			{resources.ComponentWorkflowExecution, resources.ServiceAccountName(resources.ComponentWorkflowExecution)},
+			{resources.ComponentNotification, resources.ServiceAccountName(resources.ComponentNotification)},
+			{resources.ComponentAIAnalysis, resources.ServiceAccountName(resources.ComponentAIAnalysis)},
+			// #655 scope extension: AuthWebhook's DataStorage audit store
+			// and its in-cluster Kubernetes API client read the SA token on
+			// the same default path.
+			{resources.ComponentAuthWebhook, resources.ServiceAccountName(resources.ComponentAuthWebhook)},
 		}
 
 		It("IT-648-RECONCILE-TOKEN-001 [IA-5, CM-6]: reconciliation renders consumer SA automount off plus projected short-TTL tokens at the default path", func() {
