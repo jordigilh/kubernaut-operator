@@ -760,9 +760,14 @@ spec:
           groups: ["console-readers"]
 ```
 
-Until you bind it, console reads return AF's `forbidden` envelope and the
-Console renders the corresponding "Access denied" read state — the intended
-deny-by-default behavior. The Console nginx `/api/v1/console/` proxy is
+Until a user holds the capability, console reads return AF's `forbidden`
+envelope and the Console renders the corresponding "Access denied" read
+state — the intended deny-by-default behavior. The boundary is the
+capability SAR, not this role's bind state: a user granted `use` on the
+same three `kubernaut.ai/tools` resourceNames through any other
+ClusterRole is equally authorized. Local inventory reads additionally
+check the user's own Kubernetes permissions regardless of how the
+capability was granted. The Console nginx `/api/v1/console/` proxy is
 transport only: it changes nothing about who can read.
 
 Local inventory reads additionally check the user's own Kubernetes

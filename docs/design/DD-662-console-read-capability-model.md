@@ -79,9 +79,11 @@ A #662 spike verified the upstream facts before deciding:
    authenticated reads to AF and enforces no authorization of its own.
    Capability authorization happens entirely at AF via the named
    capability SARs; the proxy works unchanged whether or not any group is
-   bound. Until an administrator binds `console-reader`, console reads
-   return AF's `forbidden` envelope and the SPA renders the corresponding
-   read state — the intended deny-by-default behavior.
+   bound. Users who lack the capability see AF's `forbidden` envelope and
+   the SPA's corresponding read state — the intended deny-by-default
+   behavior. The boundary is the capability SAR itself, not this role's
+   bind state: an administrator may equivalently grant `use` on the three
+   capability resourceNames through any other ClusterRole.
 
 Rejected alternatives (with reasons):
 
@@ -107,7 +109,11 @@ Rejected alternatives (with reasons):
 ## Default and Migration Behavior
 
 No behavior change: this decision records the existing state as permanent.
-Zero-config installs keep returning `forbidden` for console reads. The
+Zero-config installs keep returning `forbidden` for console reads because no
+user holds the capability SAR — deny-by-default is a property of the
+capability check, not of this role's bind state (a deployment granting the
+same `use` resourceNames through another ClusterRole is authorized by
+design). The
 documentation now states this as the model rather than as a pending
 upstream decision.
 
