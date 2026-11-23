@@ -116,8 +116,26 @@ spec:
   #       caCertSecretRef:
   #         name: mcp-gateway-ca
   #         key: ca.crt
-  #   scopeCheck:
-  #     backend: fleetmetadatacache
   #   oauth2:
   #     tokenURL: "https://keycloak.example.com/realms/kubernaut/protocol/openid-connect/token"
   #     credentialsSecretRef: fleet-oauth2-creds
+
+  # Optional FMC ACM Search source example (kubernaut-operator#647, requires
+  # fleet.enabled=true — FMC deploys whenever fleet is enabled). Selecting
+  # the source without complete configuration fails validation.
+  # The endpoint is an absolute HTTPS base URL with no path; the bearer-token
+  # Secret is mounted read-only and keyed. The Search principal's read-only
+  # RBAC on the ACM hub is an ACM-platform action, configured there — not
+  # granted by this operator.
+  # fleetMetadataCache:
+  #   sources:
+  #     acm:
+  #       endpoint: "https://acm-search.example.com"
+  #       tokenSecretRef:
+  #         name: acm-search-token
+  #         key: token
+  #       tls:
+  #         source: secret
+  #         caCertSecretRef:
+  #           name: acm-source-ca
+  #           key: ca.crt

@@ -39,6 +39,15 @@ const (
 	kubernautAPIGroup        = "kubernaut.ai"
 )
 
+// rolesByName indexes rendered ClusterRoles by name for lookup in assertions.
+func rolesByName(roles []*rbacv1.ClusterRole) map[string]*rbacv1.ClusterRole {
+	byName := make(map[string]*rbacv1.ClusterRole, len(roles))
+	for _, role := range roles {
+		byName[role.Name] = role
+	}
+	return byName
+}
+
 // apiFrontendVerbs returns the effective API Frontend verbs for one resource.
 func apiFrontendVerbs(role *rbacv1.ClusterRole, resource string) []string {
 	seen := make(map[string]struct{})
@@ -59,10 +68,10 @@ func apiFrontendVerbs(role *rbacv1.ClusterRole, resource string) []string {
 }
 
 var _ = Describe("ClusterRoles", func() {
-	It("returns exactly 17 roles (14 base + 2 monitoring + 1 console-access)", func() {
+	It("returns exactly 18 roles (14 base + 2 monitoring + 1 console-access + 1 console-reader)", func() {
 		kn := testKubernaut()
 		roles := ClusterRoles(kn, testKnV2(kn))
-		Expect(roles).To(HaveLen(17), "ClusterRoles() should return exactly 17 roles (14 base + 2 monitoring + 1 console-access, #289), got %d", len(roles))
+		Expect(roles).To(HaveLen(18), "ClusterRoles() should return exactly 18 roles (14 base + 2 monitoring + 1 console-access, #289 + 1 console-reader, #636), got %d", len(roles))
 	})
 
 	It("contains expected role names", func() {
@@ -90,6 +99,7 @@ var _ = Describe("ClusterRoles", func() {
 			ns + "-authwebhook-role",
 			ns + "-alertmanager-view",
 			ns + "-gateway-signal-source",
+			ns + "-console-reader",
 		}
 
 		for _, name := range expectedNames {
@@ -146,6 +156,37 @@ var _ = Describe("ClusterRoles", func() {
 
 		Expect(networkPolicyRule).NotTo(BeNil(), "manager role must manage standard NetworkPolicies")
 		Expect(networkPolicyRule.Verbs).To(ConsistOf("create", "delete", "get", "list", "patch", "update", "watch"))
+	})
+
+	Describe("RemediationOrchestratorClusterRole", func() {
+		// UT-RO-645-CTRL-001 — AC-6 (FedRAMP least privilege), CC6.1 (SOC 2
+		// logical access), V4.1.1/V4.2.1 (OWASP ASVS 5.0.0 access control).
+		// Business behavior (BR-SCOPE-010): a PVC remediation target labeled
+		// kubernaut.ai/managed=true must pass RO's scope gate. RO's cached
+		// metadata client needs list/watch on PVCs for the informer to sync;
+		// without it the check returns ScopeUnavailable after the 5s timeout
+		// and the RemediationRequest is blocked instead of authorized.
+		It("grants read-only PVC access for target scope checks (#645)", func() {
+			kn := testKubernaut()
+			roles := ClusterRoles(kn, testKnV2(kn))
+
+			ro := rolesByName(roles)[clusterRoleName(kn, "remediationorchestrator-controller")]
+			Expect(ro).NotTo(BeNil(), "remediationorchestrator-controller ClusterRole not found")
+
+			var coreRule *rbacv1.PolicyRule
+			for i := range ro.Rules {
+				rule := &ro.Rules[i]
+				if len(rule.APIGroups) == 1 && rule.APIGroups[0] == "" && slices.Contains(rule.Resources, "persistentvolumes") {
+					coreRule = rule
+					break
+				}
+			}
+			Expect(coreRule).NotTo(BeNil(), "core resources rule not found")
+			Expect(coreRule.Resources).To(ContainElement("persistentvolumeclaims"),
+				"RO must read PVCs to authorize PVC remediation targets (BR-SCOPE-010)")
+			Expect(coreRule.Verbs).To(ConsistOf("get", "list", "watch"),
+				"PVC access must be read-only metadata reads (AC-6 least privilege)")
+		})
 	})
 
 	Describe("GatewayClusterRole", func() {
@@ -659,10 +700,7 @@ var _ = Describe("Fleet caller RBAC (#457)", func() {
 		roles := ClusterRoles(kn, knV2)
 		bindings := ClusterRoleBindings(kn, knV2)
 
-		roleByName := make(map[string]*rbacv1.ClusterRole, len(roles))
-		for _, role := range roles {
-			roleByName[role.Name] = role
-		}
+		roleByName := rolesByName(roles)
 		bindingByName := make(map[string]*rbacv1.ClusterRoleBinding, len(bindings))
 		for _, binding := range bindings {
 			bindingByName[binding.Name] = binding
@@ -1197,8 +1235,8 @@ var _ = Describe("ToolClusterRoles", func() {
 				"tool ClusterRole %q should have %d resourceNames, got %d",
 				found.Name, expectedCount, len(found.Rules[0].ResourceNames))
 		},
-		Entry("SRE", "tool-sre", 29),
-		Entry("AI-orchestrator", "tool-ai-orchestrator", 21),
+		Entry("SRE", "tool-sre", 31),
+		Entry("AI-orchestrator", "tool-ai-orchestrator", 22),
 		Entry("CICD", "tool-cicd", 4),
 		Entry("Observability", "tool-observability", 6),
 		Entry("L3-audit", "tool-l3-audit", 6),

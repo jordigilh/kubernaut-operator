@@ -11,5 +11,7 @@ For the fuller, every-knob-annotated walkthrough:
 | 3 | [Deploy Kubernaut](03-deploy.md) | Install operator, create CR, verify, seed catalog, AlertManager |
 | 4 | [Fleet: Kuadrant MCP Gateway](04-fleet-mcp-gateway.md) | Optional -- only if you enable `spec.fleet.mcpGateway.type: kuadrant` |
 | 5 | [Fleet: Multi-Cluster Setup](05-fleet-multi-cluster.md) | Optional -- deploying RHBK from scratch, and/or adding a second ("spoke") managed cluster to Fleet |
+| 6 | [Platform and NetworkPolicy Support](06-platform-support.md) | Compatibility contract: generic Kubernetes vs OpenShift, TLS sources, ownership |
+| 7 | [External Exposure](07-external-exposure.md) | Administrator-owned Route/Ingress/Gateway API examples for Gateway, API Frontend, and Console |
 
 See also: [Credentials, TLS, and protected communications](../security/credentials-and-tls.md), [Threat model](../security/threat-model.md), and [Auditing and accountability logging](../security/auditing.md).

@@ -388,6 +388,10 @@ func cleanupNamespacedResources(ctx context.Context) {
 		resources.KubernautAgentTLSSecretName, resources.APIFrontendTLSSecretName,
 		resources.FleetMetadataCacheTLSSecretName, "authwebhook-tls",
 		"datastorage-signing-cert", "customer-signing", "telemetry-ca", "telemetry-client",
+		// #647: unlabeled ACM source fixtures, named directly by specs in
+		// fleetmetadatacache_test.go — same contamination hazard the list
+		// exists for.
+		"acm-search-token", "acm-source-ca", "missing-acm-source-token",
 	} {
 		secret := &corev1.Secret{}
 		if err := k8sClient.Get(ctx, client.ObjectKey{Namespace: testNamespace, Name: name}, secret); err == nil {
@@ -1045,7 +1049,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}, timeout, interval).ShouldNot(Equal(updatedHash), "disabling raw thinking must roll the Console pod again")
 		})
 
-		It("IT-CN-638-001 [AC-3, CC6.1]: console enabled routes the authenticated Console read API to API Frontend", func() {
+		It("IT-CN-638-001 [CM-3, AC-3, AC-6, CC6.1/CC6.3; ASVS V4.1.1/V4.2.1]: console API location is reconciled and restored on drift", func() {
 			createBYOSecrets(ctx)
 			cr := newMinimalCR()
 			t := true
@@ -1061,41 +1065,26 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				},
 			})).To(Succeed())
 			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
-			reconcileToRunning(ctx)
+			r := reconcileToRunning(ctx)
 
+			cmKey := types.NamespacedName{Name: string(resources.ComponentConsole) + "-nginx", Namespace: testNamespace}
 			cm := &corev1.ConfigMap{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: string(resources.ComponentConsole) + "-nginx", Namespace: testNamespace,
-			}, cm)).To(Succeed())
+			Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
+
+			By("routing /api/v1/console/ reads to AF rather than the SPA")
 			serverConf := cm.Data["server.conf"]
-			Expect(serverConf).To(ContainSubstring("location = /api/v1/console/policies/scope"),
-				"the reconciled Console nginx must route the policy scope read to AF")
-			Expect(serverConf).To(ContainSubstring("location = /api/v1/console/inventory/managed-resources"),
-				"the reconciled Console nginx must route the managed-resource list read to AF")
-			Expect(serverConf).To(ContainSubstring("location ~ ^/api/v1/console/inventory/managed-resources/"),
-				"the reconciled Console nginx must route the managed-resource detail read to AF")
-			Expect(serverConf).To(ContainSubstring(`proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";`),
-				"identity forwarding must use the oauth2-proxy session token, not client-supplied headers")
+			Expect(serverConf).To(ContainSubstring("location ^~ /api/v1/console/ {"),
+				"the reconciled Console NGINX config must contain the console API location")
+			Expect(serverConf).To(ContainSubstring(
+				fmt.Sprintf("proxy_pass https://%s.%s.svc:%d;\n", resources.ComponentAPIFrontend, testNamespace, resources.PortHTTPS)),
+				"the console API location must proxy to the AF upstream")
+			Expect(serverConf).To(ContainSubstring(
+				`proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";`),
+				"AF authorization must flow from the OAuth2 Proxy-injected access token only")
 			Expect(serverConf).To(ContainSubstring(`proxy_set_header X-Forwarded-Access-Token "";`),
 				"the raw access token must not be forwarded to AF in a second header")
 			Expect(serverConf).To(ContainSubstring("limit_except GET { deny all; }"),
 				"the Console read API must be read-only at the proxy boundary")
-		})
-
-		It("IT-CN-638-002 [CM-6, CC6.1]: nginx ConfigMap drift is repaired and rolls the Console pod", func() {
-			createBYOSecrets(ctx)
-			cr := newMinimalCR()
-			cr.Spec.Console.Enabled = ptr.To(true)
-			cr.Spec.Console.Auth.SecretName = consoleOIDCSecretName
-			cr.Spec.Console.Auth.RedirectURL = testConsoleRedirectURL
-			Expect(k8sClient.Create(ctx, &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{Name: consoleOIDCSecretName, Namespace: testNamespace},
-				Data: map[string][]byte{
-					"client-id": []byte("cid"), "client-secret": []byte("csec"), "cookie-secret": []byte("cook"),
-				},
-			})).To(Succeed())
-			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
-			r := reconcileToRunning(ctx)
 
 			deployment := &appsv1.Deployment{}
 			deploymentKey := types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}
@@ -1103,33 +1092,32 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			initialHash := deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
 			Expect(initialHash).NotTo(BeEmpty(), "Console Deployment must carry the nginx ConfigMap hash")
 
-			By("stripping the Console read API routing to simulate a pre-#638 deployment")
-			cmKey := types.NamespacedName{Name: string(resources.ComponentConsole) + "-nginx", Namespace: testNamespace}
-			cm := &corev1.ConfigMap{}
-			Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
-			start := strings.Index(cm.Data["server.conf"], "location = /api/v1/console/policies/scope")
-			end := strings.Index(cm.Data["server.conf"], `location ~* \.(js|css|`)
-			Expect(start).To(BeNumerically(">=", 0), "precondition: the #638 routing must exist")
-			Expect(end).To(BeNumerically(">", start), "precondition: the asset location must follow the #638 routing")
-			cm.Data["server.conf"] = cm.Data["server.conf"][:start] + cm.Data["server.conf"][end:]
+			By("tampering with the ConfigMap (drift) and re-reconciling")
+			tampered := strings.Replace(serverConf, "location ^~ /api/v1/console/ {", "location /api/v1/console/ {", 1)
+			Expect(tampered).NotTo(Equal(serverConf), "tampering must actually change the config")
+			cm.Data["server.conf"] = tampered
 			Expect(k8sClient.Update(ctx, cm)).To(Succeed())
-
-			By("re-reconciling repairs the drift")
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
+			// The nginx ConfigMap files are subPath-mounted, so a repaired
+			// ConfigMap is not reflected in an already-running console
+			// container. The console-nginx ConfigMap therefore participates
+			// in the same resourceVersion-based roll mechanism as
+			// console-oauth2-proxy: the drift repair changes the live
+			// resourceVersion, which is folded into the Console pod-template
+			// hash so the running nginx reloads the repaired configuration.
 			Eventually(func() string {
 				Expect(k8sClient.Get(ctx, cmKey, cm)).To(Succeed())
 				return cm.Data["server.conf"]
-			}, timeout, interval).Should(ContainSubstring("location = /api/v1/console/policies/scope"),
-				"the drifted nginx ConfigMap must be repaired to the operator-rendered configuration")
+			}, timeout, interval).Should(ContainSubstring("location ^~ /api/v1/console/ {"),
+				"re-reconciliation must restore the drifted console API location")
 
-			By("the repair rolls the subPath-mounted Console pod")
 			Eventually(func() string {
 				Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
 				return deployment.Spec.Template.Annotations[resources.AnnotationConfigMapHash]
 			}, timeout, interval).ShouldNot(Equal(initialHash),
-				"a repaired nginx ConfigMap must change the Console pod-template hash so the running nginx reloads it")
+				"a repaired nginx ConfigMap must roll the subPath-mounted Console pod so the running nginx reloads it")
 		})
 
 		It("IT-CL-483-001 [AC-2/AC-12, CC6.1/CC6.3; ASVS V3.3/V7.2.1]: renders and regenerates provider logout configuration", func() {
@@ -3902,6 +3890,106 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(errors.IsNotFound(err)).To(BeTrue(), "console-access ClusterRole should be deleted by finalizer")
 			err = k8sClient.Get(ctx, types.NamespacedName{Name: crbName}, &rbacv1.ClusterRoleBinding{})
 			Expect(errors.IsNotFound(err)).To(BeTrue(), "console-access CRB should be deleted by finalizer")
+		})
+
+		// ==================================================================
+		// Console direct-action RBAC (#636)
+		// ==================================================================
+		// These prove the reconciliation path, not just the builder: the
+		// console-reader capability role reaches the cluster through the
+		// ClusterRoles() aggregator, is never implicitly bound, and is pruned
+		// or finalized with the rest of the core cluster RBAC.
+
+		It("IT-CONSOLE-006: renders the unbound console-reader capability role during deploy", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+			reconcileToDeployPhase(ctx)
+
+			knForNames := &kubernautv1alpha2.Kubernaut{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace}}
+			cr := &rbacv1.ClusterRole{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resources.ConsoleReaderClusterRoleName(knForNames)}, cr)).
+				To(Succeed(), "console-reader ClusterRole should exist after deploy")
+			Expect(cr.Rules).To(HaveLen(1))
+			Expect(cr.Rules[0].APIGroups).To(ConsistOf("kubernaut.ai"))
+			Expect(cr.Rules[0].Resources).To(ConsistOf("tools"))
+			Expect(cr.Rules[0].Verbs).To(ConsistOf("use"))
+			Expect(cr.Rules[0].ResourceNames).To(ConsistOf(
+				"kubernaut_read_policy_scope",
+				"kubernaut_list_managed_resources",
+				"kubernaut_get_managed_resource",
+			))
+
+			By("never binding the capability role implicitly (login grants no action)")
+			crbs := &rbacv1.ClusterRoleBindingList{}
+			Expect(k8sClient.List(ctx, crbs)).To(Succeed())
+			for _, crb := range crbs.Items {
+				Expect(crb.RoleRef.Name).NotTo(Equal(cr.Name),
+					"console-reader must stay unbound after a default reconcile")
+			}
+		})
+
+		It("IT-CONSOLE-007: renders tool-sre with the audited approval-visibility and fleet-discovery tools", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+			reconcileToDeployPhase(ctx)
+
+			cr := &rbacv1.ClusterRole{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name: testNamespace + "-tool-sre",
+			}, cr)).To(Succeed(), "tool-sre ClusterRole should exist after deploy")
+			Expect(cr.Rules).To(HaveLen(1))
+			Expect(cr.Rules[0].ResourceNames).To(ContainElements(
+				"kubernaut_list_approval_requests", "list_clusters",
+			), "tool-sre must carry the #636 audited tools through the reconciler")
+		})
+
+		It("IT-CONSOLE-008: prunes the console-reader role after AF is disabled", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			knForNames := &kubernautv1alpha2.Kubernaut{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace}}
+			crName := resources.ConsoleReaderClusterRoleName(knForNames)
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crName}, &rbacv1.ClusterRole{})).To(Succeed(),
+				"precondition: console-reader ClusterRole should exist")
+
+			By("disabling API Frontend")
+			kn := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			kn.Spec.APIFrontend.Enabled = ptr.To(false)
+			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
+
+			By("reconciling to apply the prune")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: crName}, &rbacv1.ClusterRole{})
+			Expect(errors.IsNotFound(err)).To(BeTrue(),
+				"console-reader ClusterRole should be pruned when AF is disabled")
+		})
+
+		It("IT-CONSOLE-009: deletes the console-reader ClusterRole by finalizer", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			knForNames := &kubernautv1alpha2.Kubernaut{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace}}
+			crName := resources.ConsoleReaderClusterRoleName(knForNames)
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crName}, &rbacv1.ClusterRole{})).To(Succeed())
+
+			By("deleting the CR")
+			kn := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
+			stripWorkflowNamespaceCreatedByAnnotation(ctx)
+
+			By("reconciling the finalizer")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: crName}, &rbacv1.ClusterRole{})
+			Expect(errors.IsNotFound(err)).To(BeTrue(),
+				"console-reader ClusterRole should be deleted by finalizer")
 		})
 	})
 

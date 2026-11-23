@@ -475,6 +475,24 @@ MANDATORY USER DECISION REQUIRED: Which approach? (A/B/C)
 
 ## Code Quality Standards
 
+### Tooling (Mandatory)
+
+**Engram MCP tools for semantic code navigation are mandatory.** All symbol
+lookup, reference finding, and code search MUST go through the Engram MCP
+tools (`find_symbol`, `find_referencing_symbols`, `search_for_pattern`,
+`get_symbols_overview`). Do NOT use `grep`, `sed`, `rg`, or ad-hoc shell
+commands for semantic code discovery — they are type-blind and miss
+import-aware references. Raw `grep` is acceptable only for literal text
+searches in non-code files (docs, YAML) when `search_for_pattern` cannot
+express the need. File edits use the dedicated edit tools, never `sed`.
+
+**When Engram tools cannot run** (connection failure, 403/503, stale or
+unavailable index): retry the call once, then either repair the tooling or
+**escalate to the user** — do NOT silently substitute grep/rg/find for
+code navigation. State in your report which lookups fell back and why
+(see the ISSUE-492 precedent: repair or escalate, never silent
+substitution).
+
 ### Error Handling (Mandatory)
 
 - ALWAYS handle errors -- never ignore them

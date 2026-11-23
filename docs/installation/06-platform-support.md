@@ -97,7 +97,9 @@ External exposure is not an operator adapter. Administrators create and own
 OpenShift Routes, Kubernetes Ingresses, Gateway API resources, mesh resources,
 hostnames, edge TLS, and edge authorization. The Console callback URL is
 explicitly configured in `spec.console.auth.redirectURL`; it is never derived
-from an OpenShift ingress domain.
+from an OpenShift ingress domain. Worked examples for exposing the
+operator-managed Services on each platform are in
+[07-external-exposure.md](07-external-exposure.md).
 
 Missing OpenShift APIs must not prevent the generic operator manager from starting. OpenShift-specific status and events identify which optional capability was not available.
 

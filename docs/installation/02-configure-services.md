@@ -88,7 +88,6 @@ spec:
       maxTurns: 40
     workflowDiscovery:
       llmProfileRef: lightweight
-      maxEvidenceHandoffBytes: 262144
 ```
 
 Cross-credential Agent profile references are supported. The operator mounts each distinct credentials Secret read-only for its owning Agent invocation. Severity-triage retains its independent profile and fallback behavior.
@@ -151,7 +150,6 @@ spec:
       maxTurns: 40
     workflowDiscovery:
       llmProfileRef: lightweight   # gets its own reasoning policy, independent of primary's
-      maxEvidenceHandoffBytes: 262144
 ```
 
 `effort` is a unified, provider-agnostic depth knob: the same value means the same thing regardless of which provider a profile points at, but each provider's client maps it into its own wire dialect (e.g. Anthropic's thinking-level tiers, OpenAI/Azure o-series and gpt-5's `reasoning_effort`, DeepSeek's own two-tier dialect). Providers with no effort-dial concept simply ignore it.
@@ -624,6 +622,28 @@ are verified; certificate verification is never disabled.
 
 If you don't need the standalone Console UI, omit the `console` block entirely (it defaults to disabled).
 
+### Console read API prerequisites (#638)
+
+The operator's Console NGINX configuration routes the authenticated read API
+(`GET /api/v1/console/policies/scope` and
+`GET /api/v1/console/inventory/managed-resources[/{resourceID}]`) to API
+Frontend through the same OAuth2 Proxy session used for A2A/MCP. Version
+prerequisites:
+
+- **API Frontend**: an image carrying the authenticated console read API
+  (kubernaut PR #2604, decision DD-AF-018). On older AF images the route
+  returns AF's own 404 instead of the Console SPA -- a safe failure that
+  discloses no credentials -- but the endpoints are unusable.
+- **Console**: an image carrying the read client from kubernaut-console
+  issue #164. Older Console images simply do not issue these requests.
+
+The routing itself (OAuth2 Proxy session forwarding, upstream TLS
+verification, rate limiting) needs no configuration and is applied by
+ordinary operator reconciliation on upgrade. Browser-level qualification of
+the full read path additionally requires the versions above; the operator's
+Kind qualification lane (`E2E-CN-638-HTTP-001`) verifies routing and access
+control against the deployed components.
+
 ## Verification
 
 Confirm all required prerequisite ConfigMaps exist before applying the Kubernaut CR:
@@ -710,6 +730,37 @@ client), every tool call will be denied regardless of this config (and, if
 you've set `consoleAccessAuthorizationCheckEnabled: true`, Console access
 too — with it left at the default `false`, Console access doesn't consult
 groups at all and is unaffected by a missing claim).
+
+The six built-in personas and their exact tool sets are audited in
+[DD-636](../design/DD-636-console-direct-action-rbac.md). Two persona
+additions land in v1.6: `sre` can also list pending approval requests
+(`kubernaut_list_approval_requests`) and discover fleet clusters
+(`list_clusters`); `ai-orchestrator` can discover fleet clusters but still
+cannot read or decide approvals (separation of duties, DD-278).
+
+**Console policy/inventory reads need a separate role.** The operator also
+renders `console-reader` (a seventh ClusterRole, cluster-scoped), granting
+only the three AF console read capabilities (`kubernaut_read_policy_scope`,
+`kubernaut_list_managed_resources`, `kubernaut_get_managed_resource`). It is
+**not bound by default** and no persona implies it, so login never grants
+console reads. Bind it through `roleBindings` with `clusterRoleName` — note
+the rendered name is namespace-prefixed, so reference
+`<namespace>-console-reader` exactly (the custom-binding path uses the name
+verbatim, no prefixing) — or your own ClusterRoleBinding. For a Kubernaut CR
+in `kubernaut-system`:
+
+```yaml
+spec:
+  apiFrontend:
+    rbac:
+      roleBindings:
+        - clusterRoleName: kubernaut-system-console-reader
+          groups: ["console-readers"]
+```
+
+Local inventory reads additionally check the user's own Kubernetes
+`get`/`list` permissions on the exact projected resources, which remain your
+responsibility because the projected set depends on your managed scope.
 
 **Console access is derived automatically — leave `consoleAccessGroups`
 unset.** `spec.apiFrontend.rbac.consoleAccessGroups` only has any effect

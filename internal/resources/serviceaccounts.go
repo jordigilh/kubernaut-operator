@@ -47,12 +47,28 @@ func ServiceAccountName(component string) string {
 	return component
 }
 
+// projectedTokenComponents are the components whose Deployments mount a
+// projected short-TTL ServiceAccount token (projectedServiceAccountTokenVolume)
+// instead of the default long-lived automounted token, so their SAs disable
+// automount. KubernautAgent was first (#118); #648 extends it to the
+// consumer fleet identities (GW/RO/AF) that authenticate to FMC with their
+// in-cluster SA token (kubernaut#2661 peer→facade contract); #653 adds
+// EffectivenessMonitor, whose SA-token reads (DataStorage querier, OCP
+// monitoring) run on the same default path.
+var projectedTokenComponents = map[string]bool{
+	ComponentKubernautAgent:          true,
+	ComponentGateway:                 true,
+	ComponentRemediationOrchestrator: true,
+	ComponentAPIFrontend:             true,
+	ComponentEffectivenessMonitor:    true,
+}
+
 // ServiceAccount builds a ServiceAccount for the given component.
 func ServiceAccount(kn *kubernautv1alpha2.Kubernaut, component string) *corev1.ServiceAccount {
 	sa := &corev1.ServiceAccount{
 		ObjectMeta: ObjectMeta(kn, ServiceAccountName(component), component),
 	}
-	if component == ComponentKubernautAgent {
+	if projectedTokenComponents[component] {
 		sa.AutomountServiceAccountToken = ptr.To(false)
 	}
 	return sa

@@ -45,18 +45,26 @@ func GatewayDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.
 		}},
 	}
 
-	volumes := []corev1.Volume{
+	// Capacity 9: 3 baseline + up to 3 fleet + up to 2 telemetry + sa-token.
+	volumes := make([]corev1.Volume, 0, 9)
+	volumes = append(volumes,
 		configMapVolume("config", "gateway-config"),
 		secretVolume("tls-certs", TLSSecretName(kn, TLSServiceGateway)),
 		InterServiceTLSCAVolume(kn),
-	}
-	mounts := []corev1.VolumeMount{
-		{Name: "config", MountPath: "/etc/gateway", ReadOnly: true},
-		{Name: "tls-certs", MountPath: InterServiceTLSCertDirFor(kn), ReadOnly: true},
+	)
+	mounts := make([]corev1.VolumeMount, 0, 9)
+	mounts = append(mounts,
+		corev1.VolumeMount{Name: "config", MountPath: "/etc/gateway", ReadOnly: true},
+		corev1.VolumeMount{Name: "tls-certs", MountPath: InterServiceTLSCertDirFor(kn), ReadOnly: true},
 		InterServiceTLSCAMount(kn),
-	}
+	)
 	volumes, mounts = appendFleetSecretMounts(volumes, mounts, knV2, "/etc/gateway", effectiveFleetOAuth2SecretRef(knV2.Spec.Gateway.Fleet, ""))
 	volumes, mounts = AppendTelemetrySecretMounts(knV2.Spec.Gateway.Config.Telemetry, volumes, mounts)
+	// #648: projected short-TTL SA token replaces the automounted token
+	// (gateway SA disables automount — see serviceaccounts.go).
+	saTokenVolume, saTokenMount := projectedServiceAccountTokenVolume()
+	volumes = append(volumes, saTokenVolume)
+	mounts = append(mounts, saTokenMount)
 
 	return buildDeployment(kn, DeploymentParams{
 		Component: ComponentGateway, ImageName: "gateway",
@@ -293,11 +301,19 @@ func SignalProcessingDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernaut
 
 // RemediationOrchestratorDeployment builds the remediationorchestrator Deployment.
 func RemediationOrchestratorDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
-	volumes := []corev1.Volume{configMapVolume("config", "remediationorchestrator-config")}
-	mounts := []corev1.VolumeMount{{Name: "config", MountPath: "/etc/config", ReadOnly: true}}
+	// Capacity 6: config + inter-service CA + up to 3 fleet + sa-token.
+	volumes := make([]corev1.Volume, 0, 6)
+	volumes = append(volumes, configMapVolume("config", "remediationorchestrator-config"))
+	mounts := make([]corev1.VolumeMount, 0, 6)
+	mounts = append(mounts, corev1.VolumeMount{Name: "config", MountPath: "/etc/config", ReadOnly: true})
 	var env []corev1.EnvVar
 	volumes, mounts, env = appendInterServiceTLSCA(kn, volumes, mounts, env)
 	volumes, mounts = appendFleetSecretMounts(volumes, mounts, knV2, "/etc/remediationorchestrator", effectiveFleetOAuth2SecretRef(knV2.Spec.RemediationOrchestrator.Fleet, ""))
+	// #648: projected short-TTL SA token replaces the automounted token
+	// (remediationorchestrator SA disables automount — see serviceaccounts.go).
+	saTokenVolume, saTokenMount := projectedServiceAccountTokenVolume()
+	volumes = append(volumes, saTokenVolume)
+	mounts = append(mounts, saTokenMount)
 	ports := make([]corev1.ContainerPort, 0, 3)
 	ports = append(ports,
 		corev1.ContainerPort{Name: "health", ContainerPort: PortHealthProbe, Protocol: corev1.ProtocolTCP},
@@ -434,6 +450,12 @@ func EffectivenessMonitorDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kuber
 		mounts = append(mounts, MonitoringTLSVolumeMount())
 	}
 	volumes, mounts = appendMCPGatewayOnlyFleetSecretMount(volumes, mounts, knV2, "/etc/effectivenessmonitor", effectiveFleetOAuth2SecretRef(knV2.Spec.EffectivenessMonitor.Fleet, ""))
+	// #653: projected short-TTL SA token replaces the automounted token —
+	// EM's DataStorage querier and OCP monitoring reads use the default
+	// path (effectivenessmonitor SA disables automount — see serviceaccounts.go).
+	saTokenVolume, saTokenMount := projectedServiceAccountTokenVolume()
+	volumes = append(volumes, saTokenVolume)
+	mounts = append(mounts, saTokenMount)
 	ports := make([]corev1.ContainerPort, 0, 3)
 	ports = append(ports,
 		corev1.ContainerPort{Name: "metrics", ContainerPort: PortMetrics, Protocol: corev1.ProtocolTCP},
@@ -544,7 +566,7 @@ func KubernautAgentDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1
 
 	var initContainers []corev1.Container
 
-	saTokenVolume, saTokenMount := kaServiceAccountTokenVolume()
+	saTokenVolume, saTokenMount := projectedServiceAccountTokenVolume()
 	volumes = append(volumes, saTokenVolume)
 	mounts = append(mounts, saTokenMount)
 
@@ -716,11 +738,13 @@ func kaResources(kn *kubernautv1alpha2.Kubernaut) corev1.ResourceRequirements {
 	return MergeResources(kn.Spec.KubernautAgent.Resources)
 }
 
-// kaServiceAccountTokenVolume builds the projected short-TTL ServiceAccount
-// token volume that replaces kubernaut-agent's default automounted token.
-// Requires AutomountServiceAccountToken=false on the kubernaut-agent-sa
-// ServiceAccount (see serviceaccounts.go).
-func kaServiceAccountTokenVolume() (corev1.Volume, corev1.VolumeMount) {
+// projectedServiceAccountTokenVolume builds the projected short-TTL ServiceAccount
+// token volume that replaces the default automounted token for the
+// projected-token components (kubernaut-agent plus the #648 consumer fleet
+// identities: gateway, remediationorchestrator, apifrontend — see
+// projectedTokenComponents in serviceaccounts.go). Requires
+// AutomountServiceAccountToken=false on the component's ServiceAccount.
+func projectedServiceAccountTokenVolume() (corev1.Volume, corev1.VolumeMount) {
 	volume := corev1.Volume{
 		Name: "sa-token",
 		VolumeSource: corev1.VolumeSource{
@@ -943,6 +967,11 @@ func apifrontendPorts(kn *kubernautv1alpha2.Kubernaut) (listenPort, metricsPort,
 func APIFrontendDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kubernaut) (*appsv1.Deployment, error) {
 	volumes, mounts, env := apifrontendVolumesMountsEnv(kn)
 	volumes, mounts = appendFleetSecretMounts(volumes, mounts, knV2, "/etc/apifrontend", effectiveFleetOAuth2SecretRef(knV2.Spec.APIFrontend.Fleet, ""))
+	// #648: projected short-TTL SA token replaces the automounted token
+	// (apifrontend SA disables automount — see serviceaccounts.go).
+	saTokenVolume, saTokenMount := projectedServiceAccountTokenVolume()
+	volumes = append(volumes, saTokenVolume)
+	mounts = append(mounts, saTokenMount)
 
 	var initContainers []corev1.Container
 
@@ -1188,14 +1217,6 @@ func appendInterServiceTLSCAForMonitoringConsumer(kn *kubernautv1alpha2.Kubernau
 	return volumes, mounts, env
 }
 
-// appendFleetSecretMounts adds the fleet-ca / fleet-token / fleet-oauth2
-// volume mounts shared by Gateway and RemediationOrchestrator when
-// spec.fleet.enabled is true and the corresponding BYO secret name is set.
-// Mount paths must stay in sync with fleetCAMountPath / fleetTokenMountPath
-// in configmaps.go. componentEtcDir is the component's own config directory
-// (e.g. "/etc/gateway") — upstream GW/RO each read OAuth2 client-id/secret
-// files from "<componentEtcDir>/<credentialsSecretRef>/{client-id,client-secret}",
-// so the mount path must be built per-component, not shared.
 // appendFleetSecretMounts mounts the Secrets backing spec.fleet's TLS CA,
 // ACM bearer token, and OAuth2 client credentials. credentialsSecretRefOverride,
 // when non-empty, overrides spec.fleet.oauth2.credentialsSecretRef for this
@@ -1204,8 +1225,37 @@ func appendInterServiceTLSCAForMonitoringConsumer(kn *kubernautv1alpha2.Kubernau
 // added AF -- kubernaut#2025/#2022 gave AF's own checkRRScope path a
 // Backend/Endpoint scope-check adapter call), the components that read the
 // Backend/Endpoint scope-check adapter.
+// appendFleetSecretMounts mounts the Secrets backing spec.fleet's MCP
+// Gateway CA and OAuth2 client credentials. credentialsSecretRefOverride,
+// when non-empty, overrides spec.fleet.oauth2.credentialsSecretRef for this
+// component only — see resolveFleetConfig for why (per-service OAuth2 client
+// registrations against a shared token endpoint). Used by GW/RO and AF (#464
+// added AF — kubernaut#2025/#2022 gave AF's own checkRRScope path a
+// scope-check adapter call).
+//
+// #647 (ADR-068 peer→facade): the fleet-ca / fleet-token scope-check lanes
+// are gone — callers no longer select a backend or hold a fleet bearer
+// token. The only fleet token is FMC's own sources.acm mount, rendered in
+// FleetMetadataCacheDeployment.
 func appendFleetSecretMounts(volumes []corev1.Volume, mounts []corev1.VolumeMount, knV2 *kubernautv1alpha2.Kubernaut, componentEtcDir, credentialsSecretRefOverride string) ([]corev1.Volume, []corev1.VolumeMount) {
-	return appendFleetSecretMountsVariant(volumes, mounts, knV2, componentEtcDir, credentialsSecretRefOverride, true)
+	fleet := &knV2.Spec.Fleet
+	if fleet.Enabled == nil || !*fleet.Enabled {
+		return volumes, mounts
+	}
+	volumes, mounts = appendFleetMCPGatewayCASecretMount(volumes, mounts, fleet)
+	if trust := fleet.OAuth2.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
+		volumes = append(volumes, secretKeyVolume("fleet-oauth2-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
+		mounts = append(mounts, corev1.VolumeMount{Name: "fleet-oauth2-ca", MountPath: "/etc/fleet-tls/oauth2", ReadOnly: true})
+	}
+	if credentialsSecretRef := withDefault(credentialsSecretRefOverride, fleet.OAuth2.CredentialsSecretRef); credentialsSecretRef != "" {
+		volumes = append(volumes, secretVolume("fleet-oauth2", credentialsSecretRef))
+		mounts = append(mounts, corev1.VolumeMount{
+			Name:      "fleet-oauth2",
+			MountPath: componentEtcDir + "/" + credentialsSecretRef,
+			ReadOnly:  true,
+		})
+	}
+	return volumes, mounts
 }
 
 // appendMCPGatewayOnlyFleetSecretMount mounts only the fleet-oauth2
@@ -1217,8 +1267,13 @@ func appendFleetSecretMounts(volumes []corev1.Volume, mounts []corev1.VolumeMoun
 // resolveSignalProcessingFleetConfig / resolveKAFleetConfig), so mounting
 // those Secrets would be dead weight. AF used to be in this list too, but
 // #464 moved it to appendFleetSecretMounts above (kubernaut#2025/#2022).
+// appendMCPGatewayOnlyFleetSecretMount mounts only the fleet-oauth2
+// credentials Secret (#224). Used by SP/EM/KA, which only ever consume MCP
+// Gateway remote reads and never call the scope-check adapter. #647 made
+// this identical to appendFleetSecretMounts (the fleet-ca/fleet-token
+// scope lanes are gone); the name is kept for its call sites' readability.
 func appendMCPGatewayOnlyFleetSecretMount(volumes []corev1.Volume, mounts []corev1.VolumeMount, knV2 *kubernautv1alpha2.Kubernaut, componentEtcDir, credentialsSecretRefOverride string) ([]corev1.Volume, []corev1.VolumeMount) {
-	return appendFleetSecretMountsVariant(volumes, mounts, knV2, componentEtcDir, credentialsSecretRefOverride, false)
+	return appendFleetSecretMounts(volumes, mounts, knV2, componentEtcDir, credentialsSecretRefOverride)
 }
 
 // appendWorkflowExecutionFleetSecretMount mounts WE's own write-scoped
@@ -1249,43 +1304,6 @@ func appendWorkflowExecutionFleetSecretMount(volumes []corev1.Volume, mounts []c
 		MountPath: componentEtcDir + "/" + credentialsSecretRef,
 		ReadOnly:  true,
 	})
-	return volumes, mounts
-}
-
-func appendFleetSecretMountsVariant(volumes []corev1.Volume, mounts []corev1.VolumeMount, knV2 *kubernautv1alpha2.Kubernaut, componentEtcDir, credentialsSecretRefOverride string, includeBackend bool) ([]corev1.Volume, []corev1.VolumeMount) {
-	fleet := &knV2.Spec.Fleet
-	if fleet.Enabled == nil || !*fleet.Enabled {
-		return volumes, mounts
-	}
-	volumes, mounts = appendFleetMCPGatewayCASecretMount(volumes, mounts, fleet)
-	if includeBackend {
-		var trust *kubernautv1alpha2.FleetTrustSpec
-		var tokenRef *kubernautv1alpha2.SecretKeyRef
-		if fleet.ScopeCheck.ACM != nil {
-			trust = fleet.ScopeCheck.ACM.TLS
-			tokenRef = fleet.ScopeCheck.ACM.TokenSecretRef
-		}
-		if trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
-			volumes = append(volumes, secretKeyVolume("fleet-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
-			mounts = append(mounts, corev1.VolumeMount{Name: "fleet-ca", MountPath: "/etc/fleet-tls/scope-check", ReadOnly: true})
-		}
-		if tokenRef != nil && tokenRef.Name != "" {
-			volumes = append(volumes, secretKeyVolume("fleet-token", tokenRef.Name, withDefault(tokenRef.Key, "token"), "token"))
-			mounts = append(mounts, corev1.VolumeMount{Name: "fleet-token", MountPath: "/etc/fleet-token", ReadOnly: true})
-		}
-	}
-	if trust := fleet.OAuth2.TLS; trust != nil && trust.Source == kubernautv1alpha2.FleetTrustSourceSecret && trust.CACertSecretRef != nil {
-		volumes = append(volumes, secretKeyVolume("fleet-oauth2-ca", trust.CACertSecretRef.Name, withDefault(trust.CACertSecretRef.Key, "ca.crt"), "ca.crt"))
-		mounts = append(mounts, corev1.VolumeMount{Name: "fleet-oauth2-ca", MountPath: "/etc/fleet-tls/oauth2", ReadOnly: true})
-	}
-	if credentialsSecretRef := withDefault(credentialsSecretRefOverride, fleet.OAuth2.CredentialsSecretRef); credentialsSecretRef != "" {
-		volumes = append(volumes, secretVolume("fleet-oauth2", credentialsSecretRef))
-		mounts = append(mounts, corev1.VolumeMount{
-			Name:      "fleet-oauth2",
-			MountPath: componentEtcDir + "/" + credentialsSecretRef,
-			ReadOnly:  true,
-		})
-	}
 	return volumes, mounts
 }
 

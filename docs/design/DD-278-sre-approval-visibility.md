@@ -21,6 +21,7 @@
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-08-02 | Operator Team | Initial decision |
+| 1.1 | 2026-11-22 | Operator Team | Amended by DD-636: `tool-sre` also gains `kubernaut_list_approval_requests` (approval visibility under the same interim rationale) and the read-only fleet discovery tool `list_clusters`; approval reads remain out of `tool-ai-orchestrator` |
 
 ---
 

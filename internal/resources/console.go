@@ -466,17 +466,29 @@ gzip_vary on;
 `
 }
 
-// consoleAPIReadLocation renders one #638 Console API read location block.
-// The matcher is the nginx location match (exact or regex). proxy_pass carries
-// no URI suffix, so nginx forwards the original request URI, query parameters,
-// and opaque resource identifiers unchanged. oauth2-proxy is the only ingress
-// and injects X-Forwarded-Access-Token from the verified session; the
-// Authorization rewrite discards any client-supplied bearer token, and the raw
-// forwarded token is not passed on to API Frontend in a second header.
-// limit_except restricts the boundary to reads (HEAD stays permitted, matching
-// AF's Go ServeMux "GET" pattern registration).
-func consoleAPIReadLocation(matcher, afURL string) string {
-	return fmt.Sprintf(`location %s {
+// consoleAPIProxyLocation renders the NGINX location that routes the
+// authenticated Console policy and inventory read API (#638,
+// GET /api/v1/console/...) to API Frontend. The bare proxy_pass (no URI
+// part) preserves the complete request path and query string; opaque
+// resource IDs survive unchanged. The ^~ modifier stops the static-asset
+// regex in consoleNginxServerConf from matching IDs that happen to end in
+// an asset-like extension. Authorization is forwarded from the OAuth2
+// Proxy-injected X-Forwarded-Access-Token only, so client-supplied identity
+// headers cannot reach AF, and the raw forwarded token is not passed on to
+// AF in a second header. limit_except restricts the boundary to reads
+// (HEAD stays permitted, matching AF's Go ServeMux "GET" pattern
+// registration). Server-level proxy_ssl_verify on and the trusted
+// service CA apply to this upstream.
+//
+// The prefix deliberately matches only the slashed /api/v1/console/
+// namespace: every endpoint the Console read client issues
+// (kubernaut-console#164) is a sub-path of that prefix, and the slashless
+// /api/v1/console root is left to the SPA fallback. Unlike the /a2a/
+// location, the long proxy_read_timeout/proxy_send_timeout streaming
+// overrides are intentionally omitted: these are plain authenticated GETs,
+// so NGINX's 60s defaults apply.
+func consoleAPIProxyLocation(afURL string) string {
+	return fmt.Sprintf(`location ^~ /api/v1/console/ {
   limit_req zone=api burst=50 nodelay;
   proxy_pass %s;
   proxy_http_version 1.1;
@@ -487,26 +499,16 @@ func consoleAPIReadLocation(matcher, afURL string) string {
   proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";
   proxy_set_header X-Forwarded-Access-Token "";
   limit_except GET { deny all; }
+  proxy_buffering off;
+  proxy_cache off;
 }
-`, matcher, afURL)
-}
-
-// consoleAPIReadLocations renders the #638 Console API read routing: the
-// upstream URL has no URI suffix so the full request path and query string are
-// preserved. The resourceID location is a regex declared before the
-// static-asset regex so opaque identifiers containing dots (e.g. foo.js) reach
-// AF instead of the SPA asset handler; multi-segment tails intentionally match
-// and receive AF's own 404. Unrelated /api/v1 paths are not routed.
-func consoleAPIReadLocations(afURL string) string {
-	return consoleAPIReadLocation(`= /api/v1/console/policies/scope`, afURL) +
-		consoleAPIReadLocation(`= /api/v1/console/inventory/managed-resources`, afURL) +
-		consoleAPIReadLocation(`~ ^/api/v1/console/inventory/managed-resources/`, afURL)
+`, afURL)
 }
 
 // consoleNginxServerConf returns the server-level nginx directives: security
 // headers, TLS trust for the AF upstream, and the location blocks proxying
-// /a2a/, /mcp, /.well-known/, the #638 Console API reads, static assets,
-// /runtime-config.js (#314), and the SPA fallback.
+// /a2a/, /mcp, /.well-known/, the authenticated console read API (#638),
+// static assets, /runtime-config.js (#314), and the SPA fallback.
 func consoleNginxServerConf(afURL string, enableRawThinking bool, caFiles ...string) string {
 	caFile := InterServiceTLSCAFile
 	if len(caFiles) > 0 && caFiles[0] != "" {
@@ -561,6 +563,7 @@ location /.well-known/ {
 }
 
 %s
+
 location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?|ttf|eot)$ {
   expires 1y;
   add_header Cache-Control "public, immutable";
@@ -582,7 +585,7 @@ location / {
   add_header Cache-Control "no-cache, must-revalidate";
   try_files $uri $uri/ /index.html;
 }
-`, caFile, afURL, afURL, afURL, consoleAPIReadLocations(afURL), enableRawThinking)
+`, caFile, afURL, afURL, afURL, consoleAPIProxyLocation(afURL), enableRawThinking)
 }
 
 func consoleRedirectURL(kn *kubernautv1alpha2.Kubernaut) string {

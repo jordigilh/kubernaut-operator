@@ -118,7 +118,6 @@ spec:
       maxTurns: 40
     workflowDiscovery:
       llmProfileRef: primary
-      maxEvidenceHandoffBytes: 262144
     # runtimeConfigMapName: custom-llm-runtime  # uncomment for BYO LLM config
     # logging:
     #   level: info                        # debug, info, warn, error
@@ -378,6 +377,9 @@ oc get service gateway-service -n kubernaut-system
 # External health checks use the administrator-owned Route, Ingress,
 # Gateway API, or mesh resource created for the deployment.
 ```
+
+To create that external exposure, see
+[External Exposure (Administrator-Owned)](07-external-exposure.md).
 
 ## Seed the Workflow Catalog
 
