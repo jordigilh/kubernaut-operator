@@ -1824,31 +1824,31 @@ func (r *KubernautReconciler) deployConfigMaps(ctx context.Context, kn *kubernau
 	}
 	configMaps = appendServiceCAConfigMaps(kn, configMaps)
 
+	consoleCM := func(name string) bool {
+		return name == string(resources.ComponentConsole)+"-oauth2-proxy" ||
+			name == string(resources.ComponentConsole)+"-nginx"
+	}
+
 	for _, cm := range configMaps {
-		changed := false
-		var err error
-		// Both Console ConfigMaps are subPath-mounted into the console
-		// containers, so drift repairs must be reported to roll the pod.
-		if cm.Name == string(resources.ComponentConsole)+"-oauth2-proxy" ||
-			cm.Name == string(resources.ComponentConsole)+"-nginx" {
-			changed, err = r.ensureNamespacedChanged(ctx, kn, cm)
-		} else {
-			err = r.ensureNamespaced(ctx, kn, cm)
-		}
-		if err != nil {
+		if err := r.ensureNamespaced(ctx, kn, cm); err != nil {
 			return nil, fmt.Errorf("ensuring ConfigMap %s: %w", cm.Name, err)
 		}
-		if changed {
-			live := &corev1.ConfigMap{}
-			if err := r.ownershipReader().Get(ctx, client.ObjectKeyFromObject(cm), live); err != nil {
-				return nil, fmt.Errorf("reading console ConfigMap revision: %w", err)
-			}
-			// The nginx and alpha configurations are mounted with subPath, so
-			// a repaired ConfigMap is not reflected in already-running console
-			// containers. The uncached resourceVersion changes after a drift
-			// repair and forces the Console Deployment pod template to roll.
-			cmHashes["console"] += "+resourceVersion:" + live.ResourceVersion
+		if !consoleCM(cm.Name) {
+			continue
 		}
+		// The nginx and alpha configurations are subPath-mounted, so an
+		// updated or repaired ConfigMap is not reflected in already-running
+		// console containers. The live resourceVersion is therefore folded
+		// into the Console pod-template hash on every reconcile, not only
+		// when this pass changed the ConfigMap: a revision-read failure (or
+		// any other reconcile abort) after a successful repair must not lose
+		// the pending roll, and the next reconcile re-reads the same
+		// resourceVersion so the hash stays stable in steady state.
+		live := &corev1.ConfigMap{}
+		if err := r.ownershipReader().Get(ctx, client.ObjectKeyFromObject(cm), live); err != nil {
+			return nil, fmt.Errorf("reading console ConfigMap revision: %w", err)
+		}
+		cmHashes["console"] += "+resourceVersion:" + live.ResourceVersion
 	}
 	return cmHashes, nil
 }

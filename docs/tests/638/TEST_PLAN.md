@@ -86,11 +86,13 @@ Added by this change:
 
 ### E2E / qualification (`test/e2e/kind/qualification_test.go`, opt-in lane)
 
-- `E2E-CN-638-HTTP-001` (#660, extended): authenticated reads reach AF (not
-  SPA HTML); forged identity and bearer headers are not reflected; opaque
-  asset-like IDs bypass the static handler; unauthenticated requests are
-  denied; **POST is rejected with 403 by the read-only boundary**; no
-  `access_token` appears in bodies or oauth2-proxy logs.
+- `E2E-CN-638-HTTP-001` (#660, extended): authenticated reads reach AF and
+  are accepted as either 200 or AF's own capability denial (403 problem
+  detail) — never 401 (broken token forwarding), redirects, or SPA HTML;
+  forged identity and bearer headers are not reflected; opaque asset-like
+  IDs bypass the static handler; unauthenticated requests are denied;
+  **POST is rejected with 403 by the read-only boundary**; no `access_token`
+  appears in bodies or oauth2-proxy logs.
 - The existing `E2E-CN-609-HTTP-002` continues to prove A2A/MCP routing is
   unaffected.
 
@@ -106,12 +108,14 @@ Added by this change:
   header toward AF. The pre-existing `/a2a/` and `= /mcp` locations do not
   clear it; that divergence is tracked in #668 and intentionally not bundled
   here.
-- **Drift rollout.** `deployConfigMaps` routes both Console ConfigMaps
-  through `ensureNamespacedChanged`; on a changed (created or repaired)
-  ConfigMap the live resourceVersion is appended to `cmHashes["console"]`,
-  changing the pod-template hash. On the reconcile after a repair the hash
-  reverts to base, producing one converging extra roll (inherited #606
-  behavior, not a loop).
+- **Drift rollout.** `deployConfigMaps` folds the live resourceVersion of both
+  Console ConfigMaps into `cmHashes["console"]` on every reconcile (not only
+  when this pass changed them): a revision-read failure or reconcile abort
+  after a successful repair cannot lose the pending roll, because the next
+  reconcile re-reads the same resourceVersion. The hash stays stable in
+  steady state (the resourceVersion only changes when the ConfigMap is
+  written) and changes whenever the subPath-mounted configuration changes,
+  rolling the Console pod.
 - **AF version mismatch.** If the deployed AF predates the #2604 routes,
   nginx proxies to AF's own 404; AF's sanitized `state: "unavailable"`
   envelopes pass through untouched (no `proxy_intercept_errors`).

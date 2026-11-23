@@ -308,6 +308,16 @@ func init() {
 				Expect(err).NotTo(HaveOccurred())
 				body, bodyErr := qualificationResponseBody(response)
 				Expect(bodyErr).NotTo(HaveOccurred())
+				// The request must reach AF authenticated: 200 with data, or
+				// AF's own capability denial (403 problem detail). A 401
+				// would mean the session token was not forwarded; a redirect
+				// or any other status means the route or auth is broken.
+				Expect(response.StatusCode).To(SatisfyAny(Equal(http.StatusOK), Equal(http.StatusForbidden)),
+					"authenticated console reads must reach AF as 200 or an AF capability denial")
+				Expect(response.StatusCode).NotTo(Equal(http.StatusUnauthorized),
+					"a 401 from AF means the OAuth2 Proxy session token was not forwarded")
+				Expect(response.StatusCode).To(BeNumerically("<", http.StatusMultipleChoices),
+					"redirects must not appear on the console read API")
 				Expect(response.Header.Get("Content-Type")).NotTo(ContainSubstring("text/html"),
 					"the console read API must be served by AF, not the SPA fallback")
 				Expect(strings.ToLower(body)).NotTo(ContainSubstring("<!doctype html"),
@@ -324,6 +334,9 @@ func init() {
 				Expect(opaqueErr).NotTo(HaveOccurred())
 				opaqueBody, opaqueBodyErr := qualificationResponseBody(opaqueResponse)
 				Expect(opaqueBodyErr).NotTo(HaveOccurred())
+				Expect(opaqueResponse.StatusCode).To(SatisfyAny(Equal(http.StatusOK), Equal(http.StatusForbidden)),
+					"opaque-ID reads must reach AF as 200 or an AF capability denial")
+				Expect(opaqueResponse.StatusCode).NotTo(Equal(http.StatusUnauthorized))
 				Expect(opaqueResponse.Header.Get("Content-Type")).NotTo(ContainSubstring("text/html"),
 					"opaque IDs with asset-like extensions must reach AF, not the static-asset handler")
 				Expect(strings.ToLower(opaqueBody)).NotTo(ContainSubstring("access_token"))
