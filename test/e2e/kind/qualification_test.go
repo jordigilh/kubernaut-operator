@@ -78,7 +78,6 @@ const (
 var qualificationExpectedResultIDs = []string{
 	qualificationLoginResultID,
 	qualificationAccessResultID,
-	qualificationConsoleAPIResultID,
 	qualificationRefreshResultID,
 	qualificationLogoutResultID,
 	qualificationConsoleAPIResultID,
