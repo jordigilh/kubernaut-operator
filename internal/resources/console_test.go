@@ -41,6 +41,25 @@ func testKubernautWithConsole() *kubernautv1alpha2.Kubernaut {
 	return kn
 }
 
+// nginxLocationBlock extracts the named location block from a rendered
+// server.conf so assertions can be scoped to that block rather than the
+// whole file. It terminates at the first "\n}\n" and assumes the location
+// blocks contain no multi-line nested braces (the only inner brace,
+// limit_except GET { deny all; }, is single-line). Returns "" when the
+// marker is absent; callers must assert non-emptiness so a renamed marker
+// fails loudly.
+func nginxLocationBlock(serverConf, marker string) string {
+	start := strings.Index(serverConf, marker)
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(serverConf[start:], "\n}\n")
+	if end < 0 {
+		return serverConf[start:]
+	}
+	return serverConf[start : start+end+3]
+}
+
 var _ = Describe("Console Resources", func() {
 
 	Context("ConsoleDeployment", func() {
@@ -695,6 +714,60 @@ var _ = Describe("Console Resources", func() {
 			Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-Access-Token "";`),
 				"AF authenticates solely via Authorization: Bearer; the OAuth2 Proxy-injected raw token "+
 					"must not also be forwarded in X-Forwarded-Access-Token")
+		})
+	})
+
+	Context("ConsoleNginxConfigMap AF header hygiene (#668)", func() {
+		requireLocationBlock := func(marker string) string {
+			serverConf := ConsoleNginxConfigMap(testKubernautWithConsole()).Data["server.conf"]
+			block := nginxLocationBlock(serverConf, marker)
+			Expect(block).NotTo(BeEmpty(), "server.conf must contain a %s block", marker)
+			Expect(block).To(ContainSubstring("proxy_pass"),
+				"the extracted %s block must contain its proxy_pass directive", marker)
+			return block
+		}
+
+		assertClearedTowardAF := func(marker, block string) {
+			Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-Access-Token "";`),
+				marker+" must clear the OAuth2 Proxy-injected raw access token toward AF; "+
+					"AF authenticates solely via Authorization: Bearer")
+			Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-User "";`),
+				marker+" must clear the client-forgeable X-Forwarded-User toward AF")
+			Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-Email "";`),
+				marker+" must clear the client-forgeable X-Forwarded-Email toward AF")
+			Expect(block).To(ContainSubstring(`proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";`),
+				marker+" must keep rewriting Authorization from the OAuth2 Proxy-injected token "+
+					"(header clearing must not change the auth path)")
+		}
+
+		It("UT-CN-668-001 [AC-6, CC6.1]: /a2a/ clears the raw access token and forged identity headers toward AF without changing proxying", func() {
+			block := requireLocationBlock("location /a2a/ {")
+			assertClearedTowardAF("the /a2a/ location", block)
+			// Regression guards: the streaming overrides must survive the
+			// hygiene edit untouched (#668 changes headers only).
+			Expect(block).To(ContainSubstring("proxy_read_timeout 3600s;"),
+				"the /a2a/ streaming override must be unchanged")
+			Expect(block).To(ContainSubstring("limit_req zone=api burst=50 nodelay;"),
+				"the /a2a/ rate limit must be unchanged")
+		})
+
+		It("UT-CN-668-002 [AC-6, CC6.1]: = /mcp clears the raw access token and forged identity headers toward AF without changing proxying", func() {
+			block := requireLocationBlock("location = /mcp {")
+			assertClearedTowardAF("the = /mcp location", block)
+			Expect(block).To(ContainSubstring("proxy_set_header Mcp-Session-Id $http_mcp_session_id;"),
+				"MCP session forwarding must be unchanged")
+			Expect(block).To(ContainSubstring("limit_req zone=mcp burst=20 nodelay;"),
+				"the /mcp rate limit must be unchanged")
+		})
+
+		It("UT-CN-668-003 [AC-6, CC6.1]: the console read location clears forged identity headers toward AF", func() {
+			block := requireLocationBlock("location ^~ /api/v1/console/ {")
+			// The raw access token clear is UT-CN-638-007; #668 folds the
+			// forged-identity headers into the same hygiene pass.
+			Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-User "";`),
+				"the console read location must clear the client-forgeable X-Forwarded-User toward AF")
+			Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-Email "";`),
+				"the console read location must clear the client-forgeable X-Forwarded-Email toward AF")
 		})
 	})
 

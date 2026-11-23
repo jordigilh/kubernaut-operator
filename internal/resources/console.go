@@ -474,8 +474,10 @@ gzip_vary on;
 // regex in consoleNginxServerConf from matching IDs that happen to end in
 // an asset-like extension. Authorization is forwarded from the OAuth2
 // Proxy-injected X-Forwarded-Access-Token only, so client-supplied identity
-// headers cannot reach AF, and the raw forwarded token is not passed on to
-// AF in a second header. limit_except restricts the boundary to reads
+// headers cannot reach AF, and the raw forwarded token plus the
+// client-forgeable X-Forwarded-User/Email identity headers are not passed on
+// to AF (#668; AF authenticates solely via Authorization: Bearer, so the
+// clears are defense-in-depth). limit_except restricts the boundary to reads
 // (HEAD stays permitted, matching AF's Go ServeMux "GET" pattern
 // registration). Server-level proxy_ssl_verify on and the trusted
 // service CA apply to this upstream.
@@ -498,6 +500,8 @@ func consoleAPIProxyLocation(afURL string) string {
   proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
   proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";
   proxy_set_header X-Forwarded-Access-Token "";
+  proxy_set_header X-Forwarded-User "";
+  proxy_set_header X-Forwarded-Email "";
   limit_except GET { deny all; }
   proxy_buffering off;
   proxy_cache off;
@@ -505,10 +509,71 @@ func consoleAPIProxyLocation(afURL string) string {
 `, afURL)
 }
 
+// consoleA2AProxyLocation renders the NGINX location that proxies the
+// authenticated A2A task/chat streams to AF. Authorization is rewritten from
+// the OAuth2 Proxy-injected X-Forwarded-Access-Token, and the raw token plus
+// the client-forgeable X-Forwarded-User/Email identity headers are cleared
+// toward AF (#668; AF authenticates solely via Authorization: Bearer, so the
+// clears are defense-in-depth). The long streaming timeouts keep SSE/chat
+// streams alive; server-level proxy_ssl_verify on applies to this upstream.
+func consoleA2AProxyLocation(afURL string) string {
+	return fmt.Sprintf(`location /a2a/ {
+  limit_req zone=api burst=50 nodelay;
+  proxy_pass %s;
+  proxy_http_version 1.1;
+  proxy_set_header Connection "";
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";
+  proxy_set_header X-Forwarded-Access-Token "";
+  proxy_set_header X-Forwarded-User "";
+  proxy_set_header X-Forwarded-Email "";
+  proxy_buffering off;
+  proxy_cache off;
+  proxy_read_timeout 3600s;
+  proxy_send_timeout 3600s;
+  send_timeout 3600s;
+  keepalive_timeout 3600s;
+}`, afURL)
+}
+
+// consoleMCPProxyLocation renders the NGINX location that proxies the MCP
+// JSON-RPC endpoint to AF. Authorization is rewritten from the OAuth2
+// Proxy-injected X-Forwarded-Access-Token, and the raw token plus the
+// client-forgeable X-Forwarded-User/Email identity headers are cleared
+// toward AF (#668; AF authenticates solely via Authorization: Bearer, so the
+// clears are defense-in-depth). Mcp-Session-Id must survive the proxy hop
+// for streamable HTTP resumption; server-level proxy_ssl_verify on applies
+// to this upstream.
+func consoleMCPProxyLocation(afURL string) string {
+	return fmt.Sprintf(`location = /mcp {
+  limit_req zone=mcp burst=20 nodelay;
+  proxy_pass %s;
+  proxy_http_version 1.1;
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";
+  proxy_set_header X-Forwarded-Access-Token "";
+  proxy_set_header X-Forwarded-User "";
+  proxy_set_header X-Forwarded-Email "";
+  proxy_set_header Mcp-Session-Id $http_mcp_session_id;
+  proxy_read_timeout 30s;
+  proxy_hide_header Access-Control-Expose-Headers;
+  add_header Access-Control-Expose-Headers "Mcp-Session-Id" always;
+}`, afURL)
+}
+
 // consoleNginxServerConf returns the server-level nginx directives: security
 // headers, TLS trust for the AF upstream, and the location blocks proxying
 // /a2a/, /mcp, /.well-known/, the authenticated console read API (#638),
-// static assets, /runtime-config.js (#314), and the SPA fallback.
+// static assets, /runtime-config.js (#314), and the SPA fallback. Every
+// location that rewrites Authorization from the OAuth2 Proxy token also
+// clears X-Forwarded-Access-Token (the trusted raw credential) and the
+// client-forgeable X-Forwarded-User/Email identity headers toward AF (#668):
+// AF authenticates solely via Authorization: Bearer, so the clears are
+// defense-in-depth with no behavior change.
 func consoleNginxServerConf(afURL string, enableRawThinking bool, caFiles ...string) string {
 	caFile := InterServiceTLSCAFile
 	if len(caFiles) > 0 && caFiles[0] != "" {
@@ -525,36 +590,9 @@ proxy_ssl_trusted_certificate %s;
 proxy_ssl_verify on;
 proxy_ssl_server_name on;
 
-location /a2a/ {
-  limit_req zone=api burst=50 nodelay;
-  proxy_pass %s;
-  proxy_http_version 1.1;
-  proxy_set_header Connection "";
-  proxy_set_header Host $host;
-  proxy_set_header X-Real-IP $remote_addr;
-  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-  proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";
-  proxy_buffering off;
-  proxy_cache off;
-  proxy_read_timeout 3600s;
-  proxy_send_timeout 3600s;
-  send_timeout 3600s;
-  keepalive_timeout 3600s;
-}
+%s
 
-location = /mcp {
-  limit_req zone=mcp burst=20 nodelay;
-  proxy_pass %s;
-  proxy_http_version 1.1;
-  proxy_set_header Host $host;
-  proxy_set_header X-Real-IP $remote_addr;
-  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-  proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";
-  proxy_set_header Mcp-Session-Id $http_mcp_session_id;
-  proxy_read_timeout 30s;
-  proxy_hide_header Access-Control-Expose-Headers;
-  add_header Access-Control-Expose-Headers "Mcp-Session-Id" always;
-}
+%s
 
 location /.well-known/ {
   proxy_pass %s;
@@ -585,7 +623,7 @@ location / {
   add_header Cache-Control "no-cache, must-revalidate";
   try_files $uri $uri/ /index.html;
 }
-`, caFile, afURL, afURL, afURL, consoleAPIProxyLocation(afURL), enableRawThinking)
+`, caFile, consoleA2AProxyLocation(afURL), consoleMCPProxyLocation(afURL), afURL, consoleAPIProxyLocation(afURL), enableRawThinking)
 }
 
 func consoleRedirectURL(kn *kubernautv1alpha2.Kubernaut) string {
