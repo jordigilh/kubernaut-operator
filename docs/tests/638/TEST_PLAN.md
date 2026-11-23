@@ -86,13 +86,15 @@ Added by this change:
 
 ### E2E / qualification (`test/e2e/kind/qualification_test.go`, opt-in lane)
 
-- `E2E-CN-638-HTTP-001` (#660, extended): authenticated reads reach AF and
-  are accepted as either 200 or AF's own capability denial (403 problem
-  detail) — never 401 (broken token forwarding), redirects, or SPA HTML;
-  forged identity and bearer headers are not reflected; opaque asset-like
-  IDs bypass the static handler; unauthenticated requests are denied;
-  **POST is rejected with 403 by the read-only boundary**; no `access_token`
-  appears in bodies or oauth2-proxy logs.
+- `E2E-CN-638-HTTP-001` (#660, extended): authenticated reads (policies/scope,
+  the managed-resource list with query parameters, and an opaque asset-like
+  detail ID) reach AF and are shape-validated — HTTP 200 with an
+  `application/json` body or AF's own RFC 7807 `application/problem+json`
+  capability denial; 401, redirects, other statuses, and non-AF bodies fail
+  the case. Forged identity and bearer headers are not reflected;
+  unauthenticated requests are denied; **POST is rejected with 403 by the
+  read-only boundary**; no `access_token` appears in bodies or oauth2-proxy
+  logs.
 - The existing `E2E-CN-609-HTTP-002` continues to prove A2A/MCP routing is
   unaffected.
 

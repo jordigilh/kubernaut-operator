@@ -308,22 +308,33 @@ func init() {
 				body, bodyErr := qualificationResponseBody(response)
 				Expect(bodyErr).NotTo(HaveOccurred())
 				// The request must reach AF authenticated: 200 with data, or
-				// AF's own capability denial (403 problem detail). A 401
-				// would mean the session token was not forwarded; a redirect
-				// or any other status means the route or auth is broken.
-				Expect(response.StatusCode).To(SatisfyAny(Equal(http.StatusOK), Equal(http.StatusForbidden)),
-					"authenticated console reads must reach AF as 200 or an AF capability denial")
-				Expect(response.StatusCode).NotTo(Equal(http.StatusUnauthorized),
-					"a 401 from AF means the OAuth2 Proxy session token was not forwarded")
-				Expect(response.StatusCode).To(BeNumerically("<", http.StatusMultipleChoices),
-					"redirects must not appear on the console read API")
-				Expect(response.Header.Get("Content-Type")).NotTo(ContainSubstring("text/html"),
-					"the console read API must be served by AF, not the SPA fallback")
+				// AF's own capability denial (403 problem detail, RFC 7807).
+				// A 401 would mean the session token was not forwarded; the
+				// 200-or-403 allowlist rejects every other status, including
+				// redirects.
+				qualificationConsoleReadShape(response, body)
 				Expect(strings.ToLower(body)).NotTo(ContainSubstring("<!doctype html"),
 					"the console read API must not return the SPA index document")
 				Expect(strings.ToLower(body)).NotTo(ContainSubstring("forged-token"))
 				Expect(strings.ToLower(body)).NotTo(ContainSubstring("forged@example.invalid"))
 				Expect(strings.ToLower(body)).NotTo(ContainSubstring("access_token"))
+
+				// The managed-resource list read must preserve query
+				// parameters end to end.
+				listResponse, listErr := qualificationRequest(ctx, client,
+					"/api/v1/console/inventory/managed-resources?cluster_id=local&limit=25",
+					map[string]string{
+						"Authorization":            "Bearer forged-token",
+						"X-Forwarded-Access-Token": "Bearer forged-token",
+						"X-Forwarded-User":         "forged",
+					})
+				Expect(listErr).NotTo(HaveOccurred())
+				listBody, listBodyErr := qualificationResponseBody(listResponse)
+				Expect(listBodyErr).NotTo(HaveOccurred())
+				qualificationConsoleReadShape(listResponse, listBody)
+				Expect(strings.ToLower(listBody)).NotTo(ContainSubstring("forged@example.invalid"))
+				Expect(strings.ToLower(listBody)).NotTo(ContainSubstring("forged-token"))
+				Expect(strings.ToLower(listBody)).NotTo(ContainSubstring("access_token"))
 
 				// The ^~ prefix must win over the static-asset regex for an
 				// opaque resource ID ending in an asset-like extension; the
@@ -333,9 +344,7 @@ func init() {
 				Expect(opaqueErr).NotTo(HaveOccurred())
 				opaqueBody, opaqueBodyErr := qualificationResponseBody(opaqueResponse)
 				Expect(opaqueBodyErr).NotTo(HaveOccurred())
-				Expect(opaqueResponse.StatusCode).To(SatisfyAny(Equal(http.StatusOK), Equal(http.StatusForbidden)),
-					"opaque-ID reads must reach AF as 200 or an AF capability denial")
-				Expect(opaqueResponse.StatusCode).NotTo(Equal(http.StatusUnauthorized))
+				qualificationConsoleReadShape(opaqueResponse, opaqueBody)
 				Expect(opaqueResponse.Header.Get("Content-Type")).NotTo(ContainSubstring("text/html"),
 					"opaque IDs with asset-like extensions must reach AF, not the static-asset handler")
 				Expect(strings.ToLower(opaqueBody)).NotTo(ContainSubstring("access_token"))
@@ -482,6 +491,31 @@ func init() {
 			}
 		})
 	})
+}
+
+// qualificationConsoleReadShape asserts that an authenticated Console read
+// response came from API Frontend with the expected shape: HTTP 200 with an
+// application/json body, or AF's own capability denial as an RFC 7807
+// application/problem+json document (AF writes denials via
+// pkg/apifrontend/httputil.WriteProblem). Any other status — including 401
+// (the session token was not forwarded) and redirects — fails the
+// qualification, so a broken route or auth cannot be recorded as success.
+func qualificationConsoleReadShape(response *http.Response, body string) {
+	if response.StatusCode == http.StatusOK {
+		Expect(response.Header.Get("Content-Type")).To(ContainSubstring("application/json"),
+			"an authenticated console read success must be an AF JSON response")
+		return
+	}
+	Expect(response.StatusCode).To(Equal(http.StatusForbidden),
+		"authenticated console reads must reach AF as 200 or an AF capability denial; "+
+			"401 means the session token was not forwarded, and redirects or other statuses mean broken routing")
+	Expect(response.Header.Get("Content-Type")).To(ContainSubstring("problem+json"),
+		"a denied console read must be AF's RFC 7807 application/problem+json capability denial")
+	problem := map[string]any{}
+	Expect(json.Unmarshal([]byte(body), &problem)).To(Succeed(),
+		"an AF capability denial must be a decodable problem document")
+	Expect(problem).To(HaveKey("title"),
+		"an AF capability denial must carry the RFC 7807 title member")
 }
 
 // loginQualificationUser performs the browser-equivalent authorization-code
