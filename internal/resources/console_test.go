@@ -534,20 +534,11 @@ var _ = Describe("Console Resources", func() {
 	})
 
 	Context("ConsoleNginxConfigMap console API routing (#638)", func() {
+		// Extract the /api/v1/console/ location block so assertions are
+		// scoped to it rather than to the whole server.conf.
 		consoleAPIBlock := func() string {
-			cm := ConsoleNginxConfigMap(testKubernautWithConsole())
-			serverConf := cm.Data["server.conf"]
-			// Extract the /api/v1/console/ location block so assertions are
-			// scoped to it rather than to the whole server.conf.
-			start := strings.Index(serverConf, "location ^~ /api/v1/console/ {")
-			if start < 0 {
-				return ""
-			}
-			end := strings.Index(serverConf[start:], "\n}\n")
-			if end < 0 {
-				return serverConf[start:]
-			}
-			return serverConf[start : start+end+3]
+			serverConf := ConsoleNginxConfigMap(testKubernautWithConsole()).Data["server.conf"]
+			return nginxLocationBlock(serverConf, "location ^~ /api/v1/console/ {")
 		}
 
 		It("UT-CN-638-001 [AC-3, CC6.1]: routes /api/v1/console/ to the AF upstream with the full request path preserved", func() {
@@ -689,15 +680,7 @@ var _ = Describe("Console Resources", func() {
 	Context("ConsoleNginxConfigMap console API read-only boundary and token hygiene (#638)", func() {
 		consoleAPIBlock := func() string {
 			serverConf := ConsoleNginxConfigMap(testKubernautWithConsole()).Data["server.conf"]
-			start := strings.Index(serverConf, "location ^~ /api/v1/console/ {")
-			if start < 0 {
-				return ""
-			}
-			end := strings.Index(serverConf[start:], "\n}\n")
-			if end < 0 {
-				return serverConf[start:]
-			}
-			return serverConf[start : start+end+3]
+			return nginxLocationBlock(serverConf, "location ^~ /api/v1/console/ {")
 		}
 
 		It("UT-CN-638-006 [AC-3, CC6.3]: restricts the console API location to GET requests", func() {
