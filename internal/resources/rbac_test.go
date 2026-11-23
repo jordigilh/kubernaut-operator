@@ -1200,17 +1200,22 @@ var _ = Describe("ToolClusterRoles", func() {
 		}
 	})
 
+	// findToolRole returns the tool ClusterRole whose name ends with suffix,
+	// or nil. Shared by the persona assertions below.
+	findToolRole := func(roles []*rbacv1.ClusterRole, suffix string) *rbacv1.ClusterRole {
+		for _, r := range roles {
+			if strings.HasSuffix(r.Name, suffix) {
+				return r
+			}
+		}
+		return nil
+	}
+
 	DescribeTable("persona tool counts",
 		func(suffix string, expectedCount int) {
 			kn := testKubernautWithAF()
 			roles := ToolClusterRoles(kn)
-			var found *rbacv1.ClusterRole
-			for _, r := range roles {
-				if strings.HasSuffix(r.Name, suffix) {
-					found = r
-					break
-				}
-			}
+			found := findToolRole(roles, suffix)
 			Expect(found).NotTo(BeNil(), "tool ClusterRole with suffix %q not found", suffix)
 			Expect(found.Rules[0].ResourceNames).To(HaveLen(expectedCount),
 				"tool ClusterRole %q should have %d resourceNames, got %d",
@@ -1232,14 +1237,7 @@ var _ = Describe("ToolClusterRoles", func() {
 	// of a different tool doesn't silently satisfy the count-only check above.
 	It("SRE persona includes approval-visibility and completion tools (#278)", func() {
 		kn := testKubernautWithAF()
-		roles := ToolClusterRoles(kn)
-		var sre *rbacv1.ClusterRole
-		for _, r := range roles {
-			if strings.HasSuffix(r.Name, "tool-sre") {
-				sre = r
-				break
-			}
-		}
+		sre := findToolRole(ToolClusterRoles(kn), "tool-sre")
 		Expect(sre).NotTo(BeNil(), "tool-sre ClusterRole not found")
 		Expect(sre.Rules[0].ResourceNames).To(ContainElements(
 			"kubernaut_get_approval_request", "kubernaut_complete_no_action",
@@ -1257,16 +1255,8 @@ var _ = Describe("ToolClusterRoles", func() {
 	It("alert-capable personas hold both the A2A and MCP alert tool names (#664)", func() {
 		kn := testKubernautWithAF()
 		roles := ToolClusterRoles(kn)
-		findByName := func(suffix string) *rbacv1.ClusterRole {
-			for _, r := range roles {
-				if strings.HasSuffix(r.Name, suffix) {
-					return r
-				}
-			}
-			return nil
-		}
 		for _, suffix := range []string{"tool-sre", "tool-ai-orchestrator"} {
-			role := findByName(suffix)
+			role := findToolRole(roles, suffix)
 			Expect(role).NotTo(BeNil(), "%s ClusterRole not found", suffix)
 			Expect(role.Rules[0].ResourceNames).To(ContainElements(
 				"list_alerts", "kubernaut_list_alerts",
@@ -1275,7 +1265,7 @@ var _ = Describe("ToolClusterRoles", func() {
 		for _, suffix := range []string{
 			"tool-cicd", "tool-observability", "tool-l3-audit", "tool-remediation-approver",
 		} {
-			role := findByName(suffix)
+			role := findToolRole(roles, suffix)
 			Expect(role).NotTo(BeNil(), "%s ClusterRole not found", suffix)
 			Expect(role.Rules[0].ResourceNames).NotTo(ContainElement("list_alerts"),
 				"%s must not hold the alert capability (#664)", suffix)

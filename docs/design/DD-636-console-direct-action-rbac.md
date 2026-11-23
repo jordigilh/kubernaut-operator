@@ -2,7 +2,7 @@
 
 **Status**: Accepted
 **Decision Date**: 2026-11-22
-**Version**: 1.0
+**Version**: 1.1
 **Confidence**: 92%
 **Deciders**: Kubernaut Operator Team
 **Applies To**: `internal/resources/rbac.go` (`toolPersonas`,
@@ -26,6 +26,7 @@
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-11-22 | Operator Team | Initial audit, role matrix, console-reader role |
+| 1.1 | 2026-11-23 | Operator Team | #664 decision (row 4d, F3): raw-MCP alert alias `kubernaut_list_alerts` granted to the alert-capable personas, Option 2 interim with upstream unification as end-state |
 
 ---
 
@@ -76,8 +77,8 @@ AF's backend identity (DD-FLEET-017 D5). Browser tokens are never forwarded.
 | 6 | `/.well-known/agent-card` | authenticated surface, no per-action SAR | none | — | No grant |
 | 7 | AF ServiceAccount metadata inventory read (`<ns>-apifrontend-inventory-read`) | not a user check; backend transport identity | get/list on namespaces, nodes, pods, services, PVs, PVCs, deployments, replicasets, statefulsets, daemonsets, jobs, cronjobs, HPAs + admin-approved `spec.additionalClusterRoles` read projection (`internal/resources/inventory_rbac.go`) | bound to the AF SA | Classified: backend reads, never a substitute for a user capability |
 
-No console direct action is unclassified. Rows 4d and 5's user-side target
-grants are explicitly deferred with tracked follow-ups rather than guessed.
+No console direct action is unclassified. Row 5's user-side target grants are explicitly deferred with tracked
+follow-up F2 rather than guessed; row 4d was decided in #664.
 
 ## Which Role Is Which
 
@@ -129,7 +130,9 @@ across both surfaces and (2) the operator granting both names. The decision is
   proxies), fixing the split-brain denial without widening any other persona.
 - Least-privilege review (AC-6): the alias is granted to exactly the personas
   that already own the alert capability; the other four personas hold no alert
-  tool under either name (asserted per-name in the #664 UT). SAR on a tool name
+  tool under either name (pinned by the golden persona matrix in
+  `issue636_console_rbac_test.go`; the #664 UT additionally asserts the two
+  alert tool names per persona). SAR on a tool name
   that is never invoked is inert, so the alias is harmless if upstream renames.
 - This is a deliberate, documented divergence from the upstream Helm
   `values.yaml` persona tool lists (see the inline comment in
@@ -192,7 +195,7 @@ namespace and remain administrator-bound.
 | Authenticate without receiving every action | Inventory rows 1–2; console-access rule shape test; console-reader unbound IT | Met |
 | Workflow listing/reading and each direct action require the explicit role | Rows 4a–4c matrix; golden persona matrix; allow/deny boundary test | Met |
 | Missing roles produce a clear denial without executing | Upstream AF enforcement (fail-closed 403 / permission-denied); deny-by-default asserted here | Met (operator side); upstream tests cited |
-| Complete inventory, no unclassified direct actions | Full table above; rows 4d/5 deferred with F3/F2 | Met with tracked deferrals |
+| Complete inventory, no unclassified direct actions | Full table above; row 5 deferred with F2, row 4d decided via #664 | Met |
 | Tests and documentation cover the role matrix | This document + tests table | Met |
 
 ## Follow-Ups
