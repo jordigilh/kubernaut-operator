@@ -1216,8 +1216,8 @@ var _ = Describe("ToolClusterRoles", func() {
 				"tool ClusterRole %q should have %d resourceNames, got %d",
 				found.Name, expectedCount, len(found.Rules[0].ResourceNames))
 		},
-		Entry("SRE", "tool-sre", 31),
-		Entry("AI-orchestrator", "tool-ai-orchestrator", 22),
+		Entry("SRE", "tool-sre", 32),
+		Entry("AI-orchestrator", "tool-ai-orchestrator", 23),
 		Entry("CICD", "tool-cicd", 4),
 		Entry("Observability", "tool-observability", 6),
 		Entry("L3-audit", "tool-l3-audit", 6),
@@ -1244,6 +1244,44 @@ var _ = Describe("ToolClusterRoles", func() {
 		Expect(sre.Rules[0].ResourceNames).To(ContainElements(
 			"kubernaut_get_approval_request", "kubernaut_complete_no_action",
 		), "tool-sre should be able to view RAR details and complete-without-action (#278)")
+	})
+
+	// #664: the alert-priority capability is invoked under two names -- the
+	// A2A/ADK surface registers list_alerts while the raw MCP bridge registers
+	// kubernaut_list_alerts -- and the per-action SAR checks whichever name was
+	// invoked. Personas that own the alert capability must hold BOTH names or
+	// the same user is denied through raw /mcp (see DD-636 row 4d). Asserted by
+	// name so an accidental drop of either alias fails loudly, and per-name
+	// negation for the other personas so a single-name leak is caught (the
+	// issue636 golden matrix pins the complete set; this documents the mapping).
+	It("alert-capable personas hold both the A2A and MCP alert tool names (#664)", func() {
+		kn := testKubernautWithAF()
+		roles := ToolClusterRoles(kn)
+		findByName := func(suffix string) *rbacv1.ClusterRole {
+			for _, r := range roles {
+				if strings.HasSuffix(r.Name, suffix) {
+					return r
+				}
+			}
+			return nil
+		}
+		for _, suffix := range []string{"tool-sre", "tool-ai-orchestrator"} {
+			role := findByName(suffix)
+			Expect(role).NotTo(BeNil(), "%s ClusterRole not found", suffix)
+			Expect(role.Rules[0].ResourceNames).To(ContainElements(
+				"list_alerts", "kubernaut_list_alerts",
+			), "%s must hold both the A2A and MCP alert tool names (#664)", suffix)
+		}
+		for _, suffix := range []string{
+			"tool-cicd", "tool-observability", "tool-l3-audit", "tool-remediation-approver",
+		} {
+			role := findByName(suffix)
+			Expect(role).NotTo(BeNil(), "%s ClusterRole not found", suffix)
+			Expect(role.Rules[0].ResourceNames).NotTo(ContainElement("list_alerts"),
+				"%s must not hold the alert capability (#664)", suffix)
+			Expect(role.Rules[0].ResourceNames).NotTo(ContainElement("kubernaut_list_alerts"),
+				"%s must not hold the alert capability (#664)", suffix)
+		}
 	})
 
 	It("tool ClusterRole names are namespace-prefixed", func() {

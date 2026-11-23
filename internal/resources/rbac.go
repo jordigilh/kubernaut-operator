@@ -763,6 +763,16 @@ var toolPersonas = []toolPersona{
 			"kubectl_get", "kubectl_list", "kubectl_list_events",
 			"kubernaut_check_existing_remediation", "kubernaut_remediate",
 			"list_alerts", "get_alert_details", "kubernaut_investigate_alert",
+			// #664: raw-MCP alias for the alert-priority capability. The A2A/ADK
+			// surface registers list_alerts while the raw MCP bridge registers
+			// kubernaut_list_alerts, and the per-action SAR checks the invoked
+			// name, so a persona holding only the A2A name is denied through
+			// raw /mcp. Deliberate divergence from the upstream Helm values.yaml
+			// tool lists (rows above cite PRs #1231/#1233/#1236): do not drop
+			// this alias in a values.yaml resync. Interim per DD-636 row 4d /
+			// follow-up F3 -- the end-state is one authorization identity per
+			// capability upstream, at which point this alias is removed.
+			"kubernaut_list_alerts",
 			"kubernaut_get_approval_request", "kubernaut_complete_no_action",
 			// #636: approval visibility (DD-636 amends DD-278 v1.1 -- sre already
 			// holds kubernaut_approve, so listing pending approvals only makes an
@@ -782,6 +792,9 @@ var toolPersonas = []toolPersona{
 			"kubectl_get", "kubectl_list", "kubectl_list_events",
 			"kubernaut_check_existing_remediation", "kubernaut_remediate",
 			"list_alerts", "get_alert_details", "kubernaut_investigate_alert",
+			// #664: raw-MCP alias for the A2A list_alerts name -- see the
+			// matching comment on tool-sre above (DD-636 row 4d / F3).
+			"kubernaut_list_alerts",
 			// #636: read-only fleet discovery only. Approval reads/decisions stay
 			// with the human personas (DD-278 separation of duties); the upstream
 			// E2E persona fixture's broader list is deliberately not mirrored.

@@ -74,6 +74,8 @@ var _ = Describe("Issue #636: console direct-action RBAC audit", func() {
 				"kubectl_get", "kubectl_list", "kubectl_list_events",
 				"kubernaut_check_existing_remediation", "kubernaut_remediate",
 				"list_alerts", "get_alert_details", "kubernaut_investigate_alert",
+				// #664: raw-MCP alias for the A2A list_alerts name (DD-636 row 4d).
+				"kubernaut_list_alerts",
 				"kubernaut_get_approval_request", "kubernaut_complete_no_action",
 				// #636: approval visibility (DD-278 amendment) and read-only
 				// fleet discovery.
@@ -88,6 +90,8 @@ var _ = Describe("Issue #636: console direct-action RBAC audit", func() {
 				"kubectl_get", "kubectl_list", "kubectl_list_events",
 				"kubernaut_check_existing_remediation", "kubernaut_remediate",
 				"list_alerts", "get_alert_details", "kubernaut_investigate_alert",
+				// #664: raw-MCP alias for the A2A list_alerts name (DD-636 row 4d).
+				"kubernaut_list_alerts",
 				// #636: read-only fleet discovery only. Approval reads remain
 				// with the human personas (DD-278 separation of duties).
 				"list_clusters",

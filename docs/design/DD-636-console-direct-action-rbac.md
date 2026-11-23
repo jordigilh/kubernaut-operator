@@ -71,7 +71,7 @@ AF's backend identity (DD-FLEET-017 D5). Browser tokens are never forwarded.
 | 4a | Investigation: `kubernaut_investigate`, `kubernaut_investigate_alert`, `kubernaut_check_existing_remediation`, `kubernaut_select_workflow`, `kubernaut_present_decision`, `kubernaut_message`, `kubernaut_complete`, `kubernaut_cancel`, `kubernaut_status`, `kubernaut_reconnect`, `kubernaut_await_session`, `kubectl_get`, `kubectl_list`, `kubectl_list_events`, `list_alerts`, `get_alert_details`, `list_clusters` | SAR `kubernaut.ai/tools` `use` name=`<tool>` | persona ClusterRole rule only; the AF ServiceAccount performs the backend reads (ADR-022) | `tool-*` personas | Granted per persona |
 | 4b | Approval: `kubernaut_approve`, `kubernaut_list_approval_requests`, `kubernaut_get_approval_request`, `kubernaut_complete_no_action` | same | same | `tool-sre`, `tool-remediation-approver` | Granted; separation of duties per DD-278 |
 | 4c | Remediation + workflow catalog: `kubernaut_remediate`, `kubernaut_cancel_remediation`, `kubernaut_watch`, `kubernaut_list_remediations`, `kubernaut_get_remediation`, `kubernaut_list_workflows`, `kubernaut_discover_workflows`, `kubernaut_get_remediation_history`, `kubernaut_get_effectiveness`, `kubernaut_get_audit_trail` | same | same | `tool-*` personas | Granted per persona |
-| 4d | Raw MCP alias `kubernaut_list_alerts` (A2A name is `list_alerts`) | same | same | none | **Open** — dual-surface naming; see follow-up F3 |
+| 4d | Raw MCP alias `kubernaut_list_alerts` (A2A name is `list_alerts`) | same | same | `tool-sre`, `tool-ai-orchestrator` | **Decided (#664)** — Option 2 interim: the two personas that hold the A2A alert names also hold the MCP alias, so one persona grant authorizes both surfaces; upstream unification (one authorization identity per capability) remains the end-state and removes the alias |
 | 5 | Console REST read projection: `GET /api/v1/console/policies/scope`, `/inventory/managed-resources[/{id}]` (kubernaut#2584) | capability SARs `kubernaut_read_policy_scope`, `kubernaut_list_managed_resources`, `kubernaut_get_managed_resource` + user-scoped local target get/list; remote via ScopeChecker | ClusterRole `console-reader`: `kubernaut.ai/tools` `use` on the three capability names. Local target reads additionally need user-bound get/list on the exact hub resources, which remain administrator-owned (deployment-specific) | `ConsoleReaderClusterRole` (unbound by default) | New in this change; not reachable through the operator-managed Console nginx, which proxies only `/a2a/`, `/mcp`, `/.well-known/` — the role serves direct AF and future console/plugin clients |
 | 6 | `/.well-known/agent-card` | authenticated surface, no per-action SAR | none | — | No grant |
 | 7 | AF ServiceAccount metadata inventory read (`<ns>-apifrontend-inventory-read`) | not a user check; backend transport identity | get/list on namespaces, nodes, pods, services, PVs, PVCs, deployments, replicasets, statefulsets, daemonsets, jobs, cronjobs, HPAs + admin-approved `spec.additionalClusterRoles` read projection (`internal/resources/inventory_rbac.go`) | bound to the AF SA | Classified: backend reads, never a substitute for a user capability |
@@ -113,7 +113,31 @@ picks up the console gate automatically; that is an upgrade-safety default
    separation-of-duties intent keeps approval actions with human personas.
    The divergence is tracked in follow-up F4.
 5. Do not guess the raw-MCP alert alias (`kubernaut_list_alerts`) or user-side
-   local target grants; both are follow-ups F3 and F2.
+   local target grants; both are follow-ups F3 and F2. **Update (#664):** F3 is
+   now decided — see "Decision (#664)" below; F2 remains open.
+
+## Decision (#664)
+
+Issue #664 asked to choose between (1) upstream unifying the alert tool name
+across both surfaces and (2) the operator granting both names. The decision is
+**Option 2, interim**:
+
+- `tool-sre` and `tool-ai-orchestrator` — the only personas that hold the A2A
+  alert names (`list_alerts`, `get_alert_details`) — now also hold the raw-MCP
+  alias `kubernaut_list_alerts`. One persona grant therefore authorizes the
+  capability on both the A2A/ADK surface and raw `/mcp` (which the Console
+  proxies), fixing the split-brain denial without widening any other persona.
+- Least-privilege review (AC-6): the alias is granted to exactly the personas
+  that already own the alert capability; the other four personas hold no alert
+  tool under either name (asserted per-name in the #664 UT). SAR on a tool name
+  that is never invoked is inert, so the alias is harmless if upstream renames.
+- This is a deliberate, documented divergence from the upstream Helm
+  `values.yaml` persona tool lists (see the inline comment in
+  `internal/resources/rbac.go`): a future values.yaml resync must not drop it.
+- **Option 1 remains the end-state**: once upstream AF unifies the name (one
+  authorization identity per capability) and its E2E drops the sre-only compat
+  ClusterRole, the operator removes the alias and this decision collapses to a
+  single name. Tracked here; the removal is a mechanical resync.
 
 ## Amendment to DD-278 (v1.1)
 
@@ -181,9 +205,8 @@ namespace and remain administrator-bound.
   console inventory projection: the projected resource set depends on
   upstream's allowlist and the deployment's managed scope, so the operator
   cannot render them without guessing.
-- **F3** — (#664) Raw-MCP alias `kubernaut_list_alerts`: decide whether
-  personas that hold the A2A name `list_alerts` should also hold the MCP name,
-  or whether AF should unify the name.
+- **F3** — (#664) Raw-MCP alias `kubernaut_list_alerts`: **decided** — see
+  "Decision (#664)".
 - **F4** — (#665) `tool-ai-orchestrator` approval reads
   (`kubernaut_list_approval_requests`, `kubernaut_get_approval_request`):
   the upstream E2E persona fixture lists them; DD-278 separation of duties
