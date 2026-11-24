@@ -71,9 +71,16 @@ jobs:
   test:
     name: Unit & Integration Tests
     needs: [test-unit, test-integration]
+    # Run even when a lane failed: a skipped dependent job is neutral for
+    # branch protection, so this required context must fail explicitly.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Fail if any test lane failed
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: exit 1
+
       - name: Checkout code
         uses: actions/checkout@v7
 
@@ -100,6 +107,7 @@ jobs:
           tail -n +2 cover-integration.out >> cover.out
 
       - name: Upload independent verification evidence
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: independent-test-evidence
@@ -113,9 +121,11 @@ jobs:
           if-no-files-found: warn
 
       - name: Shellcheck executable hack/ scripts
+        if: ${{ !cancelled() }}
         run: shellcheck hack/migrate-llm-profile.sh hack/migrate-llm-profile.test.sh hack/verify-helm-chart.sh hack/verify-business-unit-coverage.sh hack/verify-monitoring-contract.sh hack/verify-release-qualification.sh hack/verify-release-qualification.test.sh
 
       - name: Run hack/ script tests
+        if: ${{ !cancelled() }}
         run: make test-hack-scripts
 
       - name: Check coverage threshold

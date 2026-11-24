@@ -1090,6 +1090,8 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			// The extractor terminates at the first "\n}\n"; it assumes the
 			// location blocks contain no multi-line nested braces (the only
 			// inner brace, limit_except GET { deny all; }, is single-line).
+			// It mirrors nginxLocationBlock in internal/resources/console_test.go
+			// (kept local: the helper is unexported there).
 			locationBlock := func(marker string) string {
 				start := strings.Index(serverConf, marker)
 				if start < 0 {
