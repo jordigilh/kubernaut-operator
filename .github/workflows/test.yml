@@ -81,7 +81,11 @@ jobs:
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: exit 1
 
+      # always(): the shellcheck and hack-script diagnostic steps below run
+      # under !cancelled(), so the repo must be checked out even when the
+      # fail-guard above has already failed the job on a lane failure.
       - name: Checkout code
+        if: always()
         uses: actions/checkout@v7
 
       - name: Setup Go

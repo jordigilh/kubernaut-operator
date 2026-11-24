@@ -127,8 +127,14 @@ var _ = Describe("raw-block coverage enforcement", func() {
 		// any lane failed.
 		Expect(string(workflow)).To(ContainSubstring("  test-unit:"))
 		Expect(string(workflow)).To(ContainSubstring("  test-integration:"))
-		Expect(string(workflow)).To(ContainSubstring("needs: [test-unit, test-integration]"))
-		Expect(string(workflow)).To(ContainSubstring("if: ${{ !cancelled() }}"))
+		// The multi-line snippet pins the !cancelled() guard to the aggregate
+		// job itself (a bare ContainSubstring would match the shellcheck and
+		// hack-script steps' guards instead).
+		Expect(string(workflow)).To(ContainSubstring(
+			"needs: [test-unit, test-integration]\n" +
+				"    # Run even when a lane failed: a skipped dependent job is neutral for\n" +
+				"    # branch protection, so this required context must fail explicitly.\n" +
+				"    if: ${{ !cancelled() }}"))
 		Expect(string(workflow)).To(ContainSubstring("contains(needs.*.result, 'failure')"))
 	})
 
