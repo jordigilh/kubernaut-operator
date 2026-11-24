@@ -1011,14 +1011,14 @@ for persona in sre ai-orchestrator cicd observability l3-audit remediation-appro
 done
 
 # Bindings the pre-v1.6 custom-clusterRoleName path rendered
-# (<ns>-tool-custom-<name>-binding): the <name> half varies, so list the
-# candidates by prefix and delete each through the same ownership-checked
-# helper. The pattern is anchored to an exact "-binding" suffix, so
-# administrator-owned lookalikes (for example a "-binding-backup" copy)
-# never match; a same-shaped object that fails the ownership check is
-# skipped and flagged for manual review.
+# (<ns>-tool-custom-<name>-binding): the <name> half was
+# administrator-chosen, so no name pattern or label can prove a matching
+# object is the retired operator render rather than an
+# administrator-owned lookalike (a copied backup keeps the managed-by
+# label too). These are therefore NOT deleted automatically: review each
+# candidate and delete it yourself if it is the retired render.
 for crb in $(oc get clusterrolebinding -o name | grep "/${NS}-tool-custom-.*-binding$" || true); do
-  delete_if_operator_owned clusterrolebinding "${crb##*/}"
+  echo "review before deleting (retired pre-v1.6 render vs administrator-owned): $crb"
 done
 ```
 
