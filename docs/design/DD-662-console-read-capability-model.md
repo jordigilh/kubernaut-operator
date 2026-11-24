@@ -72,10 +72,15 @@ A #662 spike verified the upstream facts before deciding:
 1. **The coarse `console-reader` ClusterRole is the permanent model** (owner
    option 1A). No built-in persona gains the console read capabilities, and
    none is ever inferred from a persona, login, or console-access grant.
-   Binding is an explicit administrator choice through
+   ~~Binding is an explicit administrator choice through
    `spec.apiFrontend.rbac.roleBindings[].clusterRoleName` (rendered name
    `<namespace>-console-reader`, used verbatim) or an external
-   ClusterRoleBinding.
+   ClusterRoleBinding.~~ **Amended 2026-11-23 by
+   [DD-682](DD-682-roles-only-rbac.md) (#682/#684)**: the roles-only model
+   removed the `roleBindings` CRD path, so the only supported bind path is
+   an administrator-owned external ClusterRoleBinding (rendered name
+   `<namespace>-console-reader`). The permanent model itself — the coarse,
+   unbound role — is unchanged.
 2. **The Console proxy stays, as transport only** (owner option 2A). The
    nginx `/api/v1/console/` location from #638/#660 is unchanged: it moves
    authenticated reads to AF and enforces no authorization of its own.

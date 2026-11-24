@@ -128,6 +128,8 @@ func init() {
 
 			By("deploying the real-component qualification CR")
 			Expect(applyKubernautCR(ctx)).To(Succeed())
+			By("binding the fixture's sre group to the rendered console-access role (admin-owned, #682)")
+			Expect(applyQualificationConsoleAccessCRB(ctx)).To(Succeed())
 			Expect(waitForContractReady(ctx)).To(Succeed())
 			for _, deployment := range []string{
 				"kubernaut-console", "apifrontend", "kubernaut-agent", "authwebhook",

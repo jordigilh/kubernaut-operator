@@ -2,18 +2,19 @@
 
 **Status**: Accepted
 **Decision Date**: 2026-11-22
-**Version**: 1.2
+**Version**: 1.3
 **Confidence**: 92%
 **Deciders**: Kubernaut Operator Team
-**Applies To**: `internal/resources/rbac.go` (`toolPersonas`,
-`ConsoleAccessClusterRole`, `ConsoleReaderClusterRole`,
+**Applies To**: `internal/resources/rbac.go`
+(`ConsoleAccessClusterRole`, `ConsoleReaderClusterRole`,
 `ConsoleInventoryReaderClusterRole`),
-`internal/controller/kubernaut_controller.go` (`deployToolRBAC`,
-`deployConsoleAccessRBAC`, `deployClusterScopedCoreRBAC`)
+`internal/controller/kubernaut_controller.go`
+(`deployClusterScopedCoreRBAC`)
 
 **Related Issues**:
 - jordigilh/kubernaut-operator#636 (this audit)
 - jordigilh/kubernaut-operator#663 (v1.2: user-side local-target grants, F2)
+- jordigilh/kubernaut-operator#682 / #684 (v1.3: roles-only RBAC; persona roles and user-facing CRBs removed)
 - jordigilh/kubernaut-operator#289/#290 (console-access gate, prior change)
 - jordigilh/kubernaut-operator#278 / DD-278 (SRE approval-visibility tools, amended here)
 - jordigilh/kubernaut#1919 (server-side console gate enforcement)
@@ -30,6 +31,7 @@
 | 1.0 | 2026-11-22 | Operator Team | Initial audit, role matrix, console-reader role |
 | 1.1 | 2026-11-23 | Operator Team | Follow-up F1 resolved by DD-662: the coarse console-reader role is the permanent model; the Console proxy stays transport-only and the role stays unbound by default |
 | 1.2 | 2026-11-23 | Operator Team | #663: user-side local-target grants rendered as the unbound `console-inventory-reader` ClusterRole; F2 closed |
+| 1.3 | 2026-11-23 | Operator Team | #682/#684 (DD-682): roles-only model — the six persona ClusterRoles and every operator-rendered user-facing CRB are removed; the audited persona tool sets live on as documented example bundles; `console-access`/`console-reader`/`console-inventory-reader` stay rendered, unbound, label-pruned and finalizer-swept |
 
 ---
 
@@ -86,17 +88,25 @@ v1.0 and are rendered since v1.1 (Decision 6, #663).
 
 ## Which Role Is Which
 
+> **v1.3 amendment (#682/#684, [DD-682](DD-682-roles-only-rbac.md))**: the
+> `tool-<persona>` row is historical — those ClusterRoles are no longer
+> rendered. The audited tool sets live on as the documented example
+> use-case bundles in the installation guide (drift-guarded by unit
+> tests), and every binding in the table below is administrator-owned.
+
 | Role | Bound to | Authorizes | Notes |
 |---|---|---|---|
-| `console-access` | console-access groups (derived or explicit) | `kubernaut.ai/console` `use` — the UI gate | Login-level only; never implies a tool |
-| `tool-<persona>` | OIDC groups from `spec.apiFrontend.rbac.roleBindings` | named tool actions | One ClusterRole per persona |
-| `console-reader` | nothing by default | the three console REST read capabilities | Bind via `roleBindings[].clusterRoleName` (rendered name is `<ns>-console-reader`, used verbatim) or an external CRB |
+| `console-access` | administrator-owned ClusterRoleBinding | `kubernaut.ai/console` `use` — the UI gate | Login-level only; never implies a tool |
+| ~~`tool-<persona>`~~ (removed in v1.3) | was OIDC groups from `spec.apiFrontend.rbac.roleBindings` | named tool actions | Replaced by documented example bundles administrators compose and bind |
+| `console-reader` | nothing by default | the three console REST read capabilities | Bind through an administrator-owned external ClusterRoleBinding (rendered name is `<ns>-console-reader`) |
 | `console-inventory-reader` | nothing by default | user-side local-target `get`/`list` on AF's pinned 11-kind allowlist for the inventory projection | Operator renders the role only; bind with an external CRB (cluster-wide) or namespaced RoleBinding. A namespaced binding satisfies only namespace-filtered reads (eight namespaced kinds); the default unfiltered list SAR is cluster-scoped, so the default inventory page needs a cluster-level binding (#663) |
 | `<ns>-apifrontend-inventory-read` | AF ServiceAccount | backend metadata reads for the projection | Never a user grant |
 
-A group bound to a persona also joins `effectiveConsoleAccessGroups`, so it
-picks up the console gate automatically; that is an upgrade-safety default
-(kubernaut#289), not an action grant.
+~~A group bound to a persona also joins `effectiveConsoleAccessGroups`,
+so it picks up the console gate automatically; that is an upgrade-safety
+default (kubernaut#289), not an action grant.~~ (Removed in v1.3 with the
+roles-only model: neither persona roles nor group derivation exist
+anymore; console-gate binding is an administrator-owned CRB.)
 
 ## Decision
 

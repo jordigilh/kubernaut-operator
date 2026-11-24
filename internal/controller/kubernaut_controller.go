@@ -999,33 +999,7 @@ func (r *KubernautReconciler) deployRBAC(ctx context.Context, kn *kubernautv1alp
 	if err := r.deployToggleRBAC(ctx, kn); err != nil {
 		return err
 	}
-	if err := r.deployToolRBAC(ctx, kn); err != nil {
-		return err
-	}
-	return r.deployConsoleAccessRBAC(ctx, kn)
-}
-
-// deployConsoleAccessRBAC ensures the console-access ClusterRoleBinding
-// reflects the current effective group list (#289). The ClusterRole itself
-// rides the ClusterRoles(kn) aggregator via deployCoreRBAC and needs no
-// dedicated handling here. Unlike the multi-name tool CRBs, this CRB has a
-// single static name, so a plain ensure-or-delete on every reconcile is
-// sufficient to handle the "groups shrunk to zero / explicit opt-out"
-// transition -- no status-field pruning list is needed.
-func (r *KubernautReconciler) deployConsoleAccessRBAC(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
-	crb := resources.ConsoleAccessClusterRoleBinding(kn)
-	if crb == nil {
-		staleCRB := &rbacv1.ClusterRoleBinding{}
-		staleCRB.Name = resources.ConsoleAccessCRBName(kn)
-		if err := r.deleteIfExists(ctx, kn, staleCRB); err != nil {
-			return fmt.Errorf("deleting console-access CRB: %w", err)
-		}
-		return nil
-	}
-	if err := r.ensureUnowned(ctx, kn, crb); err != nil {
-		return fmt.Errorf("ensuring console-access CRB %s: %w", crb.Name, err)
-	}
-	return nil
+	return r.deleteLegacyRBACRolesConfigMap(ctx, kn)
 }
 
 // deployCoreRBAC provisions namespace-scoped Roles/RoleBindings and client
@@ -1525,64 +1499,19 @@ func additionalRBACCondition(generation int64, desiredSet, missingRoles []string
 	return cond
 }
 
-// deployToolRBAC provisions persona-based tool ClusterRoles and group-to-role
-// ClusterRoleBindings for SAR-based tool authorization (issue #118).
-// It also prunes stale CRBs when role bindings are removed from the spec,
-// deletes the orphaned legacy apifrontend-rbac-roles ConfigMap,
-// and sets the ConditionToolRBACBound condition.
-func (r *KubernautReconciler) deployToolRBAC(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
-	log := logf.FromContext(ctx)
-
-	for _, cr := range resources.ToolClusterRoles(kn) {
-		if err := r.ensureUnowned(ctx, kn, cr); err != nil {
-			return fmt.Errorf("ensuring tool ClusterRole %s: %w", cr.Name, err)
-		}
-	}
-
-	for _, crb := range resources.ToolClusterRoleBindings(kn) {
-		if err := r.ensureUnowned(ctx, kn, crb); err != nil {
-			return fmt.Errorf("ensuring tool CRB %s: %w", crb.Name, err)
-		}
-	}
-
-	desiredCRBNames := resources.ToolCRBNames(kn)
-	desiredMap := make(map[string]struct{}, len(desiredCRBNames))
-	for _, n := range desiredCRBNames {
-		desiredMap[n] = struct{}{}
-	}
-	for _, name := range kn.Status.BoundToolRoleBindings {
-		if _, ok := desiredMap[name]; !ok {
-			staleCRB := &rbacv1.ClusterRoleBinding{}
-			staleCRB.Name = name
-			if err := r.deleteIfExists(ctx, kn, staleCRB); err != nil {
-				return fmt.Errorf("pruning stale tool CRB %s: %w", name, err)
-			}
-			log.Info("pruned stale tool CRB", "name", name)
-		}
-	}
-
+// deployToolRBAC's former responsibilities (persona tool ClusterRoles and
+// user-facing ClusterRoleBindings, #118) were removed by #682/#684: the
+// operator now renders roles only and never a user-facing binding. The
+// legacy apifrontend-rbac-roles ConfigMap orphan cleanup from #118 is kept
+// below so pre-SAR upgrades stay clean.
+func (r *KubernautReconciler) deleteLegacyRBACRolesConfigMap(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) error {
 	legacyCM := &corev1.ConfigMap{}
 	legacyCM.Name = "apifrontend-rbac-roles"
 	legacyCM.Namespace = kn.Namespace
 	if err := r.deleteIfExists(ctx, kn, legacyCM); err != nil {
 		return fmt.Errorf("deleting orphaned apifrontend-rbac-roles ConfigMap: %w", err)
 	}
-
-	return r.patchStatus(ctx, kn, func() {
-		kn.Status.BoundToolRoleBindings = desiredCRBNames
-
-		if len(desiredCRBNames) == 0 {
-			meta.RemoveStatusCondition(&kn.Status.Conditions, kubernautv1alpha2.ConditionToolRBACBound)
-			return
-		}
-		meta.SetStatusCondition(&kn.Status.Conditions, metav1.Condition{
-			Type:               kubernautv1alpha2.ConditionToolRBACBound,
-			Status:             metav1.ConditionTrue,
-			Reason:             "ToolRBACProvisioned",
-			Message:            fmt.Sprintf("%d tool role bindings active", len(desiredCRBNames)),
-			ObservedGeneration: kn.Generation,
-		})
-	})
+	return nil
 }
 
 func deduplicate(ss []string) []string {
@@ -2780,7 +2709,7 @@ func (r *KubernautReconciler) deleteRBACResources(ctx context.Context, kn *kuber
 	errs = append(errs, r.deleteCoreClusterRBAC(ctx, kn)...)
 	errs = append(errs, r.deleteAnsibleClusterRBAC(ctx, kn)...)
 	errs = append(errs, r.deleteMonitoringClusterRBAC(ctx, kn)...)
-	errs = append(errs, r.deleteAdditionalAgentAndToolRBAC(ctx, kn)...)
+	errs = append(errs, r.deleteAdditionalComponentRBAC(ctx, kn)...)
 	errs = append(errs, r.deleteMCPGatewayNamespaceRBAC(ctx, kn, knV2)...)
 	return errs
 }
@@ -2831,38 +2760,16 @@ func (r *KubernautReconciler) deleteMonitoringClusterRBAC(ctx context.Context, k
 	return errs
 }
 
-// deleteAdditionalAgentAndToolRBAC removes every additional-component
+// deleteAdditionalComponentRBAC removes every additional-component
 // ClusterRoleBinding (KA/Gateway/EM, #277) via the generic label-selector
-// prune, all tool ClusterRoles and their bound ClusterRoleBindings, and the
-// console-access CRB.
-func (r *KubernautReconciler) deleteAdditionalAgentAndToolRBAC(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) []error {
-	errs := r.pruneOrphanedAdditionalComponentRBAC(ctx, kn, nil)
-
-	for _, name := range resources.ToolClusterRoleNames(kn) {
-		toolCR := &rbacv1.ClusterRole{}
-		toolCR.Name = name
-		if err := r.deleteIfExists(ctx, kn, toolCR); err != nil {
-			errs = append(errs, fmt.Errorf("deleting tool ClusterRole %s: %w", name, err))
-		}
-	}
-	for _, name := range kn.Status.BoundToolRoleBindings {
-		toolCRB := &rbacv1.ClusterRoleBinding{}
-		toolCRB.Name = name
-		if err := r.deleteIfExists(ctx, kn, toolCRB); err != nil {
-			errs = append(errs, fmt.Errorf("deleting tool CRB %s: %w", name, err))
-		}
-	}
-
-	// #289: the console-access ClusterRole itself is already covered by the
-	// resources.ClusterRoles(kn) sweep above; only its CRB needs an explicit
-	// static-name delete here.
-	consoleCRB := &rbacv1.ClusterRoleBinding{}
-	consoleCRB.Name = resources.ConsoleAccessCRBName(kn)
-	if err := r.deleteIfExists(ctx, kn, consoleCRB); err != nil {
-		errs = append(errs, fmt.Errorf("deleting console-access CRB: %w", err))
-	}
-
-	return errs
+// prune. The former tool ClusterRole/CRB and console-access CRB static-name
+// deletes are gone with the roles-only model (#682/#684): the operator no
+// longer renders those objects, and the ClusterRoles it still renders ride
+// the deleteCoreClusterRBAC label sweep. Pre-GA upgrades from the
+// persona/binding model must remove its stale user-facing CRBs manually
+// (see DD-682).
+func (r *KubernautReconciler) deleteAdditionalComponentRBAC(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) []error {
+	return r.pruneOrphanedAdditionalComponentRBAC(ctx, kn, nil)
 }
 
 // deleteMCPGatewayNamespaceRBAC removes every namespaced Role/RoleBinding

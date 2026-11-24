@@ -128,19 +128,17 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 		seedBusinessOwnedResources(r, kn, role, binding,
 			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resources.DeploymentName(resources.ComponentGateway), Namespace: kn.Namespace}},
 			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: resources.DeploymentName(resources.ComponentFleetMetadataCache), Namespace: kn.Namespace}},
-			&rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: resources.ConsoleAccessCRBName(kn)}},
-			&rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "stale-role"}})
+			&rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "stale-role"}},
+			&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "apifrontend-rbac-roles", Namespace: kn.Namespace}})
 		for _, cleanup := range []func() error{
 			func() error { return r.cleanupDisabledGateway(ctx, kn) },
 			func() error { return r.cleanupDisabledFleetMetadataCache(ctx, kn) },
 			func() error { return r.deployToggleRBAC(ctx, kn) },
-			func() error { return r.deployConsoleAccessRBAC(ctx, kn) },
+			func() error { return r.deleteLegacyRBACRolesConfigMap(ctx, kn) },
 			func() error { _, err := r.enabledDeploymentBuilders(ctx, kn, kn); return err },
 		} {
 			Expect(cleanup()).To(MatchError(ContainSubstring("injected cleanup failure")))
 		}
-		kn.Status.BoundToolRoleBindings = []string{"stale-role"}
-		Expect(r.deleteAdditionalAgentAndToolRBAC(ctx, kn)).To(ContainElement(MatchError(ContainSubstring("stale-role"))))
 	})
 
 	It("UT-AUDIT-515-ERRORS-006: distinguishes Ansible and AlertManager disabled, missing, malformed and valid credentials", func() {
@@ -187,28 +185,19 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 		Expect(condition.Message).To(ContainSubstring("set spec.gateway.auth.enabled=true"))
 	})
 
-	It("UT-AUDIT-515-ERRORS-007: prunes additional-role and persona bindings on shrink and preserves required bindings", func() {
+	It("UT-AUDIT-515-ERRORS-007: prunes additional-role bindings on shrink and preserves required bindings", func() {
 		kn := newMinimalCR()
 		kn.Spec.AdditionalClusterRoles = []string{"existing", "missing", "existing"}
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{RoleBindings: []kubernautv1alpha2.ToolRoleBinding{{
-			Role: "sre", Groups: []string{"engineers"},
-		}}}
 		r := businessUnitReconciler(kn, interceptor.Funcs{})
 		Expect(r.Create(ctx, &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: "existing"}})).To(Succeed())
 		Expect(r.deployAdditionalComponentRBAC(ctx, kn, kn)).To(Succeed())
 		Expect(kn.Status.BoundAdditionalClusterRoles).To(Equal([]string{"existing", "missing"}))
 		Expect(meta.IsStatusConditionFalse(kn.Status.Conditions, kubernautv1alpha2.ConditionAdditionalRBACBound)).To(BeTrue())
-		Expect(r.deployToolRBAC(ctx, kn)).To(Succeed())
-		Expect(r.deployConsoleAccessRBAC(ctx, kn)).To(Succeed())
-		Expect(kn.Status.BoundToolRoleBindings).To(HaveLen(1))
+		Expect(r.deleteLegacyRBACRolesConfigMap(ctx, kn)).To(Succeed())
 		kn.Spec.AdditionalClusterRoles = []string{"existing"}
 		kn.Spec.Gateway.Enabled = ptr.To(false)
 		Expect(r.deployAdditionalComponentRBAC(ctx, kn, kn)).To(Succeed())
 		Expect(meta.IsStatusConditionTrue(kn.Status.Conditions, kubernautv1alpha2.ConditionAdditionalRBACBound)).To(BeTrue())
-		kn.Spec.APIFrontend.RBAC = nil
-		Expect(r.deployToolRBAC(ctx, kn)).To(Succeed())
-		Expect(kn.Status.BoundToolRoleBindings).To(BeEmpty())
-		Expect(r.deployConsoleAccessRBAC(ctx, kn)).To(Succeed())
 		Expect(contains([]string{"existing"}, "existing")).To(BeTrue())
 		Expect(contains([]string{"existing"}, "missing")).To(BeFalse())
 	})

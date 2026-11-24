@@ -2108,57 +2108,17 @@ type APIFrontendRBACSpec struct {
 	// +optional
 	SARCacheTTL string `json:"sarCacheTTL,omitempty"`
 
-	// RoleBindings maps persona-based tool roles to OIDC groups.
-	// +optional
-	RoleBindings []ToolRoleBinding `json:"roleBindings,omitempty"`
-
-	// ConsoleAccessGroups are the OIDC groups granted the coarse-grained
-	// kubernaut-console-access ClusterRole (kubernaut.ai/console, verb=use) --
-	// a separate, independently-auditable grant from the per-tool RoleBindings
-	// above (kubernaut#1919). When unset (nil), defaults to the deduplicated
-	// union of all groups already present in RoleBindings, so upgrading to an
-	// AF version enforcing this gate does not silently deny existing
-	// deployments' tool calls (kubernaut-operator#289). Set to an explicit
-	// empty list to opt out (grant console access to nobody). Set to a
-	// non-empty list for independent, narrower control.
-	// +optional
-	ConsoleAccessGroups []string `json:"consoleAccessGroups"` // no omitempty: see rbac.go effectiveConsoleAccessGroups doc
-
 	// ConsoleAccessAuthorizationCheckEnabled turns on AF's coarse-grained
-	// kubernaut.ai/console authorization check (kubernaut#1919) -- the same
-	// enforcement RoleBindings/ConsoleAccessGroups above configure. Defaults
+	// kubernaut.ai/console authorization check (kubernaut#1919). Defaults
 	// to false: this is a security-hardening opt-in, not a mandatory setting,
 	// so a zero-config CR deploys successfully and console access is
 	// unrestricted until an administrator explicitly enables the check after
-	// populating personas/consoleAccessGroups -- enabling it by default would
-	// make every install responsible for RBAC configuration before console
-	// login works at all.
+	// binding user groups to the operator-rendered console-access
+	// ClusterRole through their own ClusterRoleBindings (#682/#684:
+	// the operator renders roles only and never user-facing bindings).
 	// +kubebuilder:default=false
 	// +optional
 	ConsoleAccessAuthorizationCheckEnabled *bool `json:"consoleAccessAuthorizationCheckEnabled,omitempty"`
-}
-
-// ToolRoleBinding binds a tool role to one or more OIDC groups.
-// Exactly one of Role or ClusterRoleName must be set.
-type ToolRoleBinding struct {
-	// Role is a built-in persona name. Must be one of: sre, ai-orchestrator, cicd,
-	// observability, l3-audit, remediation-approver.
-	// Mutually exclusive with ClusterRoleName.
-	// +kubebuilder:validation:Enum=sre;ai-orchestrator;cicd;observability;l3-audit;remediation-approver
-	// +optional
-	Role string `json:"role,omitempty"`
-
-	// ClusterRoleName references a user-managed ClusterRole for custom tool authorization.
-	// The operator creates only the ClusterRoleBinding; the ClusterRole itself must be
-	// pre-created by the user with rules granting verb "use" on resource "tools" in
-	// apiGroup "kubernaut.ai".
-	// Mutually exclusive with Role.
-	// +optional
-	ClusterRoleName string `json:"clusterRoleName,omitempty"`
-
-	// Groups are the OIDC group names to bind to this role.
-	// +kubebuilder:validation:MinItems=1
-	Groups []string `json:"groups"`
 }
 
 // APIFrontendAuthSpec configures OIDC authentication for the API Frontend.
@@ -2757,11 +2717,6 @@ type KubernautStatus struct {
 	// and finalizer cleanup.
 	// +optional
 	BoundAdditionalClusterRoles []string `json:"boundAdditionalClusterRoles,omitempty"`
-
-	// BoundToolRoleBindings tracks the set of tool role binding CRB names
-	// currently managed by the operator for stale-pruning and finalizer cleanup.
-	// +optional
-	BoundToolRoleBindings []string `json:"boundToolRoleBindings,omitempty"`
 }
 
 // ServiceStatus reports the readiness of a single managed service.
@@ -2792,7 +2747,6 @@ const (
 	ConditionAnsibleReady               ConditionType = "AnsibleReady"
 	ConditionAlertManagerAuthConfigured ConditionType = "AlertManagerAuthConfigured"
 	ConditionAdditionalRBACBound        ConditionType = "AdditionalRBACBound"
-	ConditionToolRBACBound              ConditionType = "ToolRBACBound"
 	ConditionPlatformCapabilitiesReady  ConditionType = "PlatformCapabilitiesReady"
 	ConditionTLSReady                   ConditionType = "TLSReady"
 	ConditionExposureReady              ConditionType = "ExposureReady"

@@ -214,8 +214,6 @@ var _ = Describe("independent resource-generation boundary outcomes", func() {
 			Expect(validateFleetTrust("trust", trust)).NotTo(BeEmpty())
 		}
 		Expect(validateJWTProviderJWKSURL(strings.Repeat("x", maxJWKSURLLength+1), "jwt", false, "insecure")).To(HaveOccurred())
-		role := kubernautv1alpha2.ToolRoleBinding{ClusterRoleName: "custom", Groups: []string{"engineers"}}
-		Expect(validateToolRoleBinding(role, 1, map[string]bool{"custom": true})).To(HaveOccurred())
 		kn, fleet := testKubernautWithFMC()
 		fleet.Spec.Fleet.MCPGateway.Type = "unknown"
 		Expect(validateFleetConfig(fleet)).NotTo(BeEmpty())

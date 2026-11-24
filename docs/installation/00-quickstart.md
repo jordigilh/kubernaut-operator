@@ -128,10 +128,12 @@ The CR progresses through **Validating** -> **Migrating** -> **Deploying** -> **
 ## Before you rely on this for real use
 
 The minimum CR disables API Frontend, so it does not require an IdP or
-`apiFrontend.rbac.roleBindings`. When you enable API Frontend/Console, add
-`roleBindings` before relying on tool access: without it, **every** tool call is
-rejected for **every** user (including `cluster-admin`), fail-closed by design.
-See [Additional RBAC for API Frontend](02-configure-services.md#additional-rbac-for-api-frontend).
+user RBAC. When you enable API Frontend/Console, bind your OIDC groups to
+the operator-rendered roles with your own ClusterRoleBindings before
+relying on tool access: without a binding, **every** tool call is
+rejected for **every** user (including `cluster-admin`), fail-closed by
+design. See [Additional RBAC for API
+Frontend](02-configure-services.md#additional-rbac-for-api-frontend).
 
 ## What's next
 

@@ -665,43 +665,39 @@ oc get configmap -n kubernaut-system \
 
 ## Additional RBAC for API Frontend
 
-> **Hard requirement, not optional, for tool access:** whenever
-> `spec.apiFrontend.enabled` is true,
-> `spec.apiFrontend.rbac.roleBindings` **must** list at least one OIDC
-> group your users actually belong to, before you apply the CR. There is
-> no permissive fallback if it's left unset — every user, including
-> `cluster-admin`, gets every tool call rejected. This is fail-closed by
-> design (least-privilege), with no dev-mode bypass; skip this section
-> when API Frontend remains disabled.
->
-> The Console UI itself is a *separate* gate and, unlike tool access, is
-> permissive by default (kubernaut#2150) — see "Console access" (2) below
-> before assuming an unset `roleBindings` blocks Console login too; it
-> doesn't, only tool/chat actions inside it.
+> **Roles-only model (v1.6, [#682](https://github.com/jordigilh/kubernaut-operator/issues/682)/[#684](https://github.com/jordigilh/kubernaut-operator/issues/684)):**
+> the operator renders *roles* and never user-facing ClusterRoleBindings.
+> Who is bound to which role is an operational/SRE decision owned by the
+> platform team, not a deployment decision — anyone delegated to manage the
+> Kubernaut CR must not be implicitly delegated user-access policy. The
+> former `spec.apiFrontend.rbac.roleBindings` and `consoleAccessGroups`
+> fields and the six built-in persona ClusterRoles are gone; compose your
+> own roles from your SOPs and bind them with your own RBAC objects
+> (GitOps, OpenShift RBAC, or `oc`).
 
 Required whenever `spec.apiFrontend.enabled: true` and any human or agent
 actually calls AF's `/mcp`, `/a2a/invoke`, or Console endpoints (skip if AF
 is enabled only for internal Gateway wiring with no external callers).
 
 AF enforces two independent, OIDC-group-based SubjectAccessReview (SAR)
-checks, both configured through `spec.apiFrontend.rbac`:
+checks. Both authorize through Kubernetes RBAC that **you** own:
 
-1. **Per-tool authorization** — one ClusterRole per persona (`sre`,
-   `ai-orchestrator`, `cicd`, `observability`, `l3-audit`,
-   `remediation-approver`), granting `use` on specific tool
-   `resourceNames`. Enforced on every `/mcp`/`/a2a/invoke` call,
-   unconditionally fail-closed — there is no toggle for this one.
+1. **Per-tool authorization** — every tool call must pass a SAR for `use`
+   on the tool's name in `kubernaut.ai/tools`. Enforced unconditionally,
+   fail-closed — there is no toggle and no permissive fallback. Compose
+   one ClusterRole per use case with the exact tool names that use case
+   needs (see the example bundles below), and bind your OIDC groups to it
+   with your own ClusterRoleBinding.
 2. **Console access** — a coarse-grained gate (`kubernaut.ai/console`,
    verb `use`) that the Console's `/a2a/access` pre-flight check must pass
    before it will render its UI, independent of (1) (kubernaut#1919,
    kubernaut-operator#289/#290). Unlike (1), this gate is **opt-in**:
    `spec.apiFrontend.rbac.consoleAccessAuthorizationCheckEnabled` defaults
    to `false` (kubernaut-operator#338, kubernaut#2148/#2150), which makes
-   it authentication-only — any authenticated user passes, regardless of
-   `consoleAccessGroups`/`roleBindings` — so a zero-config CR's Console
-   still opens. Set it to `true` once you've populated
-   `roleBindings`/`consoleAccessGroups` for production use, to actually
-   enforce group-based Console access.
+   it authentication-only — any authenticated user passes. Set it to
+   `true` once you've bound your groups to the rendered
+   `console-access` ClusterRole, to actually enforce group-based Console
+   access.
 
 ```yaml
 spec:
@@ -709,55 +705,223 @@ spec:
     rbac:
       sarCacheTTL: "30s"
       # Enforce gate (2) too, not just authentication-only (see above) --
-      # set this once roleBindings/consoleAccessGroups are populated for
-      # your real personas.
+      # set this once your groups are bound to <namespace>-console-access.
       consoleAccessAuthorizationCheckEnabled: true
-      roleBindings:
-        - role: sre
-          groups: ["platform-engineering"]
-        - role: observability
-          groups: ["platform-engineering"]
-        - role: remediation-approver
-          groups: ["platform-engineering"]
 ```
 
-Each entry maps a built-in persona (`role`) — or a pre-created custom
-ClusterRole (`clusterRoleName`, mutually exclusive with `role`) — to one or
-more OIDC groups. Those groups must appear in the `groups` claim of the JWT
-AF receives; if your IdP doesn't emit that claim by default (Keycloak, for
+The operator renders three user-facing ClusterRoles whenever AF is enabled
+(all unbound; all named with your CR's namespace prefix):
+
+| Role | Grants | Notes |
+|---|---|---|
+| `<namespace>-console-access` | `kubernaut.ai/console` `use` | the login gate for check (2) |
+| `<namespace>-console-reader` | `use` on the three console read capabilities | see below |
+| `<namespace>-console-inventory-reader` | `get`/`list` on AF's pinned 11-kind inventory allowlist | see below |
+
+Bind them with your own RBAC objects, never through the Kubernaut CR. For
+a Kubernaut CR in `kubernaut-system`:
+
+```bash
+oc create clusterrolebinding kubernaut-console-access \
+  --clusterrole=kubernaut-system-console-access \
+  --group=platform-engineering
+```
+
+Your users' groups must appear in the `groups` claim of the JWT AF
+receives; if your IdP doesn't emit that claim by default (Keycloak, for
 example, requires an explicit "Group Membership" protocol mapper on the
 client), every tool call will be denied regardless of this config (and, if
 you've set `consoleAccessAuthorizationCheckEnabled: true`, Console access
 too — with it left at the default `false`, Console access doesn't consult
 groups at all and is unaffected by a missing claim).
 
-The six built-in personas and their exact tool sets are audited in
-[DD-636](../design/DD-636-console-direct-action-rbac.md). Two persona
-additions land in v1.6: `sre` can also list pending approval requests
-(`kubernaut_list_approval_requests`) and discover fleet clusters
-(`list_clusters`); `ai-orchestrator` can discover fleet clusters but still
-cannot read or decide approvals (separation of duties, DD-278).
+### Composing your own tool roles
+
+A tool role is any ClusterRole granting `use` on `kubernaut.ai/tools`
+with the tool names you intend as `resourceNames` — nothing more. Start
+from the audited use-case bundles below (they carry the exact tool sets
+[DD-636](../design/DD-636-console-direct-action-rbac.md) audited for the
+former built-in personas), adjust them to your SOPs, and bind them to
+your OIDC groups with your own ClusterRoleBindings:
+
+<!-- bundle-matrix-start -->
+```yaml
+# Example use-case bundles (administrator-owned; rendered verbatim from the
+# DD-636 audit). Alert-capable bundles carry BOTH tool names: list_alerts
+# (A2A) and kubernaut_list_alerts (MCP) -- AF authorizes the exact name
+# each transport uses (#664/#683). Approval reads/decisions stay with the
+# human/approver bundles only (DD-278, #665).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubernaut-sre
+rules:
+  - apiGroups: ["kubernaut.ai"]
+    resources: ["tools"]
+    verbs: ["use"]
+    resourceNames:
+      - kubernaut_list_remediations
+      - kubernaut_get_remediation
+      - kubernaut_approve
+      - kubernaut_cancel_remediation
+      - kubernaut_watch
+      - kubernaut_await_session
+      - kubernaut_investigate
+      - kubernaut_discover_workflows
+      - kubernaut_select_workflow
+      - kubernaut_present_decision
+      - kubernaut_list_workflows
+      - kubernaut_get_remediation_history
+      - kubernaut_get_effectiveness
+      - kubernaut_get_audit_trail
+      - kubernaut_message
+      - kubernaut_complete
+      - kubernaut_cancel
+      - kubernaut_status
+      - kubernaut_reconnect
+      - kubectl_get
+      - kubectl_list
+      - kubectl_list_events
+      - kubernaut_check_existing_remediation
+      - kubernaut_remediate
+      - list_alerts
+      - kubernaut_list_alerts
+      - get_alert_details
+      - kubernaut_investigate_alert
+      - kubernaut_get_approval_request
+      - kubernaut_complete_no_action
+      - kubernaut_list_approval_requests
+      - list_clusters
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubernaut-ai-orchestrator
+rules:
+  - apiGroups: ["kubernaut.ai"]
+    resources: ["tools"]
+    verbs: ["use"]
+    resourceNames:
+      - kubernaut_list_remediations
+      - kubernaut_get_remediation
+      - kubernaut_watch
+      - kubernaut_await_session
+      - kubernaut_investigate
+      - kubernaut_discover_workflows
+      - kubernaut_select_workflow
+      - kubernaut_present_decision
+      - kubernaut_message
+      - kubernaut_complete
+      - kubernaut_cancel
+      - kubernaut_status
+      - kubernaut_reconnect
+      - kubectl_get
+      - kubectl_list
+      - kubectl_list_events
+      - kubernaut_check_existing_remediation
+      - kubernaut_remediate
+      - list_alerts
+      - kubernaut_list_alerts
+      - get_alert_details
+      - kubernaut_investigate_alert
+      - list_clusters
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubernaut-cicd
+rules:
+  - apiGroups: ["kubernaut.ai"]
+    resources: ["tools"]
+    verbs: ["use"]
+    resourceNames:
+      - kubernaut_list_remediations
+      - kubernaut_get_remediation
+      - kubernaut_watch
+      - kubernaut_await_session
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubernaut-observability
+rules:
+  - apiGroups: ["kubernaut.ai"]
+    resources: ["tools"]
+    verbs: ["use"]
+    resourceNames:
+      - kubernaut_list_remediations
+      - kubernaut_get_remediation
+      - kubernaut_watch
+      - kubernaut_await_session
+      - kubernaut_get_effectiveness
+      - kubernaut_list_workflows
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubernaut-l3-audit
+rules:
+  - apiGroups: ["kubernaut.ai"]
+    resources: ["tools"]
+    verbs: ["use"]
+    resourceNames:
+      - kubernaut_list_remediations
+      - kubernaut_get_remediation
+      - kubernaut_list_workflows
+      - kubernaut_get_remediation_history
+      - kubernaut_get_effectiveness
+      - kubernaut_get_audit_trail
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubernaut-remediation-approver
+rules:
+  - apiGroups: ["kubernaut.ai"]
+    resources: ["tools"]
+    verbs: ["use"]
+    resourceNames:
+      - kubernaut_approve
+      - kubernaut_list_approval_requests
+      - kubernaut_get_approval_request
+      - kubernaut_list_remediations
+      - kubernaut_get_remediation
+      - kubernaut_watch
+      - kubernaut_await_session
+```
+<!-- bundle-matrix-end -->
+
+Bind a bundle to your groups exactly as with the console roles above:
+
+```bash
+oc apply -f kubernaut-sre.yaml
+oc create clusterrolebinding kubernaut-sre \
+  --clusterrole=kubernaut-sre \
+  --group=platform-engineering
+```
+
+The bundles are a starting point, not a contract: SREs are expected to
+define their own roles based on their SOPs. The audited separation of
+duties is worth keeping, though — approval reads and decisions
+(`kubernaut_approve`, `kubernaut_list_approval_requests`,
+`kubernaut_get_approval_request`, `kubernaut_complete_no_action`) belong
+in human/approver bundles only, never in the automated
+`ai-orchestrator` bundle ([DD-278](../design/DD-278-sre-approval-visibility.md),
+[#665](https://github.com/jordigilh/kubernaut-operator/issues/665)).
 
 **Console policy/inventory reads need a separate role — permanently.** The
-operator renders `console-reader` (a seventh ClusterRole, cluster-scoped),
-granting only the three AF console read capabilities
-(`kubernaut_read_policy_scope`, `kubernaut_list_managed_resources`,
-`kubernaut_get_managed_resource`). Per [DD-662](../design/DD-662-console-read-capability-model.md)
-this is the permanent model, not a placeholder: **no built-in persona
-implies it and login never grants console reads**. The operator never
-binds it implicitly; binding is an explicit administrator choice through
-`roleBindings` with `clusterRoleName` — note the rendered name is
-namespace-prefixed, so reference `<namespace>-console-reader` exactly (the
-custom-binding path uses the name verbatim, no prefixing) — or your own
-ClusterRoleBinding. For a Kubernaut CR in `kubernaut-system`:
+operator renders `console-reader` (cluster-scoped), granting only the
+three AF console read capabilities (`kubernaut_read_policy_scope`,
+`kubernaut_list_managed_resources`, `kubernaut_get_managed_resource`). Per
+[DD-662](../design/DD-662-console-read-capability-model.md) this is the
+permanent model, not a placeholder: **no documented bundle implies it and
+login never grants console reads**. Since the roles-only model the only
+supported bind path is your own ClusterRoleBinding:
 
-```yaml
-spec:
-  apiFrontend:
-    rbac:
-      roleBindings:
-        - clusterRoleName: kubernaut-system-console-reader
-          groups: ["console-readers"]
+```bash
+oc create clusterrolebinding kubernaut-console-readers \
+  --clusterrole=kubernaut-system-console-reader \
+  --group=console-readers
 ```
 
 Until a user holds the capability, console reads return AF's `forbidden`
@@ -801,25 +965,27 @@ oc create clusterrolebinding console-inventory-readers \
   --group=console-readers
 ```
 
-**Console access is derived automatically — leave `consoleAccessGroups`
-unset.** `spec.apiFrontend.rbac.consoleAccessGroups` only has any effect
-once `consoleAccessAuthorizationCheckEnabled: true` is set (see above) --
-while that stays `false` (the default), `consoleAccessGroups` is inert.
-Once enabled, and by default (`consoleAccessGroups` unset), the operator
-derives it as the deduplicated union of every group already listed in
-`roleBindings`, so Console access tracks your existing tool-persona grants
-with zero extra configuration. Only set it explicitly if Console access
-should be scoped narrower/wider than tool access, or to `[]` to disable
-Console access entirely while keeping tool access intact.
-
-If users see "Access Denied" on the Console despite `roleBindings` looking
-correct, first confirm whether you actually meant `consoleAccessAuthorizationCheckEnabled: true`
-(gate (2)) or the tool-call SAR check (gate (1), always enforced) --
-tool/chat *actions* inside the Console failing with "Access Denied" is
-gate (1), and is the far more common case since it has no opt-out. See
+If users see "Access Denied" on the Console, first confirm whether you
+actually meant `consoleAccessAuthorizationCheckEnabled: true` (gate (2))
+or the tool-call SAR check (gate (1), always enforced) -- tool/chat
+*actions* inside the Console failing with "Access Denied" is gate (1),
+and is the far more common case since it has no opt-out. See
 [Troubleshooting](03-deploy.md#troubleshooting) or the detailed writeup:
 [Kubernaut Console: troubleshooting "Access
 Denied"](https://gist.github.com/jordigilh/5984f65c88da042f2207825a9e57df62).
+
+**Upgrading from the pre-v1.6 persona/binding model.** v1.6 is pre-GA and
+expects clean deployments ([DD-682](../design/DD-682-roles-only-rbac.md));
+the operator does not migrate the retired CRBs. If you deployed the
+former `roleBindings`/`consoleAccessGroups` surface, remove its stale
+user-facing ClusterRoleBindings yourself — they keep granting
+authorization the operator no longer tracks:
+
+```bash
+oc delete clusterrolebinding \
+  kubernaut-system-console-access-binding \
+  $(oc get clusterrolebinding -o name | grep 'kubernaut-system-tool-.*-binding')
+```
 
 ## Additional ClusterRoles for ecosystem CRDs (KA, Gateway, EM)
 
