@@ -120,7 +120,12 @@ var _ = Describe("raw-block coverage enforcement", func() {
 		Expect(string(workflow)).To(ContainSubstring("name: Run independent unit tests"))
 		Expect(string(workflow)).To(ContainSubstring("name: Run independent integration tests"))
 		Expect(string(workflow)).To(ContainSubstring("run: make test-integration"))
-		Expect(string(workflow)).To(ContainSubstring("if: ${{ !cancelled() }}"))
+		// The lanes are independent jobs (no needs between test-unit and
+		// test-integration), so the integration lane still runs when the unit
+		// lane fails, and the aggregate gate requires both lanes to pass.
+		Expect(string(workflow)).To(ContainSubstring("  test-unit:"))
+		Expect(string(workflow)).To(ContainSubstring("  test-integration:"))
+		Expect(string(workflow)).To(ContainSubstring("needs: [test-unit, test-integration]"))
 	})
 
 	It("UT-AUDIT-515-GATE-009: executes the verifier and rejects incomplete unit evidence", func() {
