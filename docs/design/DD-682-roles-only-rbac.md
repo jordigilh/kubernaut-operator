@@ -53,9 +53,24 @@ Continues the direction of #181 (custom ClusterRole refs) and
    v1.0–v1.2) are preserved as **documented example use-case bundles**
    in the installation guide, drift-guarded by unit tests. The operator
    keeps rendering: `console-access` (gate role), `console-reader` (read
-   capabilities), and `console-inventory-reader` (local-target reads),
-   plus all service/backend roles — unbound, label-pruned, and
-   finalizer-swept.
+   capabilities), and `console-inventory-reader` (local-target reads) —
+   all three unbound, label-pruned, and finalizer-swept — plus all
+   service/backend roles, which are bound by operator-rendered CRBs to
+   the managed components' ServiceAccounts (including AF's
+   `<ns>-apifrontend-inventory-read` backend role described in DD-636).
+
+   **Scope of "never a user-facing binding" (explicit exception):** the
+   operator-rendered CRBs bind ServiceAccounts, with one pre-existing,
+   deliberate exception — the Fleet caller CRBs
+   (`fleet-caller-read-view-binding`,
+   `fleet-caller-read-node-reader-binding`,
+   `fleet-caller-execution-binding`) bind the **fixed protocol groups**
+   `oidc:kubernaut-fleet-read` / `oidc:kubernaut-fleet-workflow-execution`
+   when `spec.fleet` enables remote MCP access. Those groups are
+   machine-to-machine inter-cluster identities from the Fleet federation
+   surface (#224/DD-FLEET), configured by the deployment, not human
+   user-access policy; they are outside this decision's removal scope
+   and remain operator-rendered.
 4. **No migration.** v1.6 is pre-GA; clean deployments are expected.
 
 ## Documentation rules folded in (#683)
@@ -76,12 +91,18 @@ Continues the direction of #181 (custom ClusterRole refs) and
   the only supported bind path for `console-reader` (and every other
   rendered role) is an administrator-owned external ClusterRoleBinding.
   DD-662's permanent model — the coarse unbound role — is unchanged.
+  `console-inventory-reader` additionally supports an
+  administrator-owned **namespaced RoleBinding**, which satisfies only
+  namespace-filtered inventory reads (the eight namespaced kinds in the
+  bound namespaces); the default unfiltered inventory list issues a
+  cluster-scoped SAR and needs a cluster-level ClusterRoleBinding.
 - Upgrading a pre-v1.6 deployment that used `roleBindings`/
-  `consoleAccessGroups` leaves its stale user-facing CRBs in place
-  (`<ns>-console-access-binding`, `<ns>-tool-*-binding`); they keep
-  granting authorization the operator no longer tracks and must be
-  removed manually. The installation guide documents the exact cleanup
-  commands. This is accepted: pre-GA, clean deployments expected.
+  `consoleAccessGroups` leaves its stale user-facing RBAC in place — the
+  `<ns>-console-access-binding` and `<ns>-tool-*-binding` CRBs and the six
+  retired `<ns>-tool-<persona>` ClusterRoles; they keep granting
+  authorization the operator no longer tracks and must be removed
+  manually. The installation guide documents the exact cleanup commands.
+  This is accepted: pre-GA, clean deployments expected.
 - The legacy `apifrontend-rbac-roles` ConfigMap orphan cleanup (#118)
   is preserved in the reconcile path.
 
@@ -99,11 +120,14 @@ Continues the direction of #181 (custom ClusterRole refs) and
   example bundles match the audited matrix; dual alert names (#683);
   approval separation (DD-278); no bundle is operator-rendered.
 - UT (`internal/resources/rbac_test.go`, `issue662_console_read_model_test.go`):
-  the `ClusterRoles()` aggregator renders no `tool-*` role; no rendered
-  CRB carries a Group-kind subject; the three console roles render when
-  AF is enabled and drop when disabled.
+  the `ClusterRoles()` aggregator renders no `tool-*` role; with Fleet
+  disabled in the fixture, no rendered CRB carries a Group-kind subject,
+  and the Fleet caller tests separately pin the exact fixed protocol
+  groups when Fleet is enabled; the three console roles render when AF
+  is enabled and drop when disabled.
 - IT (`internal/controller/kubernaut_lifecycle_test.go`): through a real
   envtest reconcile — no persona ClusterRole exists, the three console
-  roles do, and no ClusterRoleBinding in the cluster carries a
-  user-facing subject; finalizer sweeps the console roles without ever
-  creating a CRB (IT-CONSOLE-005/010 rewritten).
+  roles do, and no operator-managed ClusterRoleBinding carries a
+  user-facing subject (Fleet disabled in the fixture, so the protocol
+  -group exception does not apply); finalizer sweeps the console roles
+  without ever creating a CRB (IT-CONSOLE-005/010 rewritten).

@@ -55,7 +55,8 @@ const (
 	// correct, narrower lifecycle management (their own label-selector
 	// sweep) and are not part of this label's coverage. Since #682/#684
 	// (roles-only model) no user-facing RBAC exists outside these
-	// aggregators.
+	// aggregators (the Fleet caller protocol groups excepted -- fixed
+	// machine identities, see DD-682).
 	LabelCoreClusterRBAC = "kubernaut.ai/core-cluster-rbac"
 
 	// LabelMCPGatewayNamespaceRBAC marks every namespace-scoped Role/

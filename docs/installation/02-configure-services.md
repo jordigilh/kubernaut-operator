@@ -915,7 +915,7 @@ three AF console read capabilities (`kubernaut_read_policy_scope`,
 `kubernaut_list_managed_resources`, `kubernaut_get_managed_resource`). Per
 [DD-662](../design/DD-662-console-read-capability-model.md) this is the
 permanent model, not a placeholder: **no documented bundle implies it and
-login never grants console reads**. Since the roles-only model the only
+login never grants console reads**. Under the roles-only model, the only
 supported bind path is your own ClusterRoleBinding:
 
 ```bash
@@ -976,15 +976,20 @@ Denied"](https://gist.github.com/jordigilh/5984f65c88da042f2207825a9e57df62).
 
 **Upgrading from the pre-v1.6 persona/binding model.** v1.6 is pre-GA and
 expects clean deployments ([DD-682](../design/DD-682-roles-only-rbac.md));
-the operator does not migrate the retired CRBs. If you deployed the
+the operator does not migrate the retired RBAC. If you deployed the
 former `roleBindings`/`consoleAccessGroups` surface, remove its stale
-user-facing ClusterRoleBindings yourself — they keep granting
-authorization the operator no longer tracks:
+user-facing RBAC yourself — those objects keep granting authorization
+the operator no longer tracks:
 
 ```bash
-oc delete clusterrolebinding \
-  kubernaut-system-console-access-binding \
-  $(oc get clusterrolebinding -o name | grep 'kubernaut-system-tool-.*-binding')
+# The retired console-access ClusterRoleBinding (--ignore-not-found covers
+# clean installs where it never existed).
+oc delete clusterrolebinding kubernaut-system-console-access-binding --ignore-not-found
+
+# The retired persona tool ClusterRoleBindings and ClusterRoles. The loops
+# no-op on clean installs where nothing matches.
+for crb in $(oc get clusterrolebinding -o name | grep 'kubernaut-system-tool-.*-binding' || true); do oc delete "$crb"; done
+for cr in $(oc get clusterrole -o name | grep 'kubernaut-system-tool-' || true); do oc delete "$cr"; done
 ```
 
 ## Additional ClusterRoles for ecosystem CRDs (KA, Gateway, EM)
