@@ -464,7 +464,10 @@ func issue613WorkflowExecution(name string, parameters map[string]interface{}) *
 			"version":         "1.0.0",
 			"executionBundle": "quay.io/kubernaut-ai/remediation-workflow:test",
 		},
-		"targetResource": "default/Pod/issue-613-test-pod",
+		// kubernaut #2658 (pinned with the #685 bump): targetResource uses
+		// the canonical resource identity namespace/group/version/Kind/name;
+		// the core group renders as "core".
+		"targetResource": "default/core/v1/Pod/issue-613-test-pod",
 	}
 	if parameters != nil {
 		spec["parameters"] = parameters

@@ -4175,6 +4175,43 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	// #647/1e: UT-FLEET-521-RENDER-SECRET-001 removed with the
 	// scopeCheck.acm lane — AF renders no scope-check CA lane or token
 	// path anymore.
+	It("UT-FLEET-685-FMC-001 [CM-6, AC-4]: renders fleet.fmc.endpoint equal to the derived FMC URL when fleet is enabled (kubernaut #2696 phase c)", func() {
+		kn := testKubernautWithAF()
+		enabled := true
+		knV2 := testKnV2(kn)
+		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
+			Enabled:    &enabled,
+			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
+		}
+		cm, err := APIFrontendConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		var root struct {
+			Fleet *fleetConfigYAML `yaml:"fleet"`
+		}
+		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+		Expect(root.Fleet).NotTo(BeNil())
+		Expect(root.Fleet.FMC).NotTo(BeNil(),
+			"CM-6: AF's fleet block must carry fmc.endpoint -- after kubernaut #2696 phase c the Console inventory reader is built only from fleet.fmc.endpoint (DD-FLEET-017 D2.1a) and an absent key leaves it nil (503 on every read), got:\n%s", cm.Data["config.yaml"])
+		Expect(root.Fleet.FMC.Endpoint).To(Equal(FleetMetadataCacheURL(knV2.Namespace)),
+			"AC-4: the inventory endpoint must be the operator-derived FMC service URL, never CR-supplied (#521 contract), got:\n%s", cm.Data["config.yaml"])
+	})
+
+	It("UT-FLEET-685-FMC-003 [CM-6, AC-4]: does not leak fleet.fmc into the GW/RO/EM renders -- the Console inventory reader is AF-only upstream", func() {
+		kn, knV2 := testKubernautWithFMC()
+		gw, err := GatewayConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		ro, err := RemediationOrchestratorConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		em, err := EffectivenessMonitorConfigMap(kn, knV2)
+		Expect(err).NotTo(HaveOccurred())
+		for name, data := range map[string]string{
+			"gateway":                 gw.Data["config.yaml"],
+			"remediationorchestrator": ro.Data["remediationorchestrator.yaml"],
+			"effectivenessmonitor":    em.Data["effectivenessmonitor.yaml"],
+		} {
+			Expect(data).NotTo(ContainSubstring("fmc:"), "%s render must not carry the AF-only fleet.fmc block, got:\n%s", name, data)
+		}
+	})
 
 	It("renders fleet.oauth2 with tlsCAFile defaulting to AF's own inter-service CA path", func() {
 		kn := testKubernautWithAF()
