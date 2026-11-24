@@ -45,15 +45,17 @@ certificate-verified against self-signed IdP CAs without changing the image.
 (`emptyDir.medium: Memory`, `sizeLimit: 16Mi`); the oauth2-proxy container
 mounts it **read-only**.
 
-**Unblock condition**: an upstream oauth2-proxy fix routing backend logout
+**Unblock condition**: upstream oauth2-proxy fix routing backend logout
 through the provider's CA-configured client, followed by a pinned-image
-upgrade to the release containing it. Verified 2026-11-24: no released
-version does this — `backendLogout` still uses a bare `http.Get` on master
-(ahead of v7.15.6), and v7.15.0's #3352 only fixed logout/session ordering,
-not the TLS client. Until then, `SSL_CERT_FILE` against the merged bundle is
-the only certificate-verified backend-logout path for self-signed IdPs. On
-adoption, drop the init container, the `combined-ca` volume, and the
-`SSL_CERT_FILE` env from `consoleOAuth2ProxyContainer`.
+upgrade to the release containing it — tracked as
+[oauth2-proxy#3621](https://github.com/oauth2-proxy/oauth2-proxy/issues/3621).
+Verified 2026-11-24: no released version does this — `backendLogout` still
+uses a bare `http.Get` on master (ahead of v7.15.6), and v7.15.0's #3352 only
+fixed logout/session ordering, not the TLS client. Until then,
+`SSL_CERT_FILE` against the merged bundle is the only certificate-verified
+backend-logout path for self-signed IdPs. On adoption, drop the init
+container, the `combined-ca` volume, and the `SSL_CERT_FILE` env from
+`consoleOAuth2ProxyContainer`.
 
 ### E-2 — WorkflowExecution AAP CA merge
 
