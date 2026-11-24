@@ -4175,13 +4175,12 @@ var _ = Describe("APIFrontendConfigMap", func() {
 	// #647/1e: UT-FLEET-521-RENDER-SECRET-001 removed with the
 	// scopeCheck.acm lane — AF renders no scope-check CA lane or token
 	// path anymore.
-	It("UT-FLEET-685-FMC-001 [CM-6, AC-4]: renders fleet.fmc.endpoint equal to the derived FMC URL when FMC is operator-managed (kubernaut #2696 phase c)", func() {
+	It("UT-FLEET-685-FMC-001 [CM-6, AC-4]: renders fleet.fmc.endpoint equal to the derived FMC URL when fleet is enabled (kubernaut #2696 phase c)", func() {
 		kn := testKubernautWithAF()
 		enabled := true
 		knV2 := testKnV2(kn)
 		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
 			Enabled:    &enabled,
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{Backend: "fleetmetadatacache"},
 			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
 		}
 		cm, err := APIFrontendConfigMap(kn, knV2)
@@ -4197,30 +4196,6 @@ var _ = Describe("APIFrontendConfigMap", func() {
 			"AC-4: the inventory endpoint must be the operator-derived FMC service URL, never CR-supplied (#521 contract), got:\n%s", cm.Data["config.yaml"])
 	})
 
-	It("UT-FLEET-685-FMC-002 [CM-6]: omits fleet.fmc entirely when the backend is acm -- derived-only, fail-closed (#521)", func() {
-		kn := testKubernautWithAF()
-		enabled := true
-		knV2 := testKnV2(kn)
-		knV2.Spec.Fleet = kubernautv1alpha2.FleetSpec{
-			Enabled: &enabled,
-			ScopeCheck: kubernautv1alpha2.FleetScopeCheckSpec{
-				Backend: "acm", ACM: &kubernautv1alpha2.FleetACMScopeCheckSpec{Endpoint: "https://acm-search.example.com/graphql"},
-			},
-			MCPGateway: kubernautv1alpha2.FleetMCPGatewaySpec{Endpoint: "https://mcp-gateway.example.com/sse", Type: "eaigw"},
-		}
-		cm, err := APIFrontendConfigMap(kn, knV2)
-		Expect(err).NotTo(HaveOccurred())
-		var root struct {
-			Fleet *fleetConfigYAML `yaml:"fleet"`
-		}
-		Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
-		Expect(root.Fleet).NotTo(BeNil())
-		Expect(root.Fleet.FMC).To(BeNil(),
-			"acm backend means FMC is not operator-managed -- fleet.fmc.endpoint stays absent so the inventory path fails closed instead of pointing at a service the operator never deployed, got:\n%s", cm.Data["config.yaml"])
-		// Raw-YAML probe guards against a yaml-tag typo the struct probe above cannot catch.
-		Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("fmc:"), "got:\n%s", cm.Data["config.yaml"])
-	})
-
 	It("UT-FLEET-685-FMC-003 [CM-6, AC-4]: does not leak fleet.fmc into the GW/RO/EM renders -- the Console inventory reader is AF-only upstream", func() {
 		kn, knV2 := testKubernautWithFMC()
 		gw, err := GatewayConfigMap(kn, knV2)
@@ -4231,7 +4206,7 @@ var _ = Describe("APIFrontendConfigMap", func() {
 		Expect(err).NotTo(HaveOccurred())
 		for name, data := range map[string]string{
 			"gateway":                 gw.Data["config.yaml"],
-			"remediationorchestrator": ro.Data["config.yaml"],
+			"remediationorchestrator": ro.Data["remediationorchestrator.yaml"],
 			"effectivenessmonitor":    em.Data["effectivenessmonitor.yaml"],
 		} {
 			Expect(data).NotTo(ContainSubstring("fmc:"), "%s render must not carry the AF-only fleet.fmc block, got:\n%s", name, data)

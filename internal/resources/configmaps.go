@@ -480,15 +480,15 @@ func resolveMCPGatewayOnlyFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credent
 // shared shape is fleet.namespace: always the shared
 // spec.fleet.mcpGateway.namespace (DD-362 -- no per-component override) so
 // AF's ClusterRegistry scopes its watch to a single namespace instead of
-// cluster-wide (#227). GW/RO never set this field.
-//
 // #685 (kubernaut #2696 phase c, DD-FLEET-017 D2.1a): AF additionally
 // renders fleet.fmc.endpoint, the sole key AF's Console inventory reader
 // is built from upstream. Derived-only per the #521 contract: set to the
-// operator-derived FMC service URL when FMC is operator-managed
-// (backend=fleetmetadatacache); under backend=acm FMC is not deployed by
-// this operator and the key stays absent so the inventory path fails
-// closed, never pointing at a service the operator never deployed.
+// operator-derived FMC service URL whenever FMC is operator-managed
+// (FleetMetadataCacheEnabled -- since #647/1e FMC is the single fleet
+// contact, so this is exactly "fleet enabled"; the predicate is kept to
+// express the intent and guard future API drift). No CRD key: a
+// spec.fleet.fmc block is pruned by the CRD structural schema (reverted
+// kubernaut PR #2708 prototype).
 func resolveAPIFrontendFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefOverride, defaultOAuth2CAFile string) *fleetConfigYAML {
 	cfg := resolveFleetConfig(knV2, credentialsSecretRefOverride, defaultOAuth2CAFile)
 	if cfg == nil {
