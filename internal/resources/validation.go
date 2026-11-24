@@ -809,7 +809,7 @@ func validateAPIFrontend(kn *kubernautv1alpha2.Kubernaut) []error {
 		errs = append(errs, fmt.Errorf("spec.apiFrontend.rbacRolesConfigMapRef.configMapName: must not be empty when rbacRolesConfigMapRef is set"))
 	}
 
-	errs = append(errs, validateToolRoleBindings(kn)...)
+	errs = append(errs, validateAPIFrontendRBAC(kn)...)
 
 	if hasMultiProvider {
 		errs = append(errs, validateJWTProviderList(
@@ -978,13 +978,7 @@ func validateOIDCURL(raw, path string, allowInsecure bool, insecureFlagPath stri
 	return fmt.Errorf("%s: scheme must be %s (got %q); set %s=true to permit HTTP for dev/test", path, httpsURLScheme, u.Scheme, insecureFlagPath)
 }
 
-// validToolPersonas is the set of known persona names for tool role bindings.
-var validToolPersonas = map[string]bool{
-	"sre": true, "ai-orchestrator": true, "cicd": true,
-	"observability": true, "l3-audit": true, "remediation-approver": true,
-}
-
-func validateToolRoleBindings(kn *kubernautv1alpha2.Kubernaut) []error {
+func validateAPIFrontendRBAC(kn *kubernautv1alpha2.Kubernaut) []error {
 	rbac := kn.Spec.APIFrontend.RBAC
 	if rbac == nil {
 		return nil
@@ -998,44 +992,7 @@ func validateToolRoleBindings(kn *kubernautv1alpha2.Kubernaut) []error {
 		}
 	}
 
-	seen := make(map[string]bool, len(rbac.RoleBindings))
-	for i, rb := range rbac.RoleBindings {
-		if err := validateToolRoleBinding(rb, i, seen); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
 	return errs
-}
-
-// validateToolRoleBinding validates a single spec.apiFrontend.rbac.roleBindings
-// entry: exactly one of role/clusterRoleName must be set, it must not
-// duplicate an earlier entry (tracked via seen), and a persona-based role
-// must be a known persona.
-func validateToolRoleBinding(rb kubernautv1alpha2.ToolRoleBinding, index int, seen map[string]bool) error {
-	if rb.Role != "" && rb.ClusterRoleName != "" {
-		return fmt.Errorf("spec.apiFrontend.rbac.roleBindings[%d]: role and clusterRoleName are mutually exclusive", index)
-	}
-	if rb.Role == "" && rb.ClusterRoleName == "" {
-		return fmt.Errorf("spec.apiFrontend.rbac.roleBindings[%d]: one of role or clusterRoleName must be set", index)
-	}
-
-	if rb.Role == "" {
-		if seen[rb.ClusterRoleName] {
-			return fmt.Errorf("spec.apiFrontend.rbac.roleBindings: duplicate clusterRoleName %q", rb.ClusterRoleName)
-		}
-		seen[rb.ClusterRoleName] = true
-		return nil
-	}
-
-	if seen[rb.Role] {
-		return fmt.Errorf("spec.apiFrontend.rbac.roleBindings: duplicate role %q", rb.Role)
-	}
-	seen[rb.Role] = true
-	if !validToolPersonas[rb.Role] {
-		return fmt.Errorf("spec.apiFrontend.rbac.roleBindings: unknown persona %q", rb.Role)
-	}
-	return nil
 }
 
 const (

@@ -6,7 +6,9 @@
 **Confidence**: 93%
 **Deciders**: Kubernaut Operator Team (owner decision on #662 spike options)
 **Applies To**: `internal/resources/rbac.go` (`ConsoleReaderClusterRole`,
-`ToolClusterRoleBindings`, `ConsoleAccessClusterRoleBinding`),
+~~`ToolClusterRoleBindings`, `ConsoleAccessClusterRoleBinding`~~ — removed
+by [DD-682](DD-682-roles-only-rbac.md) (#682/#684), which also amended the
+bind path below),
 `internal/resources/console.go` (nginx `/api/v1/console/` location, unchanged)
 
 **Related Issues**:
@@ -72,10 +74,15 @@ A #662 spike verified the upstream facts before deciding:
 1. **The coarse `console-reader` ClusterRole is the permanent model** (owner
    option 1A). No built-in persona gains the console read capabilities, and
    none is ever inferred from a persona, login, or console-access grant.
-   Binding is an explicit administrator choice through
+   ~~Binding is an explicit administrator choice through
    `spec.apiFrontend.rbac.roleBindings[].clusterRoleName` (rendered name
    `<namespace>-console-reader`, used verbatim) or an external
-   ClusterRoleBinding.
+   ClusterRoleBinding.~~ **Amended 2026-11-23 by
+   [DD-682](DD-682-roles-only-rbac.md) (#682/#684)**: the roles-only model
+   removed the `roleBindings` CRD path, so the only supported bind path is
+   an administrator-owned external ClusterRoleBinding (rendered name
+   `<namespace>-console-reader`). The permanent model itself — the coarse,
+   unbound role — is unchanged.
 2. **The Console proxy stays, as transport only** (owner option 2A). The
    nginx `/api/v1/console/` location from #638/#660 is unchanged: it moves
    authenticated reads to AF and enforces no authorization of its own.
@@ -92,7 +99,7 @@ Rejected alternatives (with reasons):
 | Option | Rejected because |
 |---|---|
 | 1B: add the capabilities to `tool-sre` | Makes any SRE-group user implicitly a console reader; contradicts DD-636 decision 1 (login/persona grants never widen to capabilities) and #666's no-implicit-capability test; based on fixture evidence, not authority |
-| 1C: new CRD field `consoleReaderGroups` | CRD schema change for a bind path `roleBindings[].clusterRoleName` already expresses; adds surface without an authorization distinction |
+| 1C: new CRD field `consoleReaderGroups` | CRD schema change for a bind path `roleBindings[].clusterRoleName` already expresses; adds surface without an authorization distinction (as of decision time; that CRD path itself was later removed by DD-682 — an external CRB is the only bind path) |
 | 2B: bind console-reader to the derived console-access groups | Couples the login gate to reads; everyone who can log in reads the projection, defeating deny-by-default |
 | 2C: remove the nginx location | Regresses kubernaut-console#164 (the SPA cannot reach the API; CSP is `connect-src 'self'`) and discards E2E-CN-638-HTTP-001; the surface is proven safe |
 
@@ -103,10 +110,13 @@ Rejected alternatives (with reasons):
   verb widening without a new DD (`issue662_console_read_model_test.go`).
 - No operator-rendered ClusterRoleBinding — persona path, custom path, or
   derived console-access path — ever references `console-reader` implicitly.
-- The only supported bind path is an explicit `clusterRoleName` reference
-  or an external CRB.
+- ~~The only supported bind path is an explicit `clusterRoleName` reference
+  or an external CRB.~~ **Amended by
+  [DD-682](DD-682-roles-only-rbac.md) (#682/#684)**: the only supported
+  bind path is an administrator-owned external ClusterRoleBinding; the
+  `clusterRoleName` CRD path was removed with the roles-only model.
 - `internal/resources/issue636_console_rbac_test.go` continues to pin that
-  no built-in persona holds a console read capability.
+  no documented example bundle holds a console read capability.
 
 ## Default and Migration Behavior
 

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -356,6 +357,33 @@ func applyKubernautCR(ctx context.Context) error {
 	})
 }
 
+// applyQualificationConsoleAccessCRB binds the Keycloak fixture's "sre"
+// group to the operator-rendered <ns>-console-access ClusterRole through an
+// admin-owned ClusterRoleBinding. Under the roles-only RBAC model
+// (#682/#684) the operator renders roles only and never a user-facing
+// binding, so the qualification journey plays the administrator and
+// applies the binding itself, exactly as a production SRE would.
+func applyQualificationConsoleAccessCRB(ctx context.Context) error {
+	crb := &rbacv1.ClusterRoleBinding{
+		TypeMeta: metav1.TypeMeta{APIVersion: "rbac.authorization.k8s.io/v1", Kind: "ClusterRoleBinding"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: kubernautNamespace + "-qualification-console-access",
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "ClusterRole",
+			Name:     kubernautNamespace + "-console-access",
+		},
+		Subjects: []rbacv1.Subject{{Kind: "Group", Name: "sre"}},
+	}
+	return pollUntilSuccess(ctx, 2*time.Minute, 2*time.Second, func() error {
+		if err := applyYAML(ctx, crb); err != nil {
+			return fmt.Errorf("creating qualification console-access CRB: %w", err)
+		}
+		return nil
+	})
+}
+
 // kubernautCR builds the singleton CR used by the default and qualification
 // Kind journeys, selecting the real Console and Keycloak wiring when enabled.
 func kubernautCR() *kubernautv1alpha2.Kubernaut {
@@ -412,8 +440,6 @@ func kubernautCR() *kubernautv1alpha2.Kubernaut {
 				OIDCCAFile: "/etc/apifrontend/tls-ca/ca.crt",
 			},
 			RBAC: &kubernautv1alpha2.APIFrontendRBACSpec{
-				RoleBindings:                           []kubernautv1alpha2.ToolRoleBinding{{Role: "sre", Groups: []string{"sre"}}},
-				ConsoleAccessGroups:                    []string{"sre"},
 				ConsoleAccessAuthorizationCheckEnabled: ptr.To(true),
 			},
 		}

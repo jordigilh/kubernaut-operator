@@ -2,18 +2,19 @@
 
 **Status**: Accepted
 **Decision Date**: 2026-11-22
-**Version**: 1.2
+**Version**: 1.3
 **Confidence**: 92%
 **Deciders**: Kubernaut Operator Team
-**Applies To**: `internal/resources/rbac.go` (`toolPersonas`,
-`ConsoleAccessClusterRole`, `ConsoleReaderClusterRole`,
+**Applies To**: `internal/resources/rbac.go`
+(`ConsoleAccessClusterRole`, `ConsoleReaderClusterRole`,
 `ConsoleInventoryReaderClusterRole`),
-`internal/controller/kubernaut_controller.go` (`deployToolRBAC`,
-`deployConsoleAccessRBAC`, `deployClusterScopedCoreRBAC`)
+`internal/controller/kubernaut_controller.go`
+(`deployClusterScopedCoreRBAC`)
 
 **Related Issues**:
 - jordigilh/kubernaut-operator#636 (this audit)
 - jordigilh/kubernaut-operator#663 (v1.2: user-side local-target grants, F2)
+- jordigilh/kubernaut-operator#682 / #684 (v1.3: roles-only RBAC; persona roles and user-facing CRBs removed)
 - jordigilh/kubernaut-operator#289/#290 (console-access gate, prior change)
 - jordigilh/kubernaut-operator#278 / DD-278 (SRE approval-visibility tools, amended here)
 - jordigilh/kubernaut#1919 (server-side console gate enforcement)
@@ -30,6 +31,7 @@
 | 1.0 | 2026-11-22 | Operator Team | Initial audit, role matrix, console-reader role |
 | 1.1 | 2026-11-23 | Operator Team | Follow-up F1 resolved by DD-662: the coarse console-reader role is the permanent model; the Console proxy stays transport-only and the role stays unbound by default |
 | 1.2 | 2026-11-23 | Operator Team | #663: user-side local-target grants rendered as the unbound `console-inventory-reader` ClusterRole; F2 closed |
+| 1.3 | 2026-11-23 | Operator Team | #682/#684 (DD-682): roles-only model — the six persona ClusterRoles and every operator-rendered user-facing CRB are removed; the audited persona tool sets live on as documented example bundles; `console-access`/`console-reader`/`console-inventory-reader` stay rendered, unbound, label-pruned and finalizer-swept |
 
 ---
 
@@ -39,7 +41,9 @@ Console login authorization is not action authorization. An authenticated
 user must receive an explicit role for every console action they may perform,
 and login must not imply workflow listing, approval, investigation, or any
 other direct action. The operator is the sole renderer of user-facing Kubernaut
-RBAC in v1.6 (the upstream Helm chart no longer exists), so this document is
+RBAC in v1.6 (the upstream Helm chart no longer exists) — since v1.3
+(#682/#684) that means rendered *roles* only, never user bindings — so this
+document is
 the operator-side source of truth for the console action inventory and the
 role-to-action matrix.
 
@@ -70,11 +74,11 @@ AF's backend identity (DD-FLEET-017 D5). Browser tokens are never forwarded.
 | # | Surface / action | Authorization check | Required Kubernetes/API permissions | Operator role | Status |
 |---|---|---|---|---|---|
 | 1 | oauth2-proxy login, `/oauth2/userinfo` | none (authentication) | none | — | Separate from action authorization by design |
-| 2 | `GET /a2a/access` + server-side gate on every tool call | SAR `kubernaut.ai/console` `use` | ClusterRole `console-access`: `kubernaut.ai/console` `use` | `ConsoleAccessClusterRole` + CRB | Enforced only when `consoleAccessAuthorizationCheckEnabled=true`; grants no action |
+| 2 | `GET /a2a/access` + server-side gate on every tool call | SAR `kubernaut.ai/console` `use` | ClusterRole `console-access`: `kubernaut.ai/console` `use` | `ConsoleAccessClusterRole` (~~+ CRB~~ removed in v1.3; bind externally) | Enforced only when `consoleAccessAuthorizationCheckEnabled=true`; grants no action |
 | 3 | A2A chat `message/stream`, `status/subscribe` | no per-action SAR; the agent's tool calls are checked per-tool | per-tool (row 4) | — | No direct grant |
-| 4a | Investigation: `kubernaut_investigate`, `kubernaut_investigate_alert`, `kubernaut_check_existing_remediation`, `kubernaut_select_workflow`, `kubernaut_present_decision`, `kubernaut_message`, `kubernaut_complete`, `kubernaut_cancel`, `kubernaut_status`, `kubernaut_reconnect`, `kubernaut_await_session`, `kubectl_get`, `kubectl_list`, `kubectl_list_events`, `list_alerts`, `get_alert_details`, `list_clusters` | SAR `kubernaut.ai/tools` `use` name=`<tool>` | persona ClusterRole rule only; the AF ServiceAccount performs the backend reads (ADR-022) | `tool-*` personas | Granted per persona |
-| 4b | Approval: `kubernaut_approve`, `kubernaut_list_approval_requests`, `kubernaut_get_approval_request`, `kubernaut_complete_no_action` | same | same | `tool-sre`, `tool-remediation-approver` | Granted; separation of duties per DD-278 |
-| 4c | Remediation + workflow catalog: `kubernaut_remediate`, `kubernaut_cancel_remediation`, `kubernaut_watch`, `kubernaut_list_remediations`, `kubernaut_get_remediation`, `kubernaut_list_workflows`, `kubernaut_discover_workflows`, `kubernaut_get_remediation_history`, `kubernaut_get_effectiveness`, `kubernaut_get_audit_trail` | same | same | `tool-*` personas | Granted per persona |
+| 4a | Investigation: `kubernaut_investigate`, `kubernaut_investigate_alert`, `kubernaut_check_existing_remediation`, `kubernaut_select_workflow`, `kubernaut_present_decision`, `kubernaut_message`, `kubernaut_complete`, `kubernaut_cancel`, `kubernaut_status`, `kubernaut_reconnect`, `kubernaut_await_session`, `kubectl_get`, `kubectl_list`, `kubectl_list_events`, `list_alerts`, `get_alert_details`, `list_clusters` | SAR `kubernaut.ai/tools` `use` name=`<tool>` | administrator-owned ClusterRole rule only (was: persona ClusterRole); the AF ServiceAccount performs the backend reads (ADR-022) | ~~`tool-*` personas~~ (removed in v1.3; documented example bundles) | Granted per administrator-composed bundle |
+| 4b | Approval: `kubernaut_approve`, `kubernaut_list_approval_requests`, `kubernaut_get_approval_request`, `kubernaut_complete_no_action` | same | same | ~~`tool-sre`, `tool-remediation-approver`~~ (removed in v1.3) | Granted; separation of duties per DD-278 — approval tools belong in human/approver bundles only |
+| 4c | Remediation + workflow catalog: `kubernaut_remediate`, `kubernaut_cancel_remediation`, `kubernaut_watch`, `kubernaut_list_remediations`, `kubernaut_get_remediation`, `kubernaut_list_workflows`, `kubernaut_discover_workflows`, `kubernaut_get_remediation_history`, `kubernaut_get_effectiveness`, `kubernaut_get_audit_trail` | same | same | ~~`tool-*` personas~~ (removed in v1.3) | Granted per administrator-composed bundle |
 | 4d | Raw MCP alias `kubernaut_list_alerts` (A2A name is `list_alerts`) | same | same | none | **Open** — dual-surface naming; see follow-up F3 |
 | 5 | Console REST read projection: `GET /api/v1/console/policies/scope`, `/inventory/managed-resources[/{id}]` (kubernaut#2584) | capability SARs `kubernaut_read_policy_scope`, `kubernaut_list_managed_resources`, `kubernaut_get_managed_resource` + user-scoped local target get/list; remote via ScopeChecker | ClusterRole `console-reader`: `kubernaut.ai/tools` `use` on the three capability names. Local target reads: ClusterRole `console-inventory-reader` — user-side `get`/`list` on exactly AF's pinned 11-kind Gateway-aligned allowlist (#663), never bound by the operator | `ConsoleReaderClusterRole` + `ConsoleInventoryReaderClusterRole` (both unbound by default) | Since #638/#660 the Console nginx `^~ /api/v1/console/` location proxies these reads to AF transport-only (GET-restricted, session-token forwarding), kept permanently per DD-662 with capability authorization entirely at AF; v1.2 (#663) adds the user-side target grants |
 | 6 | `/.well-known/agent-card` | authenticated surface, no per-action SAR | none | — | No grant |
@@ -86,17 +90,25 @@ v1.0 and are rendered since v1.1 (Decision 6, #663).
 
 ## Which Role Is Which
 
+> **v1.3 amendment (#682/#684, [DD-682](DD-682-roles-only-rbac.md))**: the
+> `tool-<persona>` row is historical — those ClusterRoles are no longer
+> rendered. The audited tool sets live on as the documented example
+> use-case bundles in the installation guide (drift-guarded by unit
+> tests), and every binding in the table below is administrator-owned.
+
 | Role | Bound to | Authorizes | Notes |
 |---|---|---|---|
-| `console-access` | console-access groups (derived or explicit) | `kubernaut.ai/console` `use` — the UI gate | Login-level only; never implies a tool |
-| `tool-<persona>` | OIDC groups from `spec.apiFrontend.rbac.roleBindings` | named tool actions | One ClusterRole per persona |
-| `console-reader` | nothing by default | the three console REST read capabilities | Bind via `roleBindings[].clusterRoleName` (rendered name is `<ns>-console-reader`, used verbatim) or an external CRB |
+| `console-access` | administrator-owned ClusterRoleBinding | `kubernaut.ai/console` `use` — the UI gate | Login-level only; never implies a tool |
+| ~~`tool-<persona>`~~ (removed in v1.3) | was OIDC groups from `spec.apiFrontend.rbac.roleBindings` | named tool actions | Replaced by documented example bundles administrators compose and bind |
+| `console-reader` | nothing by default | the three console REST read capabilities | Bind through an administrator-owned external ClusterRoleBinding (rendered name is `<ns>-console-reader`) |
 | `console-inventory-reader` | nothing by default | user-side local-target `get`/`list` on AF's pinned 11-kind allowlist for the inventory projection | Operator renders the role only; bind with an external CRB (cluster-wide) or namespaced RoleBinding. A namespaced binding satisfies only namespace-filtered reads (eight namespaced kinds); the default unfiltered list SAR is cluster-scoped, so the default inventory page needs a cluster-level binding (#663) |
 | `<ns>-apifrontend-inventory-read` | AF ServiceAccount | backend metadata reads for the projection | Never a user grant |
 
-A group bound to a persona also joins `effectiveConsoleAccessGroups`, so it
-picks up the console gate automatically; that is an upgrade-safety default
-(kubernaut#289), not an action grant.
+~~A group bound to a persona also joins `effectiveConsoleAccessGroups`,
+so it picks up the console gate automatically; that is an upgrade-safety
+default (kubernaut#289), not an action grant.~~ (Removed in v1.3 with the
+roles-only model: neither persona roles nor group derivation exist
+anymore; console-gate binding is an administrator-owned CRB.)
 
 ## Decision
 
@@ -111,15 +123,18 @@ picks up the console gate automatically; that is an upgrade-safety default
    capabilities are intentionally one coarse role ("coarse-grained user
    roles" per #636); splitting them further would add roles without an
    upstream authorization distinction.
-3. Amend DD-278 to v1.1 (below): `tool-sre` gains
+3. (Historical as of v1.3 — the persona roles are gone; the decisions live
+   on in the documented example bundles.) Amend DD-278 to v1.1 (below):
+   `tool-sre` gains
    `kubernaut_list_approval_requests` (approval visibility consistent with the
    existing `kubernaut_approve` grant) and `list_clusters` (read-only fleet
    discovery, BR-FLEET-054). `tool-ai-orchestrator` gains `list_clusters` only.
 4. Do **not** grant approval reads or `kubernaut_get_approval_request` to
-   `tool-ai-orchestrator`. The upstream E2E persona fixture currently lists
+   the automated orchestrator bundle (v1.3 wording; was
+   `tool-ai-orchestrator`). The upstream E2E persona fixture currently lists
    them, but that is a test fixture, not a security decision; DD-278's
-   separation-of-duties intent keeps approval actions with human personas.
-   The divergence is tracked in follow-up F4.
+   separation-of-duties intent keeps approval actions with human/approver
+   bundles. The divergence is tracked in follow-up F4.
 5. Do not guess the raw-MCP alert alias (`kubernaut_list_alerts`); it is
    follow-up F3. User-side local target grants are no longer guessed but
    pinned: see Decision 6.
@@ -147,20 +162,25 @@ picks up the console gate automatically; that is an upgrade-safety default
 
 ## Amendment to DD-278 (v1.1)
 
-`kubernaut_list_approval_requests` is added to `tool-sre` under the same
+> Historical (v1.3): `tool-sre` no longer exists; the amendment's tool-set
+> decision lives on in the documented `kubernaut-sre` example bundle.
+
+~~`kubernaut_list_approval_requests` is added to `tool-sre` under the same
 interim rationale as DD-278 v1.0: `sre` already holds the approval decision
 (`kubernaut_approve`) and can read a single RAR
 (`kubernaut_get_approval_request`); listing pending RARs only makes an
-already-possible decision discoverable. This does not reverse
+already-possible decision discoverable.~~ This does not reverse
 kubernaut#1235/#1239, and the DD-278 revisit trigger still applies.
 `list_clusters` is read-only fleet discovery and carries no approval or
 mutation authority.
 
 ## Default and Migration Behavior
 
-- Additive only: no existing role loses a permission; no existing binding is
+- ~~Additive only: no existing role loses a permission; no existing binding is
   changed except that the persona ClusterRoles gain the names above on the
-  next reconcile (create-or-update semantics).
+  next reconcile (create-or-update semantics).~~ (Historical as of v1.3: the
+  persona ClusterRoles no longer exist; the audited names live in the
+  documented example bundles.)
 - The console-reader role is new and unbound. Zero-config installs behave
   exactly as before: console reads return `forbidden` because no user holds
   the capability SAR, which is the intended deny-by-default behavior.
@@ -173,18 +193,18 @@ mutation authority.
 |---|---|---|---|
 | `console-reader` ClusterRole | `deployCoreRBAC` → `deployClusterScopedCoreRBAC` → `ClusterRoles()` aggregator | `internal/resources/rbac.go` AF-enabled block; deploy + label prune + finalizer sweep | IT-CONSOLE-006 (rendered, unbound), IT-CONSOLE-008 (prune on AF disable), IT-CONSOLE-009 (finalizer) |
 | `console-inventory-reader` ClusterRole | same aggregator path (#663) | `internal/resources/rbac.go` AF-enabled block | IT-CONSOLE-663-001 (rendered, unbound), IT-CONSOLE-663-002 (prune on AF disable), IT-CONSOLE-663-003 (bound user satisfies the exact local-target SAR shapes) |
-| persona tool additions | `deployToolRBAC` → `ToolClusterRoles` | `internal/resources/rbac.go` `toolPersonas` | IT-CONSOLE-007; UT golden persona matrix |
+| ~~persona tool additions~~ (removed in v1.3) | ~~`deployToolRBAC` → `ToolClusterRoles`~~ | ~~`internal/resources/rbac.go` `toolPersonas`~~ | ~~IT-CONSOLE-007; UT golden persona matrix~~ → superseded by the documented-bundle drift guard and the roles-only ITs |
 
 ## Test Evidence (pyramid)
 
 | ID | Tier | Business behavior | Control |
 |---|---|---|---|
-| Issue #636 golden persona matrix | UT | every persona renders exactly the audited tool set; drift fails loudly | AC-6 |
+| ~~Issue #636 golden persona matrix~~ (v1.3: documentation drift guard) | UT | the documented example bundles render exactly the audited tool set; drift fails loudly | AC-6 |
 | Issue #636 console-reader shape | UT | exactly three capabilities, `use` on `tools`, cluster-scoped | AC-3 / AC-6(2) |
 | Issue #636 allow/deny boundary | UT | capabilities allowed; `kubernaut_approve`, remediation, unnamed tools, `console` gate, non-`use` verbs denied | AC-3, ASVS V4.1.1 |
-| Issue #636 no implicit capability | UT | no built-in persona holds a console read capability | AC-6, CC6.3 |
+| Issue #636 no implicit capability | UT | no documented bundle holds a console read capability | AC-6, CC6.3 |
 | IT-CONSOLE-006 | IT | role rendered and left unbound after a real reconcile | AC-2 / CC6.1 |
-| IT-CONSOLE-007 | IT | persona tool additions reach the cluster through the reconciler | AC-6 |
+| ~~IT-CONSOLE-007~~ (removed in v1.3 with the persona roles) | IT | ~~persona tool additions reach the cluster through the reconciler~~ → superseded by the roles-only IT (no persona role, no user-facing CRB) | AC-6 |
 | IT-CONSOLE-008/009 | IT | prune on AF disable; finalizer cleanup | CM-2 / CC8.1 |
 | Issue #663 allowlist matrix | UT | get+list on exactly the 11 pinned kinds, 3 group rules, no resourceNames, no nonResourceURLs | AC-6 |
 | Issue #663 allow/deny boundary | UT | allowlist kinds allowed; secrets/configmaps/PVCs/HPAs, non-get/list verbs, `kubernaut.ai` rules denied; disjoint from console-reader | AC-3 / AC-6 |
@@ -200,7 +220,7 @@ namespace and remain administrator-bound.
 | Issue #636 AC | Artifact | Status |
 |---|---|---|
 | Authenticate without receiving every action | Inventory rows 1–2; console-access rule shape test; console-reader unbound IT | Met |
-| Workflow listing/reading and each direct action require the explicit role | Rows 4a–4c matrix; golden persona matrix; allow/deny boundary test | Met |
+| Workflow listing/reading and each direct action require the explicit role | Rows 4a–4c matrix; documented-bundle drift guard; allow/deny boundary test | Met |
 | Missing roles produce a clear denial without executing | Upstream AF enforcement (fail-closed 403 / permission-denied); deny-by-default asserted here | Met (operator side); upstream tests cited |
 | Complete inventory, no unclassified direct actions | Full table above; row 4d deferred with F3; row 5 user-side grants implemented in v1.2 (#663) | Met |
 | Tests and documentation cover the role matrix | This document + tests table | Met |
@@ -216,9 +236,12 @@ namespace and remain administrator-bound.
   get/list grants are rendered as the unbound `console-inventory-reader`
   ClusterRole, pinned to AF's upstream allowlist (Decision 6).
 - **F3** — (#664) Raw-MCP alias `kubernaut_list_alerts`: decide whether
-  personas that hold the A2A name `list_alerts` should also hold the MCP name,
-  or whether AF should unify the name.
-- **F4** — (#665) `tool-ai-orchestrator` approval reads
+  alert-capable bundles that hold the A2A name `list_alerts` should also
+  hold the MCP name, or whether AF should unify the name. (v1.3 note: the
+  documentation rule from #683 settles the operator side — alert-capable
+  documented bundles carry both names; upstream unification stays open.)
+- **F4** — (#665, resolved) ~~`tool-ai-orchestrator`~~ approval reads
   (`kubernaut_list_approval_requests`, `kubernaut_get_approval_request`):
   the upstream E2E persona fixture lists them; DD-278 separation of duties
-  currently wins. Requires an explicit decision, not fixture parity.
+  wins — approval reads stay with the human/approver bundles (the #665
+  resolution, folded into the documented bundles and their drift guard).

@@ -109,14 +109,10 @@ var _ = Describe("independent Kubernetes API boundary decisions", Label("unit"),
 		}
 	})
 
-	It("UT-AUDIT-515-API-003: propagates additional and persona binding write, prune, role-read and status errors", func() {
+	It("UT-AUDIT-515-API-003: propagates additional binding write, prune, role-read, status and legacy-delete errors", func() {
 		for _, operation := range []string{unitCreateOperation, unitListOperation, "role-read", "status", unitPruneOperation, "legacy-delete"} {
 			kn := newMinimalCR()
 			kn.Spec.AdditionalClusterRoles = []string{"customer-role"}
-			kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{RoleBindings: []kubernautv1alpha2.ToolRoleBinding{{
-				Role: "sre", Groups: []string{"engineers"},
-			}}}
-			kn.Status.BoundToolRoleBindings = []string{"stale-binding"}
 			faults := interceptor.Funcs{}
 			switch operation {
 			case unitCreateOperation:
@@ -142,17 +138,20 @@ var _ = Describe("independent Kubernetes API boundary decisions", Label("unit"),
 			}
 			r := businessUnitReconciler(kn, faults)
 			if operation == unitPruneOperation || operation == "legacy-delete" {
-				seedBusinessOwnedResources(r, kn,
-					&rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "stale-binding"}},
-					&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "apifrontend-rbac-roles", Namespace: kn.Namespace}})
-				Expect(r.deployToolRBAC(ctx, kn)).To(MatchError(ContainSubstring(unitAPIDenial)))
+				if operation == unitPruneOperation {
+					// The prune pass is label-based (#277): only a CRB carrying
+					// the additional-component-rbac label and absent from the
+					// desired set is deleted, so seed exactly that.
+					seedBusinessOwnedResources(r, kn, resources.AdditionalComponentCRB(kn, "gateway", "gateway-sa", "stale-role"))
+					Expect(r.deployAdditionalComponentRBAC(ctx, kn, kn)).To(MatchError(ContainSubstring(unitAPIDenial)))
+				} else {
+					seedBusinessOwnedResources(r, kn,
+						&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "apifrontend-rbac-roles", Namespace: kn.Namespace}})
+					Expect(r.deleteLegacyRBACRolesConfigMap(ctx, kn)).To(MatchError(ContainSubstring(unitAPIDenial)))
+				}
 				continue
 			}
 			Expect(r.deployAdditionalComponentRBAC(ctx, kn, kn)).To(MatchError(ContainSubstring(unitAPIDenial)), operation)
-			if operation == unitCreateOperation {
-				Expect(r.deployToolRBAC(ctx, kn)).To(MatchError(ContainSubstring(unitAPIDenial)))
-				Expect(r.deployConsoleAccessRBAC(ctx, kn)).To(MatchError(ContainSubstring(unitAPIDenial)))
-			}
 		}
 	})
 

@@ -82,7 +82,7 @@ var _ = Describe("integrated ownership API boundaries", Label("unit"), func() {
 		r := businessUnitReconciler(kn, interceptor.Funcs{Delete: deniedUnitDelete})
 		role, binding := resources.AnsibleRBAC(kn)
 		bindingNames := resources.MonitoringCRBNames(kn)
-		roleNames := append(resources.MonitoringClusterRoleNames(kn), resources.ToolClusterRoleNames(kn)...)
+		roleNames := resources.MonitoringClusterRoleNames(kn)
 		objects := make([]client.Object, 0, 11+len(bindingNames)+len(roleNames))
 		objects = append(objects, role, binding, resources.MutatingWebhookConfiguration(kn), resources.ValidatingWebhookConfiguration(kn),
 			&rbacv1.RoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "data-storage-client-gateway", Namespace: kn.Namespace}},
@@ -103,13 +103,18 @@ var _ = Describe("integrated ownership API boundaries", Label("unit"), func() {
 		for _, name := range roleNames {
 			objects = append(objects, &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: name}})
 		}
+		// A labeled additional-component CRB (#277) so the roles-only
+		// deleteAdditionalComponentRBAC (the additional-component
+		// label-selector prune plus the retired persona-role sweep)
+		// still has an owned object to attempt deleting (#684).
+		objects = append(objects, resources.AdditionalComponentCRB(kn, "gateway", "gateway-sa", "customer-role"))
 		seedBusinessOwnedResources(r, kn, objects...)
 		Expect(r.pruneStaleGatewayRBAC(ctx, kn)).NotTo(BeEmpty())
 		Expect(r.cleanupDisabledGateway(ctx, kn)).To(MatchError(ContainSubstring(unitAPIDenial)))
 		Expect(r.cleanupDisabledConsole(ctx, kn)).To(MatchError(ContainSubstring(unitAPIDenial)))
 		Expect(r.cleanupDisabledFleetMetadataCache(ctx, kn)).To(MatchError(ContainSubstring(unitAPIDenial)))
 		for _, cleanup := range []func(context.Context, *kubernautv1alpha2.Kubernaut) []error{
-			r.deleteAnsibleClusterRBAC, r.deleteMonitoringClusterRBAC, r.deleteAdditionalAgentAndToolRBAC, r.deleteWebhookResources,
+			r.deleteAnsibleClusterRBAC, r.deleteMonitoringClusterRBAC, r.deleteAdditionalComponentRBAC, r.deleteWebhookResources,
 		} {
 			Expect(cleanup(ctx, kn)).To(ContainElement(MatchError(ContainSubstring(unitAPIDenial))))
 		}

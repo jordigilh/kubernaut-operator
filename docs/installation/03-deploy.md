@@ -181,16 +181,17 @@ spec:
       # issuerURL using Keycloak's well-known JWKS path convention
       # (kubernaut-operator#462). Only set it explicitly if your OIDC
       # provider isn't Keycloak or uses a non-standard JWKS path.
-    # REQUIRED whenever AF is enabled -- there is no working
-    # fallback if rbac/roleBindings is left unset: every user, including
+    # REQUIRED whenever AF is enabled -- there is no working fallback
+    # with no user bound to a tool role: every user, including
     # cluster-admin, sees "Access Denied" on the Console and every tool
-    # call is rejected. Replace the group name with a real OIDC group your
-    # users actually belong to (see docs/installation/02-configure-services.md
+    # call is rejected. Since the roles-only model (#682/#684) user
+    # bindings live OUTSIDE this CR: compose a ClusterRole with the tool
+    # names your use case needs and bind it to a real OIDC group with
+    # your own ClusterRoleBinding (example bundles in
+    # docs/installation/02-configure-services.md
     # #additional-rbac-for-api-frontend).
     rbac:
-      roleBindings:
-        - role: sre
-          groups: ["platform-engineering"]
+      sarCacheTTL: "30s"
     # fleet:
     #   oauth2CredentialsSecretRef: af-oauth2-creds   # overrides fleet.oauth2.credentialsSecretRef for APIFrontend only -- used when fleet.enabled: true, for its list_clusters MCP tool
 
@@ -609,11 +610,12 @@ Login succeeding only means the coarse-grained `kubernaut.ai/console`
 access check passed (or, more likely, is simply not enabled —
 `consoleAccessAuthorizationCheckEnabled` defaults to `false`). Every actual
 tool call is authorized independently via a real Kubernetes
-`SubjectAccessReview` against `spec.apiFrontend.rbac.roleBindings`-derived
-ClusterRoleBindings. If `rbac.roleBindings` is empty or the caller's token
-carries no matching `groups` claim, standard Kubernetes RBAC denies by
-default — there is no fail-open fallback. Diagnose directly with a raw SAR,
-without needing a real token:
+`SubjectAccessReview` against the ClusterRoleBindings **you** own (the
+roles-only model, #682/#684: the operator renders roles only). If no
+ClusterRoleBinding grants the caller's groups `use` on the tool, or the
+caller's token carries no matching `groups` claim, standard Kubernetes RBAC
+denies by default — there is no fail-open fallback. Diagnose directly with
+a raw SAR, without needing a real token:
 
 ```bash
 oc create -f - -o jsonpath='{.status}' <<EOF
@@ -626,11 +628,12 @@ spec:
 EOF
 ```
 
-Common causes: `spec.apiFrontend.rbac.roleBindings` references a group the
-user isn't actually a member of, or the OIDC client's tokens don't carry a
-`groups` claim at all — Keycloak requires an explicit "Group Membership"
-protocol mapper (`oidc-group-membership-mapper`) on a default client scope;
-it is not automatic just because the user belongs to a Keycloak group.
+Common causes: your ClusterRoleBinding references a group the user isn't
+actually a member of (or no binding covers the tool at all), or the OIDC
+client's tokens don't carry a `groups` claim at all — Keycloak requires an
+explicit "Group Membership" protocol mapper
+(`oidc-group-membership-mapper`) on a default client scope; it is not
+automatic just because the user belongs to a Keycloak group.
 
 **API Frontend has a brief outage during an upgrade or template change:**
 
@@ -668,7 +671,10 @@ or delete them. Do not use a label-wide or target-wide cleanup.
 
 This is a separate, coarse-grained authorization gate from per-tool RBAC (AF v1.5.6+ / operator v1.5.8+): the Console's pre-flight check calls `GET /a2a/access` on AF, which runs a SubjectAccessReview against a synthetic `kubernaut.ai/console` resource. See [Additional RBAC for API Frontend](02-configure-services.md#additional-rbac-for-api-frontend) for how this is configured, and this dedicated writeup for full diagnosis (Keycloak group-claim verification, AF debug-log inspection): [Kubernaut Console: troubleshooting "Access Denied"](https://gist.github.com/jordigilh/5984f65c88da042f2207825a9e57df62).
 
-Quick check: if `spec.apiFrontend.rbac.roleBindings` already lists groups, the operator auto-derives console access from them and the CR is very likely already correct — the more common cause at that point is the denied user's JWT not actually carrying the expected `groups` claim.
+Quick check: if your ClusterRoleBindings already bind the user's groups
+to `<namespace>-console-access`, the CR is very likely already correct —
+the more common cause at that point is the denied user's JWT not actually
+carrying the expected `groups` claim.
 
 **CR in Degraded:**
 

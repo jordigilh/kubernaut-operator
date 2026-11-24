@@ -479,49 +479,12 @@ var _ = Describe("APIFrontend Validation", func() {
 	})
 })
 
-var _ = Describe("ToolRoleBinding Validation", func() {
-	It("rejects duplicate role names in roleBindings", func() {
-		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
-			RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
-				{Role: "sre", Groups: []string{"team-a"}},
-				{Role: "sre", Groups: []string{"team-b"}},
-			},
-		}
-		errs := ValidateKubernaut(kn)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("duplicate"))
-	})
-
-	It("accepts valid roleBindings with known persona names", func() {
-		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
-			RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
-				{Role: "sre", Groups: []string{"sre-team"}},
-				{Role: "cicd", Groups: []string{"ci-bots"}},
-			},
-		}
-		errs := ValidateKubernaut(kn)
-		Expect(errs).To(BeEmpty())
-	})
-
-	It("accepts empty roleBindings list", func() {
+var _ = Describe("APIFrontend RBAC Validation", func() {
+	It("accepts an empty RBAC block (roles-only model: nothing to bind)", func() {
 		kn := testKubernautWithAF()
 		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{}
 		errs := ValidateKubernaut(kn)
 		Expect(errs).To(BeEmpty())
-	})
-
-	It("rejects unknown persona name in roleBindings", func() {
-		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
-			RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
-				{Role: "unknown-persona", Groups: []string{"team-x"}},
-			},
-		}
-		errs := ValidateKubernaut(kn)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("unknown"))
 	})
 
 	It("rejects invalid sarCacheTTL format", func() {
@@ -532,55 +495,6 @@ var _ = Describe("ToolRoleBinding Validation", func() {
 		errs := ValidateKubernaut(kn)
 		Expect(errs).To(HaveLen(1))
 		Expect(errs[0].Error()).To(ContainSubstring("sarCacheTTL"))
-	})
-
-	// --- Issue #181: Custom ClusterRole references ---
-
-	It("[AC-3] rejects roleBinding with both role and clusterRoleName set", func() {
-		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
-			RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
-				{Role: "sre", ClusterRoleName: "my-custom-role", Groups: []string{"team-a"}},
-			},
-		}
-		errs := ValidateKubernaut(kn)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("mutually exclusive"))
-	})
-
-	It("[AC-3] rejects roleBinding with neither role nor clusterRoleName set", func() {
-		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
-			RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
-				{Groups: []string{"team-a"}},
-			},
-		}
-		errs := ValidateKubernaut(kn)
-		Expect(errs).To(HaveLen(1))
-		Expect(errs[0].Error()).To(ContainSubstring("one of role or clusterRoleName"))
-	})
-
-	It("[AC-3] accepts roleBinding with only clusterRoleName set", func() {
-		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
-			RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
-				{ClusterRoleName: "my-custom-role", Groups: []string{"team-a"}},
-			},
-		}
-		errs := ValidateKubernaut(kn)
-		Expect(errs).To(BeEmpty())
-	})
-
-	It("[AC-6] accepts mixed persona and custom clusterRoleName bindings", func() {
-		kn := testKubernautWithAF()
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
-			RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
-				{Role: "sre", Groups: []string{"sre-team"}},
-				{ClusterRoleName: "my-custom-role", Groups: []string{"custom-team"}},
-			},
-		}
-		errs := ValidateKubernaut(kn)
-		Expect(errs).To(BeEmpty())
 	})
 })
 

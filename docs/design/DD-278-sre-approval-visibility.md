@@ -1,11 +1,11 @@
 # DD-278: SRE Persona Approval-Visibility Tools (Interim)
 
-**Status**: Accepted
+**Status**: Accepted (superseded in part by [DD-682](DD-682-roles-only-rbac.md): `toolPersonas` no longer exists; the audited tool sets, including this separation of duties, live on as the documented example use-case bundles)
 **Decision Date**: 2026-08-02
 **Version**: 1.0
 **Confidence**: 97%
 **Deciders**: Kubernaut Operator Team
-**Applies To**: `internal/resources/rbac.go` `toolPersonas` (`tool-sre`)
+**Applies To**: ~~`internal/resources/rbac.go` `toolPersonas` (`tool-sre`)~~ → documented bundles in `docs/installation/02-configure-services.md` (#682/#684)
 
 **Related Issues**:
 - jordigilh/kubernaut-operator#278 (this repo, `release/v1.5`, fixed)

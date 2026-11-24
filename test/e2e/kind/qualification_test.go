@@ -128,6 +128,19 @@ func init() {
 
 			By("deploying the real-component qualification CR")
 			Expect(applyKubernautCR(ctx)).To(Succeed())
+			By("binding the fixture's sre group to the rendered console-access role (admin-owned, #682)")
+			// The binding is cluster-scoped and test-owned: register the
+			// cleanup BEFORE applying it so a failed apply that still
+			// committed the binding cannot leave a live authorization grant
+			// behind on the retained cluster; --ignore-not-found keeps the
+			// cleanup safe when the apply never committed.
+			DeferCleanup(func() {
+				_, err := kubectl(context.Background(), "delete", "clusterrolebinding",
+					kubernautNamespace+"-qualification-console-access", "--ignore-not-found")
+				Expect(err).NotTo(HaveOccurred(),
+					"qualification console-access CRB cleanup must succeed or already be absent")
+			})
+			Expect(applyQualificationConsoleAccessCRB(ctx)).To(Succeed())
 			Expect(waitForContractReady(ctx)).To(Succeed())
 			for _, deployment := range []string{
 				"kubernaut-console", "apifrontend", "kubernaut-agent", "authwebhook",

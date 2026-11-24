@@ -3616,108 +3616,41 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 	})
 
 	Context("SAR Tool RBAC Lifecycle", func() {
-		It("creates tool ClusterRoles during deploy phase", func() {
+		It("renders no persona tool ClusterRole and no user-facing CRB (roles-only model, #682/#684)", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToDeployPhase(ctx)
 
-			toolRoleNames := resources.ToolClusterRoleNames(&kubernautv1alpha2.Kubernaut{
-				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
-			})
-			Expect(toolRoleNames).To(HaveLen(6), "should have 6 tool ClusterRole names")
-			for _, name := range toolRoleNames {
-				cr := &rbacv1.ClusterRole{}
-				err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, cr)
-				Expect(err).NotTo(HaveOccurred(), "tool ClusterRole %q should exist after deploy", name)
+			By("no persona tool ClusterRole exists")
+			roles := &rbacv1.ClusterRoleList{}
+			Expect(k8sClient.List(ctx, roles)).To(Succeed())
+			for _, role := range roles.Items {
+				Expect(role.Name).NotTo(ContainSubstring("-tool-"),
+					"persona tool ClusterRole %q must not be rendered (#682/#684)", role.Name)
 			}
-		})
 
-		It("creates tool CRBs when roleBindings are specified in CR", func() {
-			createBYOSecrets(ctx)
-			cr := newMinimalCR()
-			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
-				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
-					{Role: "sre", Groups: []string{"sre-team"}},
-				},
+			By("the operator-rendered console roles do exist")
+			knForNames := &kubernautv1alpha2.Kubernaut{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace}}
+			for _, name := range []string{
+				resources.ConsoleAccessClusterRoleName(knForNames),
+				resources.ConsoleReaderClusterRoleName(knForNames),
+				resources.ConsoleInventoryReaderClusterRoleName(knForNames),
+			} {
+				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, &rbacv1.ClusterRole{})).To(Succeed(),
+					"ClusterRole %q should exist after deploy", name)
 			}
-			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
-			reconcileToDeployPhase(ctx)
 
-			crbNames := resources.ToolCRBNames(&kubernautv1alpha2.Kubernaut{
-				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
-				Spec:       cr.Spec,
-			})
-			Expect(crbNames).To(HaveLen(1))
-			crb := &rbacv1.ClusterRoleBinding{}
-			err := k8sClient.Get(ctx, types.NamespacedName{Name: crbNames[0]}, crb)
-			Expect(err).NotTo(HaveOccurred(), "tool CRB should exist after deploy")
-		})
-
-		It("prunes stale CRBs when roleBindings removed from spec", func() {
-			createBYOSecrets(ctx)
-			cr := newMinimalCR()
-			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
-				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
-					{Role: "sre", Groups: []string{"sre-team"}},
-					{Role: "cicd", Groups: []string{"ci-bots"}},
-				},
-			}
-			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
-			r := reconcileToRunning(ctx)
-
-			By("removing cicd role binding from spec")
-			kn := &kubernautv1alpha2.Kubernaut{}
-			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			kn.Spec.APIFrontend.RBAC.RoleBindings = []kubernautv1alpha2.ToolRoleBinding{
-				{Role: "sre", Groups: []string{"sre-team"}},
-			}
-			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
-
-			By("reconciling to prune stale CRBs")
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			Expect(err).NotTo(HaveOccurred())
-
-			staleCRBName := testNamespace + "-tool-cicd-binding"
-			crb := &rbacv1.ClusterRoleBinding{}
-			err = k8sClient.Get(ctx, types.NamespacedName{Name: staleCRBName}, crb)
-			Expect(errors.IsNotFound(err)).To(BeTrue(), "stale tool CRB %q should be pruned", staleCRBName)
-		})
-
-		It("sets ConditionToolRBACBound True when all bindings active", func() {
-			createBYOSecrets(ctx)
-			cr := newMinimalCR()
-			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
-				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
-					{Role: "sre", Groups: []string{"sre-team"}},
-				},
-			}
-			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
-			reconcileToRunning(ctx)
-
-			kn := &kubernautv1alpha2.Kubernaut{}
-			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-
-			found := false
-			for _, c := range kn.Status.Conditions {
-				if c.Type == kubernautv1alpha2.ConditionToolRBACBound {
-					found = true
-					Expect(c.Status).To(Equal(metav1.ConditionTrue))
+			By("no operator-managed ClusterRoleBinding carries a user-facing subject")
+			crbs := &rbacv1.ClusterRoleBindingList{}
+			Expect(k8sClient.List(ctx, crbs,
+				client.MatchingLabels{"app.kubernetes.io/managed-by": "kubernaut-operator"})).To(Succeed())
+			Expect(crbs.Items).NotTo(BeEmpty(), "precondition: the reconcile rendered CRBs")
+			for _, crb := range crbs.Items {
+				for _, subject := range crb.Subjects {
+					Expect(subject.Kind).To(Equal(rbacv1.ServiceAccountKind),
+						"operator-managed CRB %q must bind only ServiceAccounts, never %s %q (#682/#684)",
+						crb.Name, subject.Kind, subject.Name)
 				}
-			}
-			Expect(found).To(BeTrue(), "ConditionToolRBACBound should be present and True")
-		})
-
-		It("removes ConditionToolRBACBound when no bindings specified", func() {
-			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
-			reconcileToRunning(ctx)
-
-			kn := &kubernautv1alpha2.Kubernaut{}
-			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-
-			for _, c := range kn.Status.Conditions {
-				Expect(c.Type).NotTo(Equal(kubernautv1alpha2.ConditionToolRBACBound),
-					"ConditionToolRBACBound should not be present when no bindings specified")
 			}
 		})
 
@@ -3746,24 +3679,21 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				"orphaned apifrontend-rbac-roles ConfigMap should be deleted on upgrade")
 		})
 
-		It("deletes tool ClusterRoles and CRBs by finalizer", func() {
+		It("deletes the console roles by finalizer without ever creating a CRB (roles-only model)", func() {
 			createBYOSecrets(ctx)
-			cr := newMinimalCR()
-			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
-				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
-					{Role: "sre", Groups: []string{"sre-team"}},
-				},
-			}
-			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
-			toolRoleNames := resources.ToolClusterRoleNames(&kubernautv1alpha2.Kubernaut{
-				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
-			})
-			Expect(toolRoleNames).NotTo(BeEmpty())
-			for _, name := range toolRoleNames {
-				toolCR := &rbacv1.ClusterRole{}
-				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name}, toolCR)).To(Succeed())
+			knForNames := &kubernautv1alpha2.Kubernaut{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace}}
+			crName := resources.ConsoleAccessClusterRoleName(knForNames)
+
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crName}, &rbacv1.ClusterRole{})).To(Succeed())
+			By("no console-access ClusterRoleBinding was ever created")
+			crbs := &rbacv1.ClusterRoleBindingList{}
+			Expect(k8sClient.List(ctx, crbs)).To(Succeed())
+			for _, crb := range crbs.Items {
+				Expect(crb.RoleRef.Name).NotTo(Equal(crName),
+					"the operator must never render a console-access CRB (#682/#684)")
 			}
 
 			By("deleting the CR")
@@ -3776,11 +3706,39 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
 			Expect(err).NotTo(HaveOccurred())
 
-			for _, name := range toolRoleNames {
-				toolCR := &rbacv1.ClusterRole{}
-				err := k8sClient.Get(ctx, types.NamespacedName{Name: name}, toolCR)
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: crName}, &rbacv1.ClusterRole{})
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "console-access ClusterRole should be deleted by finalizer")
+		})
+
+		It("sweeps the retired pre-v1.6 persona ClusterRoles by finalizer", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			By("seeding pre-v1.6 upgrade leftovers (the retired persona roles)")
+			kn := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			retiredNames := resources.RetiredToolClusterRoleNames(kn)
+			Expect(retiredNames).To(HaveLen(6))
+			for _, name := range retiredNames {
+				Expect(k8sClient.Create(ctx, &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{
+					Name:   name,
+					Labels: resources.CommonLabels(kn),
+				}})).To(Succeed(), "seeding pre-v1.6 leftover %q", name)
+			}
+
+			By("deleting the CR")
+			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
+			stripWorkflowNamespaceCreatedByAnnotation(ctx)
+
+			By("reconciling the finalizer")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			for _, name := range retiredNames {
+				err = k8sClient.Get(ctx, types.NamespacedName{Name: name}, &rbacv1.ClusterRole{})
 				Expect(errors.IsNotFound(err)).To(BeTrue(),
-					"tool ClusterRole %q should be deleted by finalizer", name)
+					"retired persona ClusterRole %q should be swept by the finalizer", name)
 			}
 		})
 
@@ -3827,95 +3785,21 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(cr.Rules[0].Verbs).To(ConsistOf("use"))
 		})
 
-		It("IT-CONSOLE-002: creates the console-access CRB with derived groups matching the #289 live scenario", func() {
+		// IT-CONSOLE-002..004 covered the roleBindings/consoleAccessGroups CRB
+		// lifecycle removed by #682/#684: the operator renders roles only, so
+		// there is no console-access CRB lifecycle to exercise. The
+		// roles-only contract (no user-facing CRB through a real reconcile)
+		// is pinned in the "SAR Tool RBAC Lifecycle" context above.
+
+		It("IT-CONSOLE-005: deletes the console-access ClusterRole by finalizer", func() {
 			createBYOSecrets(ctx)
-			cr := newMinimalCR()
-			roleBindings := make([]kubernautv1alpha2.ToolRoleBinding, 0, 6)
-			for _, role := range []string{"sre", "ai-orchestrator", "cicd", "observability", "l3-audit", "remediation-approver"} {
-				roleBindings = append(roleBindings, kubernautv1alpha2.ToolRoleBinding{
-					Role: role, Groups: []string{"platform-engineering"},
-				})
-			}
-			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{RoleBindings: roleBindings}
-			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
-			reconcileToDeployPhase(ctx)
-
-			crbName := resources.ConsoleAccessCRBName(&kubernautv1alpha2.Kubernaut{
-				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
-			})
-			crb := &rbacv1.ClusterRoleBinding{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crbName}, crb)).To(Succeed(),
-				"console-access CRB should exist, derived from roleBindings groups")
-			Expect(crb.Subjects).To(HaveLen(1), "6 roleBindings sharing one group should collapse to 1 subject")
-			Expect(crb.Subjects[0].Kind).To(Equal("Group"))
-			Expect(crb.Subjects[0].Name).To(Equal("platform-engineering"))
-		})
-
-		It("IT-CONSOLE-003: reflects an explicit consoleAccessGroups override, independent of roleBindings", func() {
-			createBYOSecrets(ctx)
-			cr := newMinimalCR()
-			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
-				RoleBindings:        []kubernautv1alpha2.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
-				ConsoleAccessGroups: []string{"console-admins"},
-			}
-			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
-			reconcileToDeployPhase(ctx)
-
-			crbName := resources.ConsoleAccessCRBName(&kubernautv1alpha2.Kubernaut{
-				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
-			})
-			crb := &rbacv1.ClusterRoleBinding{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crbName}, crb)).To(Succeed())
-			Expect(crb.Subjects).To(HaveLen(1))
-			Expect(crb.Subjects[0].Name).To(Equal("console-admins"),
-				"explicit consoleAccessGroups should override roleBindings-derived groups")
-		})
-
-		It("IT-CONSOLE-004: removes the console-access CRB after switching to consoleAccessGroups: []", func() {
-			createBYOSecrets(ctx)
-			cr := newMinimalCR()
-			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
-				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
-			}
-			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
-			r := reconcileToRunning(ctx)
-
-			crbName := resources.ConsoleAccessCRBName(&kubernautv1alpha2.Kubernaut{
-				ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
-			})
-			crb := &rbacv1.ClusterRoleBinding{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crbName}, crb)).To(Succeed(),
-				"precondition: console-access CRB derived from roleBindings should exist")
-
-			By("explicitly opting out via consoleAccessGroups: []")
-			kn := &kubernautv1alpha2.Kubernaut{}
-			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
-			kn.Spec.APIFrontend.RBAC.ConsoleAccessGroups = []string{}
-			Expect(k8sClient.Update(ctx, kn)).To(Succeed())
-
-			By("reconciling to apply the opt-out")
-			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
-			Expect(err).NotTo(HaveOccurred())
-
-			err = k8sClient.Get(ctx, types.NamespacedName{Name: crbName}, crb)
-			Expect(errors.IsNotFound(err)).To(BeTrue(), "console-access CRB should be removed after explicit opt-out")
-		})
-
-		It("IT-CONSOLE-005: deletes the console-access ClusterRole and CRB by finalizer", func() {
-			createBYOSecrets(ctx)
-			cr := newMinimalCR()
-			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
-				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{{Role: "sre", Groups: []string{"sre-team"}}},
-			}
-			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			r := reconcileToRunning(ctx)
 
 			knForNames := &kubernautv1alpha2.Kubernaut{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace}}
 			crName := resources.ConsoleAccessClusterRoleName(knForNames)
-			crbName := resources.ConsoleAccessCRBName(knForNames)
 
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crName}, &rbacv1.ClusterRole{})).To(Succeed())
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crbName}, &rbacv1.ClusterRoleBinding{})).To(Succeed())
 
 			By("deleting the CR")
 			kn := &kubernautv1alpha2.Kubernaut{}
@@ -3929,8 +3813,6 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 
 			err = k8sClient.Get(ctx, types.NamespacedName{Name: crName}, &rbacv1.ClusterRole{})
 			Expect(errors.IsNotFound(err)).To(BeTrue(), "console-access ClusterRole should be deleted by finalizer")
-			err = k8sClient.Get(ctx, types.NamespacedName{Name: crbName}, &rbacv1.ClusterRoleBinding{})
-			Expect(errors.IsNotFound(err)).To(BeTrue(), "console-access CRB should be deleted by finalizer")
 		})
 
 		// ==================================================================
@@ -3969,36 +3851,10 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}
 		})
 
-		It("IT-CONSOLE-010: keeps console-reader unbound even when persona and console-access bindings exist (#662/DD-662)", func() {
+		It("IT-CONSOLE-010: keeps console-reader unbound after a real reconcile (#662/DD-662, #682 roles-only)", func() {
 			createBYOSecrets(ctx)
-			cr := newMinimalCR()
-			cr.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
-				// Persona bindings plus the derived console-access default
-				// exercise every operator-rendered CRB path: none of them
-				// may reference the console-reader role.
-				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
-					{Role: "sre", Groups: []string{"sre-team"}},
-					{Role: "ai-orchestrator", Groups: []string{"ai-team"}},
-				},
-			}
-			Expect(k8sClient.Create(ctx, cr)).To(Succeed())
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
 			reconcileToDeployPhase(ctx)
-
-			By("precondition: persona and derived console-access CRBs exist")
-			personaCRB := &rbacv1.ClusterRoleBinding{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: testNamespace + "-tool-sre-binding",
-			}, personaCRB)).To(Succeed(), "persona CRB should exist after deploy")
-			gateCRB := &rbacv1.ClusterRoleBinding{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: resources.ConsoleAccessCRBName(&kubernautv1alpha2.Kubernaut{
-					ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace},
-				}),
-			}, gateCRB)).To(Succeed(), "derived console-access CRB should exist after deploy")
-			Expect(gateCRB.Subjects).To(ConsistOf(
-				rbacv1.Subject{Kind: "Group", APIGroup: rbacv1.GroupName, Name: "sre-team"},
-				rbacv1.Subject{Kind: "Group", APIGroup: rbacv1.GroupName, Name: "ai-team"},
-			), "the derived console-access default must have been exercised")
 
 			By("no CRB in the cluster references the console-reader role")
 			knForNames := &kubernautv1alpha2.Kubernaut{ObjectMeta: metav1.ObjectMeta{Namespace: testNamespace}}
@@ -4011,21 +3867,6 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 					HaveSuffix("-console-reader"),
 				), "binding %q must not implicitly reference console-reader (DD-662)", crb.Name)
 			}
-		})
-
-		It("IT-CONSOLE-007: renders tool-sre with the audited approval-visibility and fleet-discovery tools", func() {
-			createBYOSecrets(ctx)
-			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
-			reconcileToDeployPhase(ctx)
-
-			cr := &rbacv1.ClusterRole{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{
-				Name: testNamespace + "-tool-sre",
-			}, cr)).To(Succeed(), "tool-sre ClusterRole should exist after deploy")
-			Expect(cr.Rules).To(HaveLen(1))
-			Expect(cr.Rules[0].ResourceNames).To(ContainElements(
-				"kubernaut_list_approval_requests", "list_clusters",
-			), "tool-sre must carry the #636 audited tools through the reconciler")
 		})
 
 		It("IT-CONSOLE-008: prunes the console-reader role after AF is disabled", func() {

@@ -51,10 +51,12 @@ const (
 	// controller can prune orphans with a single generic label-selector
 	// diff instead of a dedicated static-name delete function per
 	// conditionally-gated component. Scope is deliberately limited to
-	// these two aggregators -- additional-component CRBs, tool RBAC, and
-	// console-access's CRB already have their own correct, narrower
-	// lifecycle management (their own label-selector sweep or inline
-	// nil-checks) and are not part of this label's coverage.
+	// these two aggregators -- additional-component CRBs have their own
+	// correct, narrower lifecycle management (their own label-selector
+	// sweep) and are not part of this label's coverage. Since #682/#684
+	// (roles-only model) no user-facing RBAC exists outside these
+	// aggregators (the Fleet caller protocol groups excepted -- fixed
+	// machine identities, see DD-682).
 	LabelCoreClusterRBAC = "kubernaut.ai/core-cluster-rbac"
 
 	// LabelMCPGatewayNamespaceRBAC marks every namespace-scoped Role/
@@ -136,14 +138,15 @@ func ClusterRoles(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernautv1alpha2.Kuber
 		// #636: console REST read projection capabilities. Rendered but
 		// deliberately unbound -- the console-access (login) grant must not
 		// imply action authorization. #662/DD-662 made this the permanent
-		// model: no persona carries these capabilities; binding is an
-		// explicit administrator choice via
-		// spec.apiFrontend.rbac.roleBindings[].clusterRoleName.
+		// model: no persona carries these capabilities. #682/#684 made the
+		// model roles-only: the operator renders the role and never any
+		// user-facing ClusterRoleBinding; binding is an explicit
+		// administrator choice through an external ClusterRoleBinding.
 		roles = append(roles, ConsoleReaderClusterRole(kn))
 		// #663: user-side local-target get/list for the console inventory
 		// projection. Rendered but deliberately unbound, exactly like
 		// console-reader -- which users may read the local target stays an
-		// administrator decision (#662 tracks the upstream persona mapping).
+		// administrator decision (#682/#684 roles-only model).
 		roles = append(roles, ConsoleInventoryReaderClusterRole(kn))
 	}
 
@@ -740,229 +743,34 @@ func AdditionalComponentCRB(kn *kubernautv1alpha2.Kubernaut, component, saName, 
 	}
 }
 
-// toolPersona defines a persona-based tool role with its allowed tool resourceNames.
-type toolPersona struct {
-	name          string
-	resourceNames []string
+// retiredPersonaClusterRoleSuffixes lists the six persona tool ClusterRole
+// name suffixes rendered by pre-v1.6 operators (#118/#636). #682/#684
+// removed the roles with the roles-only model; the list survives only for
+// the finalizer sweep so an upgrading pre-GA cluster does not keep the
+// retired tool sets after deleting its Kubernaut instance.
+var retiredPersonaClusterRoleSuffixes = []string{
+	"tool-sre", "tool-ai-orchestrator", "tool-cicd",
+	"tool-observability", "tool-l3-audit", "tool-remediation-approver",
 }
 
-// toolPersonas lists the 6 upstream persona-based tool roles and their allowed tools,
-// aligned with the kubernaut Helm chart values.yaml after PRs #1231, #1233, #1236.
-var toolPersonas = []toolPersona{
-	{
-		// tool-sre carries kubernaut_approve plus approval-visibility/completion tools
-		// (kubernaut_get_approval_request, kubernaut_complete_no_action) even though
-		// tool-remediation-approver exists as the least-privilege home for approval
-		// decisions (see kubernaut#1235/#1239). This is intentional and interim: sre
-		// is currently the only console-interactive persona, so it's the only one that
-		// can reach a pending approval at all. Revisit once the console gains a
-		// management UI that lets remediation-approver log in and act independently
-		// (see docs/design/DD-278-sre-approval-visibility.md, #278).
-		name: "tool-sre",
-		resourceNames: []string{
-			"kubernaut_list_remediations", "kubernaut_get_remediation",
-			"kubernaut_approve", "kubernaut_cancel_remediation", "kubernaut_watch",
-			"kubernaut_await_session", "kubernaut_investigate",
-			"kubernaut_discover_workflows", "kubernaut_select_workflow", "kubernaut_present_decision",
-			"kubernaut_list_workflows", "kubernaut_get_remediation_history",
-			"kubernaut_get_effectiveness", "kubernaut_get_audit_trail",
-			"kubernaut_message", "kubernaut_complete",
-			"kubernaut_cancel", "kubernaut_status", "kubernaut_reconnect",
-			"kubectl_get", "kubectl_list", "kubectl_list_events",
-			"kubernaut_check_existing_remediation", "kubernaut_remediate",
-			"list_alerts", "get_alert_details", "kubernaut_investigate_alert",
-			"kubernaut_get_approval_request", "kubernaut_complete_no_action",
-			// #636: approval visibility (DD-636 amends DD-278 v1.1 -- sre already
-			// holds kubernaut_approve, so listing pending approvals only makes an
-			// already-possible decision an informed one) and read-only fleet
-			// discovery for cross-cluster investigation (BR-FLEET-054).
-			"kubernaut_list_approval_requests", "list_clusters",
-		},
-	},
-	{
-		name: "tool-ai-orchestrator",
-		resourceNames: []string{
-			"kubernaut_list_remediations", "kubernaut_get_remediation", "kubernaut_watch",
-			"kubernaut_await_session", "kubernaut_investigate",
-			"kubernaut_discover_workflows", "kubernaut_select_workflow", "kubernaut_present_decision",
-			"kubernaut_message", "kubernaut_complete",
-			"kubernaut_cancel", "kubernaut_status", "kubernaut_reconnect",
-			"kubectl_get", "kubectl_list", "kubectl_list_events",
-			"kubernaut_check_existing_remediation", "kubernaut_remediate",
-			"list_alerts", "get_alert_details", "kubernaut_investigate_alert",
-			// #636: read-only fleet discovery only. Approval reads/decisions stay
-			// with the human personas (DD-278 separation of duties); the upstream
-			// E2E persona fixture's broader list is deliberately not mirrored.
-			"list_clusters",
-		},
-	},
-	{
-		name: "tool-cicd",
-		resourceNames: []string{
-			"kubernaut_list_remediations", "kubernaut_get_remediation", "kubernaut_watch",
-			"kubernaut_await_session",
-		},
-	},
-	{
-		name: "tool-observability",
-		resourceNames: []string{
-			"kubernaut_list_remediations", "kubernaut_get_remediation", "kubernaut_watch",
-			"kubernaut_await_session",
-			"kubernaut_get_effectiveness", "kubernaut_list_workflows",
-		},
-	},
-	{
-		name: "tool-l3-audit",
-		resourceNames: []string{
-			"kubernaut_list_remediations", "kubernaut_get_remediation",
-			"kubernaut_list_workflows", "kubernaut_get_remediation_history",
-			"kubernaut_get_effectiveness", "kubernaut_get_audit_trail",
-		},
-	},
-	{
-		name: "tool-remediation-approver",
-		resourceNames: []string{
-			"kubernaut_approve", "kubernaut_list_approval_requests",
-			"kubernaut_get_approval_request",
-			"kubernaut_list_remediations", "kubernaut_get_remediation", "kubernaut_watch",
-			"kubernaut_await_session",
-		},
-	},
-}
-
-// ToolClusterRoles builds persona-based tool ClusterRoles for SAR authorization.
-// Each role grants verb "use" on resource "tools" in apiGroup "kubernaut.ai"
-// with specific resourceNames matching upstream kubernaut tool definitions.
-// Returns empty when AF is disabled.
-func ToolClusterRoles(kn *kubernautv1alpha2.Kubernaut) []*rbacv1.ClusterRole {
-	if !kn.Spec.APIFrontendEnabled() {
-		return nil
-	}
-	labels := CommonLabels(kn)
-	roles := make([]*rbacv1.ClusterRole, 0, len(toolPersonas))
-	for _, p := range toolPersonas {
-		roles = append(roles, &rbacv1.ClusterRole{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   clusterRoleName(kn, p.name),
-				Labels: labels,
-			},
-			Rules: []rbacv1.PolicyRule{{
-				APIGroups:     []string{"kubernaut.ai"},
-				Resources:     []string{"tools"},
-				ResourceNames: p.resourceNames,
-				Verbs:         []string{"use"},
-			}},
-		})
-	}
-	return roles
-}
-
-// ToolClusterRoleNames returns the names of all tool ClusterRoles for finalizer cleanup.
-func ToolClusterRoleNames(kn *kubernautv1alpha2.Kubernaut) []string {
-	names := make([]string, 0, len(toolPersonas))
-	for _, p := range toolPersonas {
-		names = append(names, clusterRoleName(kn, p.name))
-	}
-	return names
-}
-
-// ToolClusterRoleBindings builds CRBs that bind tool ClusterRoles to OIDC groups
-// as specified in spec.apiFrontend.rbac.roleBindings.
-// For built-in persona roles (Role field), the CRB references the operator-managed
-// ClusterRole with a namespace-prefixed name.
-// For custom ClusterRole references (ClusterRoleName field), the CRB references the
-// user-managed ClusterRole directly without namespace-prefixing.
-// Duplicate roles are merged: subjects from all entries with the same role are
-// combined into a single CRB.
-// Returns empty when no roleBindings are specified.
-func ToolClusterRoleBindings(kn *kubernautv1alpha2.Kubernaut) []*rbacv1.ClusterRoleBinding {
-	if kn.Spec.APIFrontend.RBAC == nil || len(kn.Spec.APIFrontend.RBAC.RoleBindings) == 0 {
-		return nil
-	}
-
-	type bindingKey struct {
-		roleRefName string
-		isCustom    bool
-	}
-
-	bindings := kn.Spec.APIFrontend.RBAC.RoleBindings
-	merged := make(map[string][]string, len(bindings))
-	order := make([]bindingKey, 0, len(bindings))
-	for _, rb := range bindings {
-		var key string
-		var isCustom bool
-		if rb.ClusterRoleName != "" {
-			key = "custom:" + rb.ClusterRoleName
-			isCustom = true
-		} else {
-			key = "persona:" + rb.Role
-			isCustom = false
-		}
-		if _, exists := merged[key]; !exists {
-			order = append(order, bindingKey{roleRefName: key, isCustom: isCustom})
-		}
-		merged[key] = append(merged[key], rb.Groups...)
-	}
-
-	labels := CommonLabels(kn)
-	crbs := make([]*rbacv1.ClusterRoleBinding, 0, len(merged))
-	for _, bk := range order {
-		groups := merged[bk.roleRefName]
-		subjects := make([]rbacv1.Subject, 0, len(groups))
-		for _, g := range groups {
-			subjects = append(subjects, rbacv1.Subject{
-				Kind: "Group",
-				Name: g,
-			})
-		}
-
-		var crbName, roleRefName string
-		if bk.isCustom {
-			name := bk.roleRefName[len("custom:"):]
-			crbName = clusterRoleName(kn, "tool-custom-"+name+"-binding")
-			roleRefName = name
-		} else {
-			name := bk.roleRefName[len("persona:"):]
-			crbName = clusterRoleName(kn, "tool-"+name+"-binding")
-			roleRefName = clusterRoleName(kn, "tool-"+name)
-		}
-
-		crbs = append(crbs, &rbacv1.ClusterRoleBinding{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:   crbName,
-				Labels: labels,
-			},
-			RoleRef: rbacv1.RoleRef{
-				APIGroup: rbacv1.GroupName,
-				Kind:     "ClusterRole",
-				Name:     roleRefName,
-			},
-			Subjects: subjects,
-		})
-	}
-	return crbs
-}
-
-// ToolCRBNames returns the names of all tool CRBs for finalizer cleanup.
-func ToolCRBNames(kn *kubernautv1alpha2.Kubernaut) []string {
-	crbs := ToolClusterRoleBindings(kn)
-	names := make([]string, 0, len(crbs))
-	for _, crb := range crbs {
-		names = append(names, crb.Name)
+// RetiredToolClusterRoleNames returns the namespace-prefixed names of the
+// six persona tool ClusterRoles a pre-v1.6 operator rendered. The finalizer
+// deletes them on instance deletion; reconcile-time removal is deliberately
+// not performed (DD-682 no-migration decision).
+func RetiredToolClusterRoleNames(kn *kubernautv1alpha2.Kubernaut) []string {
+	names := make([]string, 0, len(retiredPersonaClusterRoleSuffixes))
+	for _, suffix := range retiredPersonaClusterRoleSuffixes {
+		names = append(names, clusterRoleName(kn, suffix))
 	}
 	return names
 }
 
 // ConsoleAccessClusterRoleName returns the name of the coarse-grained
-// console-access ClusterRole for finalizer cleanup.
+// console-access ClusterRole for label-prune and finalizer cleanup (#682:
+// the role stays operator-rendered; any user-facing binding is
+// administrator-owned).
 func ConsoleAccessClusterRoleName(kn *kubernautv1alpha2.Kubernaut) string {
 	return clusterRoleName(kn, "console-access")
-}
-
-// ConsoleAccessCRBName returns the name of the console-access
-// ClusterRoleBinding for finalizer cleanup.
-func ConsoleAccessCRBName(kn *kubernautv1alpha2.Kubernaut) string {
-	return clusterRoleName(kn, "console-access-binding")
 }
 
 // ConsoleAccessClusterRole builds the coarse-grained kubernaut.ai/console
@@ -988,80 +796,6 @@ func ConsoleAccessClusterRole(kn *kubernautv1alpha2.Kubernaut) *rbacv1.ClusterRo
 	}
 }
 
-// effectiveConsoleAccessGroups returns the OIDC groups granted console
-// access. When RBAC.ConsoleAccessGroups is explicitly set (including an
-// explicit empty list to opt out), it is used verbatim. When unset (nil),
-// it defaults to the deduplicated union of all groups already present in
-// RoleBindings, so upgrading to an AF version enforcing the console gate
-// does not silently deny existing deployments' tool calls (#289). Nil
-// RBAC returns nil (no roleBindings configured at all).
-//
-// ConsoleAccessGroups deliberately has no `omitempty` JSON tag: Go's
-// encoding/json treats a non-nil empty slice as "empty" and would drop it
-// from the wire payload on a typed-client Update, collapsing an explicit
-// "[]" opt-out back into "unset" (nil) and silently defeating the
-// derive-vs-opt-out distinction this function implements. The apiserver
-// still treats an explicit JSON null (a nil slice) as field-absent, so the
-// nil/unset/derive-default case is unaffected by this.
-func effectiveConsoleAccessGroups(kn *kubernautv1alpha2.Kubernaut) []string {
-	if kn.Spec.APIFrontend.RBAC == nil {
-		return nil
-	}
-	if kn.Spec.APIFrontend.RBAC.ConsoleAccessGroups != nil {
-		return kn.Spec.APIFrontend.RBAC.ConsoleAccessGroups
-	}
-
-	roleBindings := kn.Spec.APIFrontend.RBAC.RoleBindings
-	seen := make(map[string]struct{}, len(roleBindings))
-	groups := make([]string, 0, len(roleBindings))
-	for _, rb := range roleBindings {
-		for _, g := range rb.Groups {
-			if _, ok := seen[g]; ok {
-				continue
-			}
-			seen[g] = struct{}{}
-			groups = append(groups, g)
-		}
-	}
-	return groups
-}
-
-// ConsoleAccessClusterRoleBinding builds the ClusterRoleBinding granting
-// effectiveConsoleAccessGroups the console-access ClusterRole. Returns nil
-// when AF is disabled or the effective group list is empty (no groups to
-// bind, or an explicit opt-out) -- callers must delete any previously
-// created CRB in that case rather than treating nil as "no-op".
-func ConsoleAccessClusterRoleBinding(kn *kubernautv1alpha2.Kubernaut) *rbacv1.ClusterRoleBinding {
-	if !kn.Spec.APIFrontendEnabled() {
-		return nil
-	}
-	groups := effectiveConsoleAccessGroups(kn)
-	if len(groups) == 0 {
-		return nil
-	}
-
-	subjects := make([]rbacv1.Subject, 0, len(groups))
-	for _, g := range groups {
-		subjects = append(subjects, rbacv1.Subject{
-			Kind: "Group",
-			Name: g,
-		})
-	}
-
-	return &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   ConsoleAccessCRBName(kn),
-			Labels: CommonLabels(kn),
-		},
-		RoleRef: rbacv1.RoleRef{
-			APIGroup: rbacv1.GroupName,
-			Kind:     "ClusterRole",
-			Name:     ConsoleAccessClusterRoleName(kn),
-		},
-		Subjects: subjects,
-	}
-}
-
 // ConsoleReaderClusterRoleName returns the name of the console-reader
 // ClusterRole (#636).
 func ConsoleReaderClusterRoleName(kn *kubernautv1alpha2.Kubernaut) string {
@@ -1076,10 +810,12 @@ func ConsoleReaderClusterRoleName(kn *kubernautv1alpha2.Kubernaut) string {
 //
 // The role is rendered whenever AF is enabled and deliberately has no
 // binding: no persona ever carries these reads (DD-662 permanent model),
-// and no login/console-access grant may imply them (#636). Administrators
-// bind it through spec.apiFrontend.rbac.roleBindings[].clusterRoleName (the
-// operator creates the CRB) or their own ClusterRoleBinding. See
-// docs/design/DD-662-console-read-capability-model.md.
+// and no login/console-access grant may imply them (#636). #682/#684 made
+// the model roles-only: the operator never renders a user-facing
+// ClusterRoleBinding, so administrators bind this role through their own
+// external ClusterRoleBinding. See
+// docs/design/DD-662-console-read-capability-model.md and
+// docs/design/DD-682-roles-only-rbac.md.
 //
 // The read additionally requires the invoking user's own Kubernetes get/list
 // grants on the local target resources; those are rendered separately as

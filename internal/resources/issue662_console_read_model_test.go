@@ -19,9 +19,6 @@ package resources
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	rbacv1 "k8s.io/api/rbac/v1"
-
-	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 )
 
 // Issue #662 / DD-662: the console read capability model is permanent.
@@ -31,85 +28,49 @@ import (
 //
 //   - no built-in persona carries the console REST read capabilities; the
 //     coarse console-reader ClusterRole IS the model, not a placeholder;
-//   - the operator never binds console-reader implicitly -- not through the
-//     persona path, not through the derived console-access path;
-//   - the only supported bind path is an explicit administrator choice
-//     (roleBindings[].clusterRoleName or an external ClusterRoleBinding);
+//   - the operator never binds console-reader implicitly;
 //   - the Console nginx /api/v1/console/ proxy is transport only (#660):
 //     capability authorization happens entirely at AF via the named
 //     capability SARs, so the proxy surface works unchanged whether or not
 //     any group is bound.
 //
+// #682/#684 strengthened the model to roles-only: the operator renders no
+// user-facing ClusterRoleBinding at all, so the former explicit bind path
+// (spec.apiFrontend.rbac.roleBindings[].clusterRoleName) is gone too and
+// the only supported bind path is an administrator-owned external
+// ClusterRoleBinding.
+//
 // These tests pin the operator side of that contract so a future change
-// cannot silently couple login, persona, or console-access grants to console
-// reads.
+// cannot silently couple login or console-access grants to console reads.
 var _ = Describe("Issue #662: console read capability model (DD-662)", func() {
-	knWithPersonaBindings := func() *kubernautv1alpha2.Kubernaut {
-		kn := testKubernautWithAF()
-		kn.Namespace = testSystemNamespace
-		kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
-			RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
-				{Role: "sre", Groups: []string{"sre-group"}},
-				{Role: "ai-orchestrator", Groups: []string{"ai-group"}},
-				{Role: "cicd", Groups: []string{"cicd-group"}},
-				{Role: "observability", Groups: []string{"obs-group"}},
-				{Role: "l3-audit", Groups: []string{"audit-group"}},
-				{Role: "remediation-approver", Groups: []string{"approver-group"}},
-			},
-		}
-		return kn
-	}
-
 	Describe("no implicit console-reader binding", func() {
-		It("never references console-reader from the persona or console-access binding paths", func() {
-			kn := knWithPersonaBindings()
+		It("renders no user-facing ClusterRoleBinding at all (roles-only model)", func() {
+			kn := testKubernautWithAF()
 
-			By("persona tool CRBs reference only persona roles")
-			crbs := ToolClusterRoleBindings(kn)
-			Expect(crbs).NotTo(BeEmpty())
-			for _, crb := range crbs {
+			By("every operator-rendered CRB binds a ServiceAccount, never a Group or User")
+			for _, crb := range ClusterRoleBindings(kn, testKnV2(kn)) {
+				for _, subject := range crb.Subjects {
+					Expect(subject.Kind).To(Equal("ServiceAccount"),
+						"CRB %q must not bind a user-facing subject %q (%s): the operator renders roles only (#682/#684)",
+						crb.Name, subject.Name, subject.Kind)
+				}
+			}
+		})
+
+		It("keeps console-reader unbound in a zero-config install", func() {
+			kn := testKubernautWithAF()
+			Expect(kn.Spec.APIFrontend.RBAC).To(BeNil(),
+				"precondition: the roles-only CRD has no binding configuration to set")
+			for _, crb := range ClusterRoleBindings(kn, testKnV2(kn)) {
 				Expect(crb.RoleRef.Name).NotTo(ContainSubstring("console-reader"),
-					"persona binding %q must not reference any console-reader role", crb.Name)
+					"no operator CRB may reference console-reader; binding it is an administrator decision (DD-662, #682)")
 			}
-
-			By("the derived console-access CRB references only the console gate")
-			// consoleAccessGroups unset: derived as the union of all bound
-			// groups, i.e. every group above can log in -- and must still not
-			// gain console reads.
-			gateCRB := ConsoleAccessClusterRoleBinding(kn)
-			Expect(gateCRB).NotTo(BeNil())
-			Expect(gateCRB.RoleRef.Name).To(Equal(ConsoleAccessClusterRoleName(kn)),
-				"console login must never imply console reads (DD-636 decision 1, ratified by DD-662)")
 		})
 
-		It("keeps console-reader unbound when no roleBindings exist at all", func() {
+		It("renders the console-reader role even though nothing binds it", func() {
 			kn := testKubernautWithAF()
-			Expect(ToolClusterRoleBindings(kn)).To(BeEmpty())
-			Expect(ConsoleAccessClusterRoleBinding(kn)).To(BeNil(),
-				"zero-config installs must render no console-access CRB and no console-reader binding")
-		})
-	})
-
-	Describe("the explicit administrator bind path", func() {
-		It("binds console-reader only through an explicit clusterRoleName reference", func() {
-			kn := testKubernautWithAF()
-			kn.Namespace = testSystemNamespace
-			kn.Spec.APIFrontend.RBAC = &kubernautv1alpha2.APIFrontendRBACSpec{
-				RoleBindings: []kubernautv1alpha2.ToolRoleBinding{
-					{
-						// The rendered role name is namespace-prefixed; the
-						// custom path uses it verbatim (documented contract).
-						ClusterRoleName: testSystemNamespace + "-console-reader",
-						Groups:          []string{"console-readers"},
-					},
-				},
-			}
-
-			crbs := ToolClusterRoleBindings(kn)
-			Expect(crbs).To(HaveLen(1))
-			Expect(crbs[0].RoleRef.Kind).To(Equal("ClusterRole"))
-			Expect(crbs[0].RoleRef.Name).To(Equal(testSystemNamespace + "-console-reader"))
-			Expect(crbs[0].Subjects).To(ConsistOf(rbacv1.Subject{Kind: "Group", Name: "console-readers"}))
+			Expect(ConsoleReaderClusterRole(kn)).NotTo(BeNil(),
+				"the coarse role must exist for an administrator to bind externally")
 		})
 	})
 

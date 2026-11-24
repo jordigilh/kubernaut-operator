@@ -92,7 +92,7 @@ The operator requires these elevated permissions:
 | `<ns>-alertmanager-view` | EffectivenessMonitor reads Prometheus/AlertManager metrics | Always created; cluster-monitoring integration cannot be disabled |
 | `<ns>-gateway-signal-source` | AlertManager pushes signals to Gateway | Created only when `gateway.enabled=true`. Bound to OCP alertmanager SA |
 | `<ns>-workflowexecution-awx` | WorkflowExecution talks to AWX/AAP | AWX Jobs (CRUD). Created only when `ansible.enabled=true` |
-| `<ns>-console-access` | Opt-in console login gate (kubernaut#1919) | `kubernaut.ai/console` `use` only; grants no action. Created only when `apiFrontend.enabled=true`; bound to console-access groups |
+| `<ns>-console-access` | Opt-in console login gate (kubernaut#1919) | `kubernaut.ai/console` `use` only; grants no action. Created only when `apiFrontend.enabled=true`; unbound — binding is administrator-owned (#682/#684) |
 | `<ns>-console-reader` | Console REST read capabilities for the policy/inventory projection (#636) | `kubernaut.ai/tools` `use` on the three console read capability names. Created only when `apiFrontend.enabled=true`; unbound by default |
 | `<ns>-console-inventory-reader` | User-side local-target reads for the console inventory projection (#663) | `get`/`list` on AF's pinned 11-kind Gateway-aligned allowlist (core pods/services/nodes/PVs/namespaces; apps deployments/statefulsets/daemonsets/replicasets; batch jobs/cronjobs). Created only when `apiFrontend.enabled=true`; unbound by default — binding (who may read) is the administrator's decision |
 
