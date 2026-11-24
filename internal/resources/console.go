@@ -601,6 +601,10 @@ location /.well-known/ {
   proxy_pass %s;
   proxy_http_version 1.1;
   proxy_set_header Host $host;
+  # Parity with the other AF-proxied locations: normalize the forwarded
+  # client IP headers rather than passing client-supplied values raw.
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
   # #679: clear the OAuth2 Proxy-injected raw token and the
   # client-forgeable identity headers toward AF. AF authenticates
   # solely via Authorization: Bearer and reads none of these, so this

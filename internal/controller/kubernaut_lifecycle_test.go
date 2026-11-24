@@ -1129,6 +1129,9 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 				"the /.well-known/ location must clear the forgeable X-Forwarded-Email toward AF")
 			Expect(wellKnownBlock).To(ContainSubstring("proxy_set_header Host $host;"),
 				"the /.well-known/ Host forwarding must be unchanged by the hygiene clears")
+			Expect(wellKnownBlock).NotTo(ContainSubstring("proxy_set_header Authorization"),
+				"the /.well-known/ location must not gain an Authorization rewrite; "+
+					"it serves public discovery documents without credential forwarding")
 
 			deployment := &appsv1.Deployment{}
 			deploymentKey := types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}

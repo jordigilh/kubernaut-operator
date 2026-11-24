@@ -710,7 +710,10 @@ var _ = Describe("Console Resources", func() {
 			return block
 		}
 
-		assertClearedTowardAF := func(marker, block string) {
+		// assertHygieneClears holds the header clears that apply to every
+		// AF-proxied location, including /.well-known/ (#679), which performs
+		// no Authorization rewrite.
+		assertHygieneClears := func(marker, block string) {
 			Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-Access-Token "";`),
 				marker+" must clear the OAuth2 Proxy-injected raw access token toward AF; "+
 					"AF authenticates solely via Authorization: Bearer")
@@ -718,6 +721,10 @@ var _ = Describe("Console Resources", func() {
 				marker+" must clear the client-forgeable X-Forwarded-User toward AF")
 			Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-Email "";`),
 				marker+" must clear the client-forgeable X-Forwarded-Email toward AF")
+		}
+
+		assertClearedTowardAF := func(marker, block string) {
+			assertHygieneClears(marker, block)
 			Expect(block).To(ContainSubstring(`proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";`),
 				marker+" must keep rewriting Authorization from the OAuth2 Proxy-injected token "+
 					"(header clearing must not change the auth path)")
@@ -759,15 +766,15 @@ var _ = Describe("Console Resources", func() {
 			// Authorization rewrite: it proxies public discovery documents
 			// through the authenticated console origin, so only the hygiene
 			// clears apply here.
-			Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-Access-Token "";`),
-				"the /.well-known/ location must clear the OAuth2 Proxy-injected raw access token toward AF; "+
-					"AF authenticates solely via Authorization: Bearer")
-			Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-User "";`),
-				"the /.well-known/ location must clear the client-forgeable X-Forwarded-User toward AF")
-			Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-Email "";`),
-				"the /.well-known/ location must clear the client-forgeable X-Forwarded-Email toward AF")
+			assertHygieneClears("the /.well-known/ location", block)
+			// Parity with the other AF-proxied locations: the forwarded
+			// client IP headers are normalized, not passed through raw.
+			Expect(block).To(ContainSubstring("proxy_set_header X-Real-IP $remote_addr;"),
+				"the /.well-known/ location must derive X-Real-IP from the connection, not the client header")
+			Expect(block).To(ContainSubstring("proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;"),
+				"the /.well-known/ location must normalize X-Forwarded-For like the other AF locations")
 			// Regression guards: the proxying behavior must be unchanged
-			// (#679 adds header clears only).
+			// (#679 adds header hygiene only).
 			Expect(block).To(ContainSubstring("proxy_set_header Host $host;"),
 				"the /.well-known/ Host forwarding must be unchanged")
 			Expect(block).NotTo(ContainSubstring(`proxy_set_header Authorization`),
