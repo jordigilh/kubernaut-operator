@@ -1011,12 +1011,15 @@ for persona in sre ai-orchestrator cicd observability l3-audit remediation-appro
 done
 
 # Bindings the pre-v1.6 custom-clusterRoleName path rendered
-# (<ns>-tool-custom-<name>-binding): the <name> half varies, so match the
-# operator's rendered prefix AND its managed-by label — administrator-owned
-# lookalikes (for example a "-binding-backup" copy) carry no such label
-# and are preserved.
-for crb in $(oc get clusterrolebinding -l app.kubernetes.io/managed-by=kubernaut-operator -o name \
-  | grep "/${NS}-tool-custom-.*-binding" || true); do oc delete "$crb"; done
+# (<ns>-tool-custom-<name>-binding): the <name> half varies, so list the
+# candidates by prefix and delete each through the same ownership-checked
+# helper. The pattern is anchored to an exact "-binding" suffix, so
+# administrator-owned lookalikes (for example a "-binding-backup" copy)
+# never match; a same-shaped object that fails the ownership check is
+# skipped and flagged for manual review.
+for crb in $(oc get clusterrolebinding -o name | grep "/${NS}-tool-custom-.*-binding$" || true); do
+  delete_if_operator_owned clusterrolebinding "${crb##*/}"
+done
 ```
 
 ## Additional ClusterRoles for ecosystem CRDs (KA, Gateway, EM)
