@@ -982,16 +982,26 @@ user-facing RBAC yourself — those objects keep granting authorization
 the operator no longer tracks:
 
 ```bash
+NS=kubernaut-system  # Set to the namespace of your Kubernaut CR.
+
 # The retired console-access ClusterRoleBinding (--ignore-not-found covers
 # clean installs where it never existed).
-oc delete clusterrolebinding kubernaut-system-console-access-binding --ignore-not-found
+oc delete clusterrolebinding "${NS}-console-access-binding" --ignore-not-found
 
-# The retired persona tool ClusterRoleBindings. The loop no-ops on clean
-# installs where nothing matches. (The six retired ClusterRoles themselves
-# are swept automatically when you delete the Kubernaut instance; delete
-# them manually only if you keep the instance.)
-for crb in $(oc get clusterrolebinding -o name | grep 'kubernaut-system-tool-.*-binding' || true); do oc delete "$crb"; done
-for cr in $(oc get clusterrole -o name | grep 'kubernaut-system-tool-' || true); do oc delete "$cr"; done
+# The six retired persona ClusterRoles and their bindings — the only
+# persona names a pre-v1.6 operator rendered, so administrator-owned
+# roles are untouched. (The ClusterRoles are also swept automatically
+# when you delete the Kubernaut instance; delete them manually only if
+# you keep the instance.) The loop no-ops on clean installs.
+for persona in sre ai-orchestrator cicd observability l3-audit remediation-approver; do
+  oc delete clusterrole "${NS}-tool-${persona}" --ignore-not-found
+  oc delete clusterrolebinding "${NS}-tool-${persona}-binding" --ignore-not-found
+done
+
+# Bindings the pre-v1.6 custom-clusterRoleName path rendered
+# (<ns>-tool-custom-<name>-binding): the <name> half varies, so match by
+# the operator's rendered prefix. The loop no-ops when nothing matches.
+for crb in $(oc get clusterrolebinding -o name | grep "/${NS}-tool-custom-.*-binding" || true); do oc delete "$crb"; done
 ```
 
 ## Additional ClusterRoles for ecosystem CRDs (KA, Gateway, EM)
