@@ -110,9 +110,10 @@ Added by this change:
 - **Token clearing.** oauth2-proxy (the only ingress) overwrites any
   client-supplied `X-Forwarded-Access-Token` with the verified claim;
   nginx rewrites client `Authorization` from it and now also clears the raw
-  header toward AF. The pre-existing `/a2a/` and `= /mcp` locations do not
-  clear it; that divergence is tracked in #668 and intentionally not bundled
-  here.
+  header toward AF. The pre-existing `/a2a/` and `= /mcp` locations did not
+  clear it; that divergence was tracked in #668 and is resolved there (which
+  also folds clearing the forgeable `X-Forwarded-User`/`X-Forwarded-Email`
+  identity headers into all three AF-facing locations).
 - **Drift rollout.** `deployConfigMaps` folds the live resourceVersion of both
   Console ConfigMaps into `cmHashes["console"]` on every reconcile (not only
   when this pass changed them): a revision-read failure or reconcile abort

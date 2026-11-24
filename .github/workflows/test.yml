@@ -15,8 +15,8 @@ env:
   KUBERNAUT_KIND_IMAGE_PLATFORM: linux/amd64
 
 jobs:
-  test:
-    name: Unit & Integration Tests
+  test-unit:
+    name: Unit Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -31,9 +31,80 @@ jobs:
       - name: Run independent unit tests
         run: make test-unit
 
+      - name: Upload unit test evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-test-evidence
+          path: |
+            cover-unit.out
+            cover-unit-baseline.out
+            cover-business-unit.json
+          if-no-files-found: warn
+
+  test-integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7.1.0
+        with:
+          go-version-file: go.mod
+
       - name: Run independent integration tests
-        if: ${{ !cancelled() }}
         run: make test-integration
+
+      - name: Upload integration test evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: integration-test-evidence
+          path: |
+            cover-integration.out
+            cover-integration-controller.out
+          if-no-files-found: warn
+
+  test:
+    name: Unit & Integration Tests
+    needs: [test-unit, test-integration]
+    # Run even when a lane failed: a skipped dependent job is neutral for
+    # branch protection, so this required context must fail explicitly.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Fail if any test lane failed
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: exit 1
+
+      # always(): the shellcheck and hack-script diagnostic steps below run
+      # under !cancelled(), so the repo must be checked out even when the
+      # fail-guard above has already failed the job on a lane failure.
+      - name: Checkout code
+        if: always()
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        # always(): the !cancelled() hack-script step needs the go.mod-pinned
+        # Go even on the lane-failure path (yq is built with go install).
+        if: always()
+        uses: actions/setup-go@v7.1.0
+        with:
+          go-version-file: go.mod
+
+      - name: Download unit test evidence
+        uses: actions/download-artifact@v8
+        with:
+          name: unit-test-evidence
+
+      - name: Download integration test evidence
+        uses: actions/download-artifact@v8
+        with:
+          name: integration-test-evidence
 
       - name: Merge passing independent profiles
         run: |

@@ -120,7 +120,22 @@ var _ = Describe("raw-block coverage enforcement", func() {
 		Expect(string(workflow)).To(ContainSubstring("name: Run independent unit tests"))
 		Expect(string(workflow)).To(ContainSubstring("name: Run independent integration tests"))
 		Expect(string(workflow)).To(ContainSubstring("run: make test-integration"))
-		Expect(string(workflow)).To(ContainSubstring("if: ${{ !cancelled() }}"))
+		// The lanes are independent jobs (no needs between test-unit and
+		// test-integration), so the integration lane still runs when the unit
+		// lane fails. The aggregate gate also runs on lane failure (a skipped
+		// dependent job is neutral for branch protection) and fails itself if
+		// any lane failed.
+		Expect(string(workflow)).To(ContainSubstring("  test-unit:"))
+		Expect(string(workflow)).To(ContainSubstring("  test-integration:"))
+		// The multi-line snippet pins the !cancelled() guard to the aggregate
+		// job itself (a bare ContainSubstring would match the shellcheck and
+		// hack-script steps' guards instead).
+		Expect(string(workflow)).To(ContainSubstring(
+			"needs: [test-unit, test-integration]\n" +
+				"    # Run even when a lane failed: a skipped dependent job is neutral for\n" +
+				"    # branch protection, so this required context must fail explicitly.\n" +
+				"    if: ${{ !cancelled() }}"))
+		Expect(string(workflow)).To(ContainSubstring("contains(needs.*.result, 'failure')"))
 	})
 
 	It("UT-AUDIT-515-GATE-009: executes the verifier and rejects incomplete unit evidence", func() {

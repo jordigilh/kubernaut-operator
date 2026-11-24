@@ -1049,7 +1049,7 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			}, timeout, interval).ShouldNot(Equal(updatedHash), "disabling raw thinking must roll the Console pod again")
 		})
 
-		It("IT-CN-638-001 [CM-3, AC-3, AC-6, CC6.1/CC6.3; ASVS V4.1.1/V4.2.1]: console API location is reconciled and restored on drift", func() {
+		It("IT-CN-638-001 [CM-3, AC-3, AC-6, CC6.1/CC6.3; ASVS V4.1.1/V4.2.1]: console API location is reconciled and restored on drift (extended by #668: IT-CN-668-001 AF header hygiene)", func() {
 			createBYOSecrets(ctx)
 			cr := newMinimalCR()
 			t := true
@@ -1081,10 +1081,40 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(serverConf).To(ContainSubstring(
 				`proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";`),
 				"AF authorization must flow from the OAuth2 Proxy-injected access token only")
-			Expect(serverConf).To(ContainSubstring(`proxy_set_header X-Forwarded-Access-Token "";`),
-				"the raw access token must not be forwarded to AF in a second header")
 			Expect(serverConf).To(ContainSubstring("limit_except GET { deny all; }"),
 				"the Console read API must be read-only at the proxy boundary")
+
+			By("clearing the raw token and forged identity headers toward AF on every proxied location (#668)")
+			// Block-scoped: a whole-file ContainSubstring would be vacuous once
+			// the console read location carries the same clear.
+			// The extractor terminates at the first "\n}\n"; it assumes the
+			// location blocks contain no multi-line nested braces (the only
+			// inner brace, limit_except GET { deny all; }, is single-line).
+			// It mirrors nginxLocationBlock in internal/resources/console_test.go
+			// (kept local: the helper is unexported there).
+			locationBlock := func(marker string) string {
+				start := strings.Index(serverConf, marker)
+				if start < 0 {
+					return ""
+				}
+				end := strings.Index(serverConf[start:], "\n}\n")
+				if end < 0 {
+					return serverConf[start:]
+				}
+				return serverConf[start : start+end+3]
+			}
+			for _, marker := range []string{"location /a2a/ {", "location = /mcp {", "location ^~ /api/v1/console/ {"} {
+				block := locationBlock(marker)
+				Expect(block).NotTo(BeEmpty(), "server.conf must contain a %s block", marker)
+				Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-Access-Token "";`),
+					marker+" must clear the raw access token toward AF")
+				Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-User "";`),
+					marker+" must clear the forgeable X-Forwarded-User toward AF")
+				Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-Email "";`),
+					marker+" must clear the forgeable X-Forwarded-Email toward AF")
+				Expect(block).To(ContainSubstring(`proxy_set_header Authorization "Bearer $http_x_forwarded_access_token";`),
+					marker+" must keep the trusted-token Authorization rewrite")
+			}
 
 			deployment := &appsv1.Deployment{}
 			deploymentKey := types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}
