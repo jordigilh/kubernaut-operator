@@ -176,11 +176,12 @@ var _ = Describe("Console Resources", func() {
 				corev1.VolumeMount{Name: "tls-ca", MountPath: "/etc/tls-ca", ReadOnly: true},
 				corev1.VolumeMount{Name: "combined-ca", MountPath: "/combined"},
 			))
-			// #571: the combined-ca exception is memory-backed (no
+			// #571: the combined-ca exception is memory-backed and bounded (no
 			// disk-backed persistence location for staged trust material).
 			Expect(dep.Spec.Template.Spec.Volumes).To(ContainElements(
 				corev1.Volume{Name: "combined-ca", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
-					Medium: corev1.StorageMediumMemory,
+					Medium:    corev1.StorageMediumMemory,
+					SizeLimit: ambientCAStagingSizeLimit,
 				}}},
 			))
 		})

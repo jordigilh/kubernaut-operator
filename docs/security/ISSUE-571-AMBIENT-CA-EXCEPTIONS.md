@@ -41,8 +41,9 @@ system+provider bundle is the only mechanism that keeps provider logout
 certificate-verified against self-signed IdP CAs without changing the image.
 
 **Exception shape**: `build-ca-bundle` runs only as an init container; the
-`combined-ca` staging volume is **memory-backed** (`emptyDir.medium: Memory`);
-the oauth2-proxy container mounts it **read-only**.
+`combined-ca` staging volume is **memory-backed and bounded**
+(`emptyDir.medium: Memory`, `sizeLimit: 16Mi`); the oauth2-proxy container
+mounts it **read-only**.
 
 **Unblock condition**: an oauth2-proxy upgrade whose backend-logout path
 honors provider CA configuration (or an alternative pinned image). On
@@ -61,7 +62,8 @@ client's trust path (upstream issue #902) — trusts only the single
 AAP CA must therefore be merged into one file before the process starts.
 
 **Exception shape**: `build-ca-bundle` runs only as an init container; the
-`combined-ca` staging volume is **memory-backed**; the long-running container
+`combined-ca` staging volume is **memory-backed and bounded**
+(`emptyDir.medium: Memory`, `sizeLimit: 16Mi`); the long-running container
 mounts it **read-only**; no static `SSL_CERT_FILE`/`SSL_CERT_DIR` env is
 declared (the `tlsCaFile` config field flows through the runtime adapter per
 `DD-TLS-001`).

@@ -174,7 +174,8 @@ func consoleDeploymentVolumes(kn *kubernautv1alpha2.Kubernaut, includeCombinedCA
 		volumes = append(volumes, corev1.Volume{
 			Name: "combined-ca",
 			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
-				Medium: corev1.StorageMediumMemory,
+				Medium:    corev1.StorageMediumMemory,
+				SizeLimit: ambientCAStagingSizeLimit,
 			}},
 		})
 	}

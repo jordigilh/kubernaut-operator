@@ -263,6 +263,12 @@ func InterServiceTLSCertDirFor(kn *kubernautv1alpha2.Kubernaut) string {
 	return InterServiceTLSCertDir
 }
 
+// ambientCAStagingSizeLimit bounds the memory-backed combined-ca staging
+// volumes retained under the #571 documented exception register
+// (docs/security/ISSUE-571-AMBIENT-CA-EXCEPTIONS.md). Assembled CA bundles
+// are kilobyte-scale; 16Mi bounds tmpfs consumption with wide margin.
+var ambientCAStagingSizeLimit = resource.NewQuantity(16*1024*1024, resource.BinarySI)
+
 // InterServiceTLSCAFileFor resolves the chart-compatible inter-service client
 // trust path using the same compatibility rules as InterServiceTLSCertDirFor.
 func InterServiceTLSCAFileFor(kn *kubernautv1alpha2.Kubernaut) string {

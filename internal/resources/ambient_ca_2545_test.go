@@ -137,6 +137,8 @@ var _ = Describe("Ambient CA deployment contract (#2545)", func() {
 			Expect(combined.EmptyDir).NotTo(BeNil())
 			Expect(combined.EmptyDir.Medium).To(Equal(corev1.StorageMediumMemory),
 				"the combined-ca staging volume must be memory-backed so a compromised process gains no disk-backed persistence location")
+			Expect(combined.EmptyDir.SizeLimit).To(Equal(ambientCAStagingSizeLimit),
+				"the combined-ca staging volume must be bounded")
 			Expect(isInitOnly(dep, "build-ca-bundle")).To(BeTrue(),
 				"CA assembly must run only in the init container, never in the long-running container")
 			for _, c := range dep.Spec.Template.Spec.Containers {
@@ -164,6 +166,8 @@ var _ = Describe("Ambient CA deployment contract (#2545)", func() {
 			Expect(combined.EmptyDir).NotTo(BeNil())
 			Expect(combined.EmptyDir.Medium).To(Equal(corev1.StorageMediumMemory),
 				"the combined-ca staging volume must be memory-backed so a compromised process gains no disk-backed persistence location")
+			Expect(combined.EmptyDir.SizeLimit).To(Equal(ambientCAStagingSizeLimit),
+				"the combined-ca staging volume must be bounded")
 			Expect(isInitOnly(dep, "build-ca-bundle")).To(BeTrue(),
 				"CA assembly must run only in the init container, never in the long-running console containers")
 			for _, c := range dep.Spec.Template.Spec.Containers {
@@ -228,6 +232,8 @@ var _ = Describe("Ambient CA deployment contract (#2545)", func() {
 						Expect(v.EmptyDir).NotTo(BeNil(), entry.name)
 						Expect(v.EmptyDir.Medium).To(Equal(corev1.StorageMediumMemory), entry.name,
 							"any retained combined-ca staging volume must be memory-backed")
+						Expect(v.EmptyDir.SizeLimit).To(Equal(ambientCAStagingSizeLimit), entry.name,
+							"any retained combined-ca staging volume must be bounded")
 					}
 				}
 			}
