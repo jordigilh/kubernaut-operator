@@ -165,9 +165,17 @@ func consoleDeploymentVolumes(kn *kubernautv1alpha2.Kubernaut, includeCombinedCA
 		InterServiceTLSCAVolume(kn),
 	}
 	if includeCombinedCA {
+		// #571 documented exception (docs/security/ISSUE-571-AMBIENT-CA-EXCEPTIONS.md):
+		// the pinned oauth2-proxy image's backendLogout uses a bare http.Get
+		// that ignores provider CAFiles, so a merged system+provider bundle is
+		// assembled for SSL_CERT_FILE. The staging volume is memory-backed,
+		// written only by the build-ca-bundle init container, and mounted
+		// read-only by the oauth2-proxy container.
 		volumes = append(volumes, corev1.Volume{
-			Name:         "combined-ca",
-			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+			Name: "combined-ca",
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
+				Medium: corev1.StorageMediumMemory,
+			}},
 		})
 	}
 	volumes = append(volumes, corev1.Volume{
