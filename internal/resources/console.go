@@ -573,7 +573,10 @@ func consoleMCPProxyLocation(afURL string) string {
 // clears X-Forwarded-Access-Token (the trusted raw credential) and the
 // client-forgeable X-Forwarded-User/Email identity headers toward AF (#668):
 // AF authenticates solely via Authorization: Bearer, so the clears are
-// defense-in-depth with no behavior change.
+// defense-in-depth with no behavior change. The /.well-known/ location,
+// which performs no Authorization rewrite, carries the same clears (#679),
+// closing the last AF-proxied location that forwarded client-supplied
+// X-Forwarded-* headers raw.
 func consoleNginxServerConf(afURL string, enableRawThinking bool, caFiles ...string) string {
 	caFile := InterServiceTLSCAFile
 	if len(caFiles) > 0 && caFiles[0] != "" {
@@ -598,6 +601,18 @@ location /.well-known/ {
   proxy_pass %s;
   proxy_http_version 1.1;
   proxy_set_header Host $host;
+  # Parity with the other AF-proxied locations: normalize the forwarded
+  # client IP headers rather than passing client-supplied values raw.
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  # #679: clear the OAuth2 Proxy-injected raw token and the
+  # client-forgeable identity headers toward AF. AF authenticates
+  # solely via Authorization: Bearer and reads none of these, so this
+  # is defense-in-depth only; the location keeps no Authorization
+  # rewrite because it proxies public discovery documents.
+  proxy_set_header X-Forwarded-Access-Token "";
+  proxy_set_header X-Forwarded-User "";
+  proxy_set_header X-Forwarded-Email "";
 }
 
 %s

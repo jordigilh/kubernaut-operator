@@ -1116,6 +1116,23 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 					marker+" must keep the trusted-token Authorization rewrite")
 			}
 
+			By("clearing the raw token and forged identity headers toward AF on the /.well-known/ proxy location (#679)")
+			// /.well-known/ performs no Authorization rewrite (it proxies
+			// public discovery documents), so only the hygiene clears apply.
+			wellKnownBlock := locationBlock("location /.well-known/ {")
+			Expect(wellKnownBlock).NotTo(BeEmpty(), "server.conf must contain a location /.well-known/ block")
+			Expect(wellKnownBlock).To(ContainSubstring(`proxy_set_header X-Forwarded-Access-Token "";`),
+				"the /.well-known/ location must clear the raw access token toward AF")
+			Expect(wellKnownBlock).To(ContainSubstring(`proxy_set_header X-Forwarded-User "";`),
+				"the /.well-known/ location must clear the forgeable X-Forwarded-User toward AF")
+			Expect(wellKnownBlock).To(ContainSubstring(`proxy_set_header X-Forwarded-Email "";`),
+				"the /.well-known/ location must clear the forgeable X-Forwarded-Email toward AF")
+			Expect(wellKnownBlock).To(ContainSubstring("proxy_set_header Host $host;"),
+				"the /.well-known/ Host forwarding must be unchanged by the hygiene clears")
+			Expect(wellKnownBlock).NotTo(ContainSubstring("proxy_set_header Authorization"),
+				"the /.well-known/ location must not gain an Authorization rewrite; "+
+					"it serves public discovery documents without credential forwarding")
+
 			deployment := &appsv1.Deployment{}
 			deploymentKey := types.NamespacedName{Name: string(resources.ComponentConsole), Namespace: testNamespace}
 			Expect(k8sClient.Get(ctx, deploymentKey, deployment)).To(Succeed())
