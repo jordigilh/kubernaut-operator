@@ -89,6 +89,9 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Setup Go
+        # always(): the !cancelled() hack-script step needs the go.mod-pinned
+        # Go even on the lane-failure path (yq is built with go install).
+        if: always()
         uses: actions/setup-go@v7.1.0
         with:
           go-version-file: go.mod
