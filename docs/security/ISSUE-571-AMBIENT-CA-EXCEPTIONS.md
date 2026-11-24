@@ -86,9 +86,13 @@ inter-service CA file is the only private-CA trust path.
 **read-only ConfigMap-mounted file**; FMC renders **no writable volume** and
 performs no CA assembly.
 
-**Known trade-off**: Go's `SSL_CERT_FILE` replaces rather than extends the
-system trust store, so FMC cannot additionally verify public-CA endpoints
-while the exception holds. This is accepted pending the upstream fix.
+**Known trade-off**: Go's `SSL_CERT_FILE` replaces the default bundle *file*
+search but does not disable the default certificate *directory* scan
+(`SSL_CERT_DIR` unset): public roots present in the FMC image's certificate
+directories (for example `/etc/pki/tls/certs` on UBI) remain trusted. Whether
+a given public root verifies therefore depends on the image's directory
+contents rather than the complete system bundle. This nuance is accepted
+pending the upstream fix.
 
 **Unblock condition**: upstream kubernaut#2548 wiring FMC to the runtime
 ambient-CA adapter. On adoption, remove the env var from the Deployment.
