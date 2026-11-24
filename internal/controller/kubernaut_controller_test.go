@@ -211,9 +211,11 @@ func deleteBYOSecrets(ctx context.Context) {
 	// cleanupNamespacedResources's Secret sweep won't catch it either) and
 	// created directly by name in several console-auth specs
 	// (kubernaut_lifecycle_test.go). Must be cleaned up here so those specs
-	// don't collide under any run order.
+	// don't collide under any run order. #685: acm-search-token likewise --
+	// created by IT-FLEET-685-FMC-002 and IT-FLEET-521-RECONCILE-ACM, both
+	// directly by name, so neither may assume the other ran first.
 	for _, name := range []string{pgSecretName, vkSecretName, llmSecretName, consoleOIDCSecretName,
-		"fleet-oauth2-creds", "shared-fleet-oauth2-creds", testWEFleetOAuth2SecretRef, "ka-oauth2-creds"} {
+		"fleet-oauth2-creds", "shared-fleet-oauth2-creds", testWEFleetOAuth2SecretRef, "ka-oauth2-creds", "acm-search-token"} {
 		s := &corev1.Secret{}
 		err := k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: testNamespace}, s)
 		if err == nil {

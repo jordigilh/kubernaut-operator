@@ -2048,6 +2048,25 @@ var _ = Describe("APIFrontend/EffectivenessMonitor fleet RBAC", func() {
 		Expect(apiGroups).NotTo(ContainElement("gateway.envoyproxy.io"))
 	})
 
+	// Documentation / defense-in-depth, not a functional prerequisite: the
+	// upstream FMC inventory reader (#685) reaches fleetmetadatacache-service
+	// over the pod network, not the Kubernetes API. This pins the existing
+	// cluster-wide core-services get grant so a future least-privilege pass
+	// that narrows it knows AF's inventory path was relying on it.
+	It("UT-FLEET-685-RBAC-001 [AC-6, AC-4]: apifrontendClusterRole's core-services get grant covers services/fleetmetadatacache-service", func() {
+		kn := testKubernautWithAF()
+		cr := apifrontendClusterRole(kn, testKnV2(kn), CommonLabels(kn))
+		covered := false
+		for _, r := range cr.Rules {
+			if len(r.APIGroups) > 0 && r.APIGroups[0] == "" && slices.Contains(r.Resources, "services") && slices.Contains(r.Verbs, "get") &&
+				(len(r.ResourceNames) == 0 || slices.Contains(r.ResourceNames, "fleetmetadatacache-service")) {
+				covered = true
+			}
+		}
+		Expect(covered).To(BeTrue(),
+			"AC-6: AF's ClusterRole is expected to cover get services/fleetmetadatacache-service for the fleet inventory path, got rules: %+v", cr.Rules)
+	})
+
 	It("effectivenessMonitorControllerClusterRole gains MCP Gateway CRD rules when Fleet is enabled with mcpGateway.endpoint set", func() {
 		kn, knV2 := testKubernautWithFleetMCP()
 		cr := effectivenessMonitorControllerClusterRole(kn, knV2, CommonLabels(kn))

@@ -37,6 +37,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/yaml"
 
 	kubernautv1alpha2 "github.com/jordigilh/kubernaut-operator/api/v1alpha2"
 	"github.com/jordigilh/kubernaut-operator/internal/resources"
@@ -195,6 +196,58 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
 				Name: testNamespace + "-fleetmetadatacache-mcpgateway-binding", Namespace: testNamespace,
 			}, rb)).To(Succeed())
+		})
+
+		It("IT-FLEET-685-FMC-001 [CM-6, AC-4]: the reconciled AF ConfigMap carries fleet.fmc.endpoint equal to the derived FMC URL", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
+			enableFleetMetadataCache(ctx)
+			reconcileToRunning(ctx)
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "apifrontend-config", Namespace: testNamespace}, cm)).To(Succeed())
+			// Narrow partial-field probe (black-box package; the
+			// fleet.fmc block is asserted structurally by
+			// UT-FLEET-685-FMC-001). Strictly binds the endpoint to the
+			// fmc block -- the top-level fleet.endpoint renders the same
+			// URL under backend=fleetmetadatacache, so a plain substring
+			// assertion could pass on the wrong line.
+			var root struct {
+				Fleet struct {
+					FMC *struct {
+						Endpoint string `yaml:"endpoint"`
+					} `yaml:"fmc"`
+				} `yaml:"fleet"`
+			}
+			Expect(yaml.Unmarshal([]byte(cm.Data["config.yaml"]), &root)).To(Succeed())
+			Expect(root.Fleet.FMC).NotTo(BeNil(),
+				"CM-6: the operator-managed AF render must carry the fmc block (kubernaut #2696 phase c), got:\n%s", cm.Data["config.yaml"])
+			Expect(root.Fleet.FMC.Endpoint).To(Equal(resources.FleetMetadataCacheURL(testNamespace)),
+				"AC-4: fleet.fmc.endpoint must be the derived FMC service URL, got:\n%s", cm.Data["config.yaml"])
+		})
+
+		It("IT-FLEET-685-FMC-002 [CM-6]: the reconciled AF ConfigMap omits fleet.fmc when the backend is acm (derived-only, fail-closed)", func() {
+			createBYOSecrets(ctx)
+			tokenSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: "acm-search-token", Namespace: testNamespace},
+				Data:       map[string][]byte{"token": []byte("tok")},
+			}
+			Expect(k8sClient.Create(ctx, tokenSecret)).To(Succeed())
+			// IT-FLEET-521-RECONCILE-ACM below creates the same Secret;
+			// both specs rely on the shared AfterEach's deleteBYOSecrets
+			// sweep (which lists acm-search-token) so neither assumes the
+			// other ran first.
+			Expect(k8sClient.Create(ctx, newCRWithFMCEnabled())).To(Succeed())
+			fleet := defaultFMCFleetSpec()
+			fleet.ScopeCheck.Backend = fleetBackendACM
+			fleet.ScopeCheck.ACM = &kubernautv1alpha2.FleetACMScopeCheckSpec{Endpoint: "https://acm-search.example.com/graphql", TokenSecretRef: &kubernautv1alpha2.SecretKeyRef{Name: "acm-search-token"}}
+			enableFleetMetadataCacheWithFleet(ctx, fleet)
+			reconcileToRunning(ctx)
+
+			cm := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: "apifrontend-config", Namespace: testNamespace}, cm)).To(Succeed())
+			Expect(cm.Data["config.yaml"]).NotTo(ContainSubstring("fmc:"),
+				"acm backend leaves FMC not operator-managed -- the key stays absent so the inventory path fails closed, got:\n%s", cm.Data["config.yaml"])
 		})
 
 		It("IT-FLEET-557-RECONCILE-MCP-CA: wires MCP Gateway CA rendering and read-only mounts through Reconcile", func() {

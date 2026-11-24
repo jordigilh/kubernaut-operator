@@ -246,10 +246,42 @@ type fleetConfigYAML struct {
 	// a ClusterRegistry, so resolveFleetConfig itself never sets it.
 	Namespace string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 
+	// FMC mirrors upstream pkg/fleet.FleetFMCConfig (kubernaut #2696 phase
+	// c, DD-FLEET-017 D2.1a): the Console inventory endpoint
+	// (fleet.fmc.endpoint), intentionally separate from Endpoint -- the
+	// scope adapter keeps using Backend+Endpoint while AF's inventory
+	// reader is built only from this key. Only ever populated by
+	// resolveAPIFrontendFleetConfig (#685): AF is the sole upstream
+	// consumer of fleet.NewInventoryReader, and the value is always the
+	// operator-derived FMC service URL (#521 contract -- derived-only,
+	// never CR-supplied; a spec.fleet.fmc CR block is pruned by the CRD's
+	// structural schema, see the reverted kubernaut PR #2708 prototype).
+	// resolveMCPGatewayOnlyFleetConfig nils it defensively alongside its
+	// other strips so a future edit to resolveFleetConfig cannot leak it
+	// into EM; GW/RO never receive it either.
+	FMC *fleetFMCConfigYAML `json:"fmc,omitempty" yaml:"fmc,omitempty"`
+
 	// Resilience mirrors upstream pkg/fleet.FleetConfig.Resilience (#390,
 	// kubernaut#2262 Phase 2). Shared by every component that renders this
 	// type (GW/RO directly, AF/EM via resolveMCPGatewayOnlyFleetConfig).
 	Resilience *fleetResilienceYAML `json:"resilience,omitempty" yaml:"resilience,omitempty"`
+}
+
+// fleetFMCConfigYAML mirrors upstream pkg/fleet.FleetFMCConfig
+// (kubernaut #2696 phase c) field-for-field. Endpoint carries the FMC
+// inventory API URL; upstream performs no auto-derivation (absent means
+// the Console inventory path is unavailable, never inherited from
+// fleet.endpoint), so the operator always supplies the derived value when
+// it renders the block at all.
+//
+// One deliberate divergence from upstream: the FMC field on
+// fleetConfigYAML is a pointer (*fleetFMCConfigYAML) where upstream uses a
+// value (FleetFMCConfig). yaml.v3's omitempty does not omit zero-valued
+// structs, so upstream's value form renders "fmc: {}" when unset; the
+// pointer form guarantees the key is omitted entirely unless a non-empty
+// endpoint was rendered.
+type fleetFMCConfigYAML struct {
+	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
 }
 
 // fleetResilienceYAML mirrors upstream pkg/fleet.FleetResilienceConfig
@@ -432,6 +464,10 @@ func resolveMCPGatewayOnlyFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credent
 	}
 	cfg.Endpoint = ""
 	cfg.TLSCAFile = ""
+	// #685: defensive strip -- EM never reads a Console inventory reader,
+	// so fleet.fmc must not survive even if a future edit to
+	// resolveFleetConfig starts populating it.
+	cfg.FMC = nil
 	cfg.Namespace = knV2.Spec.Fleet.MCPGateway.Namespace
 	return cfg
 }
@@ -445,12 +481,23 @@ func resolveMCPGatewayOnlyFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credent
 // spec.fleet.mcpGateway.namespace (DD-362 -- no per-component override) so
 // AF's ClusterRegistry scopes its watch to a single namespace instead of
 // cluster-wide (#227). GW/RO never set this field.
+//
+// #685 (kubernaut #2696 phase c, DD-FLEET-017 D2.1a): AF additionally
+// renders fleet.fmc.endpoint, the sole key AF's Console inventory reader
+// is built from upstream. Derived-only per the #521 contract: set to the
+// operator-derived FMC service URL when FMC is operator-managed
+// (backend=fleetmetadatacache); under backend=acm FMC is not deployed by
+// this operator and the key stays absent so the inventory path fails
+// closed, never pointing at a service the operator never deployed.
 func resolveAPIFrontendFleetConfig(knV2 *kubernautv1alpha2.Kubernaut, credentialsSecretRefOverride, defaultOAuth2CAFile string) *fleetConfigYAML {
 	cfg := resolveFleetConfig(knV2, credentialsSecretRefOverride, defaultOAuth2CAFile)
 	if cfg == nil {
 		return nil
 	}
 	cfg.Namespace = knV2.Spec.Fleet.MCPGateway.Namespace
+	if knV2.Spec.FleetMetadataCacheEnabled() {
+		cfg.FMC = &fleetFMCConfigYAML{Endpoint: FleetMetadataCacheURL(knV2.Namespace)}
+	}
 	return cfg
 }
 
