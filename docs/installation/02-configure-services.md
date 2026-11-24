@@ -984,24 +984,39 @@ the operator no longer tracks:
 ```bash
 NS=kubernaut-system  # Set to the namespace of your Kubernaut CR.
 
-# The retired console-access ClusterRoleBinding (--ignore-not-found covers
-# clean installs where it never existed).
-oc delete clusterrolebinding "${NS}-console-access-binding" --ignore-not-found
+# Delete a named object only when it carries the operator's managed-by
+# label — the retired pre-v1.6 objects do; an administrator-owned object
+# with the same name is preserved, and a missing object is skipped. If a
+# same-named object exists but is not operator-owned, review it manually.
+delete_if_operator_owned() {
+  local kind=$1 name=$2
+  if oc get "$kind" "$name" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null \
+    | grep -q '^kubernaut-operator$'; then
+    oc delete "$kind" "$name"
+  else
+    echo "skipping $kind/$name: absent or not operator-owned"
+  fi
+}
+
+# The retired console-access ClusterRoleBinding.
+delete_if_operator_owned clusterrolebinding "${NS}-console-access-binding"
 
 # The six retired persona ClusterRoles and their bindings — the only
-# persona names a pre-v1.6 operator rendered, so administrator-owned
-# roles are untouched. (The ClusterRoles are also swept automatically
-# when you delete the Kubernaut instance; delete them manually only if
-# you keep the instance.) The loop no-ops on clean installs.
+# persona names a pre-v1.6 operator rendered. (The ClusterRoles are also
+# swept automatically when you delete the Kubernaut instance; remove them
+# manually only if you keep the instance.)
 for persona in sre ai-orchestrator cicd observability l3-audit remediation-approver; do
-  oc delete clusterrole "${NS}-tool-${persona}" --ignore-not-found
-  oc delete clusterrolebinding "${NS}-tool-${persona}-binding" --ignore-not-found
+  delete_if_operator_owned clusterrole "${NS}-tool-${persona}"
+  delete_if_operator_owned clusterrolebinding "${NS}-tool-${persona}-binding"
 done
 
 # Bindings the pre-v1.6 custom-clusterRoleName path rendered
-# (<ns>-tool-custom-<name>-binding): the <name> half varies, so match by
-# the operator's rendered prefix. The loop no-ops when nothing matches.
-for crb in $(oc get clusterrolebinding -o name | grep "/${NS}-tool-custom-.*-binding" || true); do oc delete "$crb"; done
+# (<ns>-tool-custom-<name>-binding): the <name> half varies, so match the
+# operator's rendered prefix AND its managed-by label — administrator-owned
+# lookalikes (for example a "-binding-backup" copy) carry no such label
+# and are preserved.
+for crb in $(oc get clusterrolebinding -l app.kubernetes.io/managed-by=kubernaut-operator -o name \
+  | grep "/${NS}-tool-custom-.*-binding" || true); do oc delete "$crb"; done
 ```
 
 ## Additional ClusterRoles for ecosystem CRDs (KA, Gateway, EM)
