@@ -104,8 +104,9 @@ var _ = Describe("integrated ownership API boundaries", Label("unit"), func() {
 			objects = append(objects, &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: name}})
 		}
 		// A labeled additional-component CRB (#277) so the roles-only
-		// deleteAdditionalComponentRBAC (now purely the label-selector
-		// prune) still has an owned object to attempt deleting (#684).
+		// deleteAdditionalComponentRBAC (the additional-component
+		// label-selector prune plus the retired persona-role sweep)
+		// still has an owned object to attempt deleting (#684).
 		objects = append(objects, resources.AdditionalComponentCRB(kn, "gateway", "gateway-sa", "customer-role"))
 		seedBusinessOwnedResources(r, kn, objects...)
 		Expect(r.pruneStaleGatewayRBAC(ctx, kn)).NotTo(BeEmpty())
