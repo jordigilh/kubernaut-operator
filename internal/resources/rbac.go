@@ -743,6 +743,28 @@ func AdditionalComponentCRB(kn *kubernautv1alpha2.Kubernaut, component, saName, 
 	}
 }
 
+// retiredPersonaClusterRoleSuffixes lists the six persona tool ClusterRole
+// name suffixes rendered by pre-v1.6 operators (#118/#636). #682/#684
+// removed the roles with the roles-only model; the list survives only for
+// the finalizer sweep so an upgrading pre-GA cluster does not keep the
+// retired tool sets after deleting its Kubernaut instance.
+var retiredPersonaClusterRoleSuffixes = []string{
+	"tool-sre", "tool-ai-orchestrator", "tool-cicd",
+	"tool-observability", "tool-l3-audit", "tool-remediation-approver",
+}
+
+// RetiredToolClusterRoleNames returns the namespace-prefixed names of the
+// six persona tool ClusterRoles a pre-v1.6 operator rendered. The finalizer
+// deletes them on instance deletion; reconcile-time removal is deliberately
+// not performed (DD-682 no-migration decision).
+func RetiredToolClusterRoleNames(kn *kubernautv1alpha2.Kubernaut) []string {
+	names := make([]string, 0, len(retiredPersonaClusterRoleSuffixes))
+	for _, suffix := range retiredPersonaClusterRoleSuffixes {
+		names = append(names, clusterRoleName(kn, suffix))
+	}
+	return names
+}
+
 // ConsoleAccessClusterRoleName returns the name of the coarse-grained
 // console-access ClusterRole for label-prune and finalizer cleanup (#682:
 // the role stays operator-rendered; any user-facing binding is

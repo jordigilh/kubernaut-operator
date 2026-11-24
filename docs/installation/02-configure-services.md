@@ -986,8 +986,10 @@ the operator no longer tracks:
 # clean installs where it never existed).
 oc delete clusterrolebinding kubernaut-system-console-access-binding --ignore-not-found
 
-# The retired persona tool ClusterRoleBindings and ClusterRoles. The loops
-# no-op on clean installs where nothing matches.
+# The retired persona tool ClusterRoleBindings. The loop no-ops on clean
+# installs where nothing matches. (The six retired ClusterRoles themselves
+# are swept automatically when you delete the Kubernaut instance; delete
+# them manually only if you keep the instance.)
 for crb in $(oc get clusterrolebinding -o name | grep 'kubernaut-system-tool-.*-binding' || true); do oc delete "$crb"; done
 for cr in $(oc get clusterrole -o name | grep 'kubernaut-system-tool-' || true); do oc delete "$cr"; done
 ```

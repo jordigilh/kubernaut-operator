@@ -141,6 +141,44 @@ var _ = Describe("independent lifecycle failure outcomes", Label("unit"), func()
 		}
 	})
 
+	It("UT-684-FINALIZER-001: sweeps the six retired pre-v1.6 persona ClusterRoles on instance deletion", func() {
+		kn := newMinimalCR()
+		r := businessUnitReconciler(kn, interceptor.Funcs{})
+		retiredNames := resources.RetiredToolClusterRoleNames(kn)
+		Expect(retiredNames).To(HaveLen(6))
+		for _, name := range retiredNames {
+			Expect(r.Create(ctx, &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{
+				Name:   name,
+				Labels: resources.CommonLabels(kn),
+			}})).To(Succeed(), "seeding pre-v1.6 upgrade leftover %q", name)
+		}
+		foreign := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: kn.Namespace + "-foreign-tool-sre"}}
+		Expect(r.Create(ctx, foreign)).To(Succeed())
+
+		Expect(r.deleteAdditionalComponentRBAC(ctx, kn)).To(BeEmpty())
+
+		for _, name := range retiredNames {
+			err := r.Get(ctx, types.NamespacedName{Name: name}, &rbacv1.ClusterRole{})
+			Expect(apierrors.IsNotFound(err)).To(BeTrue(),
+				"retired persona ClusterRole %q should be swept by the finalizer path", name)
+		}
+		Expect(r.Get(ctx, types.NamespacedName{Name: foreign.Name}, &rbacv1.ClusterRole{})).To(Succeed(),
+			"foreign ClusterRoles must be preserved")
+
+		By("reporting a failed sweep instead of ignoring it")
+		failing := businessUnitReconciler(kn, interceptor.Funcs{Delete: func(context.Context, client.WithWatch,
+			client.Object, ...client.DeleteOption) error {
+			return fmt.Errorf("injected cleanup failure")
+		}})
+		seeded := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{
+			Name:   retiredNames[0],
+			Labels: resources.CommonLabels(kn),
+		}}
+		Expect(failing.Create(ctx, seeded)).To(Succeed())
+		Expect(failing.deleteAdditionalComponentRBAC(ctx, kn)).To(ContainElement(
+			MatchError(ContainSubstring("deleting retired persona ClusterRole"))))
+	})
+
 	It("UT-AUDIT-515-ERRORS-006: distinguishes Ansible and AlertManager disabled, missing, malformed and valid credentials", func() {
 		kn := newMinimalCR()
 		r := businessUnitReconciler(kn, interceptor.Funcs{})

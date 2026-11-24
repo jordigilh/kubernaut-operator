@@ -88,21 +88,22 @@ Continues the direction of #181 (custom ClusterRole refs) and
 
 - The DD-662 explicit bind path
   (`spec.apiFrontend.rbac.roleBindings[].clusterRoleName`) is removed;
-  the only supported bind path for `console-reader` (and every other
-  rendered role) is an administrator-owned external ClusterRoleBinding.
-  DD-662's permanent model — the coarse unbound role — is unchanged.
-  `console-inventory-reader` additionally supports an
-  administrator-owned **namespaced RoleBinding**, which satisfies only
-  namespace-filtered inventory reads (the eight namespaced kinds in the
-  bound namespaces); the default unfiltered inventory list issues a
-  cluster-scoped SAR and needs a cluster-level ClusterRoleBinding.
+  the only supported bind path for `console-reader` is an
+  administrator-owned external ClusterRoleBinding. DD-662's permanent
+  model — the coarse unbound role — is unchanged.
+  `console-inventory-reader` can also be bound by an administrator-owned
+  namespaced RoleBinding; that binding covers only namespace-filtered
+  inventory reads, while the default unfiltered inventory list requires
+  an external ClusterRoleBinding.
 - Upgrading a pre-v1.6 deployment that used `roleBindings`/
   `consoleAccessGroups` leaves its stale user-facing RBAC in place — the
   `<ns>-console-access-binding` and `<ns>-tool-*-binding` CRBs and the six
-  retired `<ns>-tool-<persona>` ClusterRoles; they keep granting
+  retired `<ns>-tool-<persona>` ClusterRoles. The CRBs keep granting
   authorization the operator no longer tracks and must be removed
-  manually. The installation guide documents the exact cleanup commands.
-  This is accepted: pre-GA, clean deployments expected.
+  manually (the installation guide documents the exact commands). The
+  six retired ClusterRoles are swept automatically when the Kubernaut
+  instance is deleted (finalizer), but not at reconcile time. This is
+  accepted: pre-GA, clean deployments expected.
 - The legacy `apifrontend-rbac-roles` ConfigMap orphan cleanup (#118)
   is preserved in the reconcile path.
 
@@ -130,4 +131,6 @@ Continues the direction of #181 (custom ClusterRole refs) and
   roles do, and no operator-managed ClusterRoleBinding carries a
   user-facing subject (Fleet disabled in the fixture, so the protocol
   -group exception does not apply); finalizer sweeps the console roles
-  without ever creating a CRB (IT-CONSOLE-005/010 rewritten).
+  without ever creating a CRB, and sweeps the six retired pre-v1.6
+  persona ClusterRoles seeded as upgrade leftovers
+  (IT-CONSOLE-005/010 and the finalizer sweep IT rewritten).

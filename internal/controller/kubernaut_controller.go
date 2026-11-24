@@ -2762,14 +2762,25 @@ func (r *KubernautReconciler) deleteMonitoringClusterRBAC(ctx context.Context, k
 
 // deleteAdditionalComponentRBAC removes every additional-component
 // ClusterRoleBinding (KA/Gateway/EM, #277) via the generic label-selector
-// prune. The former tool ClusterRole/CRB and console-access CRB static-name
-// deletes are gone with the roles-only model (#682/#684): the operator no
-// longer renders those objects, and the ClusterRoles it still renders ride
-// the deleteCoreClusterRBAC label sweep. Pre-GA upgrades from the
-// persona/binding model must remove its stale user-facing CRBs manually
-// (see DD-682).
+// prune, and sweeps the six retired pre-v1.6 persona ClusterRoles
+// (RetiredToolClusterRoleNames) so an upgrading pre-GA cluster does not
+// keep the retired tool sets after deleting its instance. The former
+// user-facing CRB deletes are gone with the roles-only model (#682/#684):
+// the operator never rendered those bindings on this code path anymore,
+// and stale pre-v1.6 CRBs are removed manually per DD-682 (documented in
+// the installation guide).
 func (r *KubernautReconciler) deleteAdditionalComponentRBAC(ctx context.Context, kn *kubernautv1alpha2.Kubernaut) []error {
-	return r.pruneOrphanedAdditionalComponentRBAC(ctx, kn, nil)
+	errs := r.pruneOrphanedAdditionalComponentRBAC(ctx, kn, nil)
+
+	for _, name := range resources.RetiredToolClusterRoleNames(kn) {
+		retiredCR := &rbacv1.ClusterRole{}
+		retiredCR.Name = name
+		if err := r.deleteIfExists(ctx, kn, retiredCR); err != nil {
+			errs = append(errs, fmt.Errorf("deleting retired persona ClusterRole %s: %w", name, err))
+		}
+	}
+
+	return errs
 }
 
 // deleteMCPGatewayNamespaceRBAC removes every namespaced Role/RoleBinding

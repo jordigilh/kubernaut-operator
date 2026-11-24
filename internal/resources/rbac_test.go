@@ -1221,6 +1221,19 @@ var _ = Describe("Issue #684: roles-only RBAC model", func() {
 			}
 		}
 	})
+
+	It("enumerates the six retired pre-v1.6 persona ClusterRole names for the finalizer sweep", func() {
+		kn := testKubernautWithAF()
+		names := RetiredToolClusterRoleNames(kn)
+		Expect(names).To(ConsistOf(
+			kn.Namespace+"-tool-sre",
+			kn.Namespace+"-tool-ai-orchestrator",
+			kn.Namespace+"-tool-cicd",
+			kn.Namespace+"-tool-observability",
+			kn.Namespace+"-tool-l3-audit",
+			kn.Namespace+"-tool-remediation-approver",
+		), "the sweep list must cover exactly the six pre-v1.6 personas")
+	})
 })
 
 // --- Issue #289: console-access RBAC gate ---

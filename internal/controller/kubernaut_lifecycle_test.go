@@ -3710,6 +3710,38 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(errors.IsNotFound(err)).To(BeTrue(), "console-access ClusterRole should be deleted by finalizer")
 		})
 
+		It("sweeps the retired pre-v1.6 persona ClusterRoles by finalizer", func() {
+			createBYOSecrets(ctx)
+			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
+			r := reconcileToRunning(ctx)
+
+			By("seeding pre-v1.6 upgrade leftovers (the retired persona roles)")
+			kn := &kubernautv1alpha2.Kubernaut{}
+			Expect(k8sClient.Get(ctx, singletonKey(), kn)).To(Succeed())
+			retiredNames := resources.RetiredToolClusterRoleNames(kn)
+			Expect(retiredNames).To(HaveLen(6))
+			for _, name := range retiredNames {
+				Expect(k8sClient.Create(ctx, &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{
+					Name:   name,
+					Labels: resources.CommonLabels(kn),
+				}})).To(Succeed(), "seeding pre-v1.6 leftover %q", name)
+			}
+
+			By("deleting the CR")
+			Expect(k8sClient.Delete(ctx, kn)).To(Succeed())
+			stripWorkflowNamespaceCreatedByAnnotation(ctx)
+
+			By("reconciling the finalizer")
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: singletonKey()})
+			Expect(err).NotTo(HaveOccurred())
+
+			for _, name := range retiredNames {
+				err = k8sClient.Get(ctx, types.NamespacedName{Name: name}, &rbacv1.ClusterRole{})
+				Expect(errors.IsNotFound(err)).To(BeTrue(),
+					"retired persona ClusterRole %q should be swept by the finalizer", name)
+			}
+		})
+
 		It("AF Deployment uses plain ConfigMap volume after SAR migration", func() {
 			createBYOSecrets(ctx)
 			Expect(k8sClient.Create(ctx, newMinimalCR())).To(Succeed())
