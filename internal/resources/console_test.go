@@ -752,6 +752,28 @@ var _ = Describe("Console Resources", func() {
 			Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-Email "";`),
 				"the console read location must clear the client-forgeable X-Forwarded-Email toward AF")
 		})
+
+		It("UT-CN-679-001 [AC-6, CC6.1]: /.well-known/ clears the raw access token and forged identity headers toward AF without changing proxying", func() {
+			block := requireLocationBlock("location /.well-known/ {")
+			// Unlike the #668 locations, /.well-known/ performs no
+			// Authorization rewrite: it proxies public discovery documents
+			// through the authenticated console origin, so only the hygiene
+			// clears apply here.
+			Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-Access-Token "";`),
+				"the /.well-known/ location must clear the OAuth2 Proxy-injected raw access token toward AF; "+
+					"AF authenticates solely via Authorization: Bearer")
+			Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-User "";`),
+				"the /.well-known/ location must clear the client-forgeable X-Forwarded-User toward AF")
+			Expect(block).To(ContainSubstring(`proxy_set_header X-Forwarded-Email "";`),
+				"the /.well-known/ location must clear the client-forgeable X-Forwarded-Email toward AF")
+			// Regression guards: the proxying behavior must be unchanged
+			// (#679 adds header clears only).
+			Expect(block).To(ContainSubstring("proxy_set_header Host $host;"),
+				"the /.well-known/ Host forwarding must be unchanged")
+			Expect(block).NotTo(ContainSubstring(`proxy_set_header Authorization`),
+				"the /.well-known/ location must not gain an Authorization rewrite; "+
+					"it serves public discovery documents without credential forwarding")
+		})
 	})
 
 	Context("ConsoleDeployment oauth2-proxy TLS (#309)", func() {
