@@ -984,30 +984,36 @@ the operator no longer tracks:
 ```bash
 NS=kubernaut-system  # Set to the namespace of your Kubernaut CR.
 
-# Delete a named object only when it carries the operator's managed-by
-# label — the retired pre-v1.6 objects do; an administrator-owned object
-# with the same name is preserved, and a missing object is skipped. If a
-# same-named object exists but is not operator-owned, review it manually.
-delete_if_operator_owned() {
-  local kind=$1 name=$2
-  if oc get "$kind" "$name" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null \
-    | grep -q '^kubernaut-operator$'; then
+# Retired-name cleanup. The managed-by label pre-filters clearly foreign
+# objects, but it cannot prove current ownership (an administrator could
+# have taken over a retired name and kept the label), so every deletion
+# is confirmed manually: the helper shows the candidate and asks before
+# deleting. Absent or unlabelled objects are skipped silently.
+delete_with_review() {
+  local kind=$1 name=$2 owner
+  owner=$(oc get "$kind" "$name" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null)
+  if [ "$owner" != "kubernaut-operator" ]; then
+    echo "skipping $kind/$name: absent or not operator-owned"
+    return
+  fi
+  read -r -p "delete retired $kind/$name (managed-by=kubernaut-operator)? [y/N] " confirm
+  if [ "$confirm" = "y" ]; then
     oc delete "$kind" "$name"
   else
-    echo "skipping $kind/$name: absent or not operator-owned"
+    echo "kept $kind/$name — review manually"
   fi
 }
 
 # The retired console-access ClusterRoleBinding.
-delete_if_operator_owned clusterrolebinding "${NS}-console-access-binding"
+delete_with_review clusterrolebinding "${NS}-console-access-binding"
 
 # The six retired persona ClusterRoles and their bindings — the only
 # persona names a pre-v1.6 operator rendered. (The ClusterRoles are also
 # swept automatically when you delete the Kubernaut instance; remove them
 # manually only if you keep the instance.)
 for persona in sre ai-orchestrator cicd observability l3-audit remediation-approver; do
-  delete_if_operator_owned clusterrole "${NS}-tool-${persona}"
-  delete_if_operator_owned clusterrolebinding "${NS}-tool-${persona}-binding"
+  delete_with_review clusterrole "${NS}-tool-${persona}"
+  delete_with_review clusterrolebinding "${NS}-tool-${persona}-binding"
 done
 
 # Bindings the pre-v1.6 custom-clusterRoleName path rendered
