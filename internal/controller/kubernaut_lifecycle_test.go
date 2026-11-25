@@ -1202,6 +1202,18 @@ var _ = Describe("Kubernaut Lifecycle", func() {
 			Expect(deployment.Spec.Template.Spec.Containers[0].Env).To(ContainElement(corev1.EnvVar{Name: "SSL_CERT_FILE", Value: "/etc/ssl/combined/ca-bundle.crt"}))
 			Expect(deployment.Spec.Template.Spec.InitContainers).To(HaveLen(1))
 			Expect(deployment.Spec.Template.Spec.InitContainers[0].Name).To(Equal("build-ca-bundle"))
+			// #571: the retained combined-ca exception must be memory-backed
+			// (docs/security/ISSUE-571-AMBIENT-CA-EXCEPTIONS.md).
+			var combinedCAVolume *corev1.Volume
+			for i := range deployment.Spec.Template.Spec.Volumes {
+				if deployment.Spec.Template.Spec.Volumes[i].Name == "combined-ca" {
+					combinedCAVolume = &deployment.Spec.Template.Spec.Volumes[i]
+				}
+			}
+			Expect(combinedCAVolume).NotTo(BeNil(), "the console logout CA exception renders the combined-ca volume")
+			Expect(combinedCAVolume.EmptyDir).NotTo(BeNil())
+			Expect(combinedCAVolume.EmptyDir.Medium).To(Equal(corev1.StorageMediumMemory),
+				"the reconciled combined-ca staging volume must be memory-backed (no disk-backed persistence location)")
 
 			liveCR := &kubernautv1alpha2.Kubernaut{}
 			Expect(k8sClient.Get(ctx, singletonKey(), liveCR)).To(Succeed())

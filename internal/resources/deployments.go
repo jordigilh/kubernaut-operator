@@ -382,9 +382,18 @@ func WorkflowExecutionDeployment(kn *kubernautv1alpha2.Kubernaut, knV2 *kubernau
 					},
 				},
 			},
+			// #571 documented exception (docs/security/ISSUE-571-AMBIENT-CA-EXCEPTIONS.md):
+			// upstream DefaultBaseTransport trusts only the single TLS_CA_FILE
+			// bundle, so the inter-service and AAP CAs must be merged into one
+			// file. The staging volume is memory-backed, written only by the
+			// build-ca-bundle init container, and mounted read-only by the
+			// long-running container.
 			corev1.Volume{
-				Name:         "combined-ca",
-				VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+				Name: "combined-ca",
+				VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
+					Medium:    corev1.StorageMediumMemory,
+					SizeLimit: ambientCAStagingSizeLimit,
+				}},
 			},
 		)
 		mounts = append(mounts, corev1.VolumeMount{
