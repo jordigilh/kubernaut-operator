@@ -133,10 +133,16 @@ treated as a production-operand exception.
 bounded** (`emptyDir.medium: Memory`, `sizeLimit: 16Mi`) — the shape the
 upstream rendered-bundle gate (kubernaut#2548, PR kubernaut#2721,
 `UT-TLS-2548-009`) requires for init-only `kind: Job` certificate staging.
-The `sizeLimit` is advisory accounting: the Job container sets no memory
-limit, so tmpfs usage is bounded by kubelet eviction rather than a cgroup;
-the enforced contract is `medium: Memory`, which removes disk-backed
-persistence of generated TLS material.
+The `sizeLimit` is a **tmpfs volume capacity limit**: kubelet passes it to
+the mount as `size=`, so the kernel caps the staging directory at 16Mi. It
+bounds the volume only, not total container memory (the Job sets no memory
+limit, so process RAM is bounded by kubelet eviction). The enforced
+anti-persistence contract is `medium: Memory`: generated TLS material is
+not written to the container's writable layer or node disk, except that on
+a swap-enabled node without effective tmpfs `noswap` support, tmpfs pages
+may be swapped to persistent storage — Kubernetes clusters are expected to
+run with swap disabled (the default and long-standing requirement), which
+closes that residual path.
 
 **Unblock condition**: none tracked upstream. Remove this exception when the
 chart stops bootstrapping development certificates (for example if the
@@ -160,7 +166,7 @@ scope** for #571 per the issue's own boundary:
 | Control | How this register satisfies it |
 |---|---|
 | FedRAMP AC-6 / CM-7 | Retained writable locations are minimized to memory-backed, init-only, read-only-to-workload staging; every exception is enumerated and test-enforced |
-| FedRAMP SC-8 / SC-13 | No trust path is silently downgraded: certificate verification against private CAs is preserved in all four exceptions; generated development CA material never touches container disk |
+| FedRAMP SC-8 / SC-13 | No trust path is silently downgraded: certificate verification against private CAs is preserved in all four exceptions; generated development CA material leaves no disk-backed footprint in the container (memory-only staging, assuming the cluster default of disabled swap or effective tmpfs `noswap` support) |
 | SOC 2 CC7.2 | The exception inventory plus contract tests give auditable evidence of the deployment boundary |
 | OWASP ASVS V15.2.5 (V14/15 deployment boundaries) | No long-running container can persist staged TLS material to disk; staging is tmpfs-only and read-only after assembly |
 
