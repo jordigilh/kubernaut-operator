@@ -62,6 +62,28 @@ var _ = Describe("operator bootstrap chart", func() {
 			"kubernaut-operator-cert-patch"))
 	})
 
+	// UT-TLS-571-005 [AC-6, CM-7; SOC2 CC7.2; ASVS V15.2.5]
+	It("stages development certificate material on a memory-backed, bounded emptyDir", func() {
+		var bootstrap manifest
+		for _, job := range renderChart().ofKind("Job") {
+			if job.name() == "kubernaut-operator-cert-bootstrap" {
+				bootstrap = job
+			}
+		}
+		Expect(bootstrap).NotTo(BeNil(), "development TLS mode must render the certificate bootstrap Job")
+
+		Expect(bootstrap.nestedString("spec", "template", "spec", "volumes", "0", "name")).To(Equal("cert-bootstrap-tmp"))
+		Expect(bootstrap.nestedString("spec", "template", "spec", "volumes", "0", "emptyDir", "medium")).To(Equal("Memory"),
+			"the pre-install bootstrap Job stages generated CA material in a writable /tmp; "+
+				"disk-backed staging is the post-compromise persistence location #571 eliminates (register E-4)")
+		Expect(bootstrap.nestedString("spec", "template", "spec", "volumes", "0", "emptyDir", "sizeLimit")).To(Equal("1Mi"),
+			"staging must stay bounded: dedicated E-4 bound, ample headroom over the ~10KiB payload")
+		Expect(bootstrap.nestedString(
+			"spec", "template", "spec", "containers", "0", "securityContext", "readOnlyRootFilesystem",
+		)).To(Equal("true"),
+			"the bootstrap container must keep its immutable root filesystem; only the memory-backed /tmp is writable")
+	})
+
 	It("does not install operand NetworkPolicies before a Kubernaut CR exists", func() {
 		Expect(renderChart().ofKind("NetworkPolicy")).To(BeEmpty())
 	})

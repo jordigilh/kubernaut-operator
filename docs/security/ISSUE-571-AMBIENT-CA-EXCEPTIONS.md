@@ -14,16 +14,21 @@ Deployments were migrated to the upstream runtime ambient-CA contract
 (`5931441`, `UT-TLS-2545-OP-001/002`). Three rendering paths remain on the
 legacy pattern because their elimination is **blocked on upstream runtime
 changes** — an operator-only workaround would bypass upstream TLS semantics,
-which issue #571 explicitly forbids. This register documents each retained
-exception under the issue's own escape hatch:
+which issue #571 explicitly forbids. Separately, a fourth path, the chart's
+development
+certificate bootstrap hook Job, stages generated CA material in a writable
+`/tmp` by design (development-mode only, never a production operand). This
+register documents each retained exception under the issue's own escape hatch:
 
 > "If an init-only certificate operation remains unavoidable, it must be
 > isolated from the main container, bounded/memory-backed where appropriate,
 > read-only to the main container, and documented as an approved
 > threat-model exception."
 
-Every exception below holds that shape. Contract tests
-(`UT-TLS-571-001..004`, `internal/resources/ambient_ca_2545_test.go`) and the
+Every exception below holds that shape — E-4 differs from E-1/E-2 in that
+no long-running container exists at all. Contract tests
+(`UT-TLS-571-001..004`, `internal/resources/ambient_ca_2545_test.go`),
+`UT-TLS-571-005` on the rendered chart (`test/helm/chart_test.go`), and the
 Console lifecycle integration test enforce it.
 
 ## Exception register
@@ -104,6 +109,57 @@ pending the upstream fix.
 **Unblock condition**: upstream kubernaut#2548 wiring FMC to the runtime
 ambient-CA adapter. On adoption, remove the env var from the Deployment.
 
+### E-4 — Chart development certificate bootstrap Job
+
+**Location**: `charts/kubernaut-operator/templates/certificates/development-bootstrap-job.yaml`
+(`kubernaut-operator-cert-bootstrap`), rendered only when
+`webhook.tls.mode=development` (the chart default for non-production
+installs); the operator's OLM bundle renders no certificate Job at all.
+
+**Why it exists**: development mode bootstraps the webhook serving CA and
+certificate because no cluster CA infrastructure (cert-manager, OpenShift
+service CA, or an administrator-supplied Secret) is in play. The pre-install
+hook Job generates the material with `openssl` in a `mktemp -d /tmp/...`
+workspace, publishes it to the `kubernaut-operator-webhook-cert` Secret, and
+is deleted on completion (`helm.sh/hook-delete-policy`), so no consumer
+container ever mounts the staging directory. Unlike E-1–E-3 this path is not
+upstream-blocked; it is the chart's sanctioned development-only certificate
+provisioning, explicitly classified per #571's boundary rather than silently
+treated as a production-operand exception.
+
+**Exception shape**: the ephemeral hook Job's sole container keeps
+`readOnlyRootFilesystem: true`; its only writable path is the
+`cert-bootstrap-tmp` volume at `/tmp`, which is **memory-backed and
+bounded** (`emptyDir.medium: Memory`, `sizeLimit: 1Mi`) — the shape the
+upstream rendered-bundle gate (kubernaut#2548, PR kubernaut#2721,
+`UT-TLS-2548-009`) requires for init-only `kind: Job` certificate staging.
+The `sizeLimit` is a **tmpfs volume capacity limit**: kubelet passes it to
+the mount as `size=`, so the kernel caps the staging directory at 1Mi.
+Unlike the E-1/E-2 register bound (`ambientCAStagingSizeLimit`, 16Mi, PR
+#689 — sized for merged CA bundles of unknown count), E-4 carries a
+dedicated 1Mi bound: this Job's staged payload is fixed and tiny (~10 KiB
+of RSA-2048 CA and serving material), so 1Mi is ~100x headroom while
+remaining a tighter node-RAM exhaustion guard. It
+bounds the volume only, not total container memory (the Job sets no memory
+limit, so process RAM is not capped: it may consume available node memory,
+with kubelet eviction and OOM handling responding to node pressure rather
+than imposing a bound). The enforced
+anti-persistence contract is `medium: Memory`: it removes disk-backed
+*staging* of the generated material — the container's writable layer and
+node disk are never used as a scratch location (except on
+a swap-enabled node without effective tmpfs `noswap` support, where tmpfs
+pages may be swapped to persistent storage; clusters are expected to run
+with swap disabled, the Kubernetes default). It does not mean the material
+never touches any persistent store by design: the Job publishes `tls.key`
+to the `kubernaut-operator-webhook-cert` Secret, which Kubernetes persists
+in etcd like any Secret — that publication is the Job's purpose and is
+outside this exception's staging scope.
+
+**Unblock condition**: none tracked upstream. Remove this exception when the
+chart stops bootstrapping development certificates (for example if the
+development TLS mode is retired in favor of cert-manager/service-CA
+everywhere).
+
 ## Non-TLS writable storage (classified, not exceptions)
 
 The following writable paths remain by business purpose and are **out of
@@ -121,13 +177,16 @@ scope** for #571 per the issue's own boundary:
 | Control | How this register satisfies it |
 |---|---|
 | FedRAMP AC-6 / CM-7 | Retained writable locations are minimized to memory-backed, init-only, read-only-to-workload staging; every exception is enumerated and test-enforced |
-| FedRAMP SC-8 / SC-13 | No trust path is silently downgraded: certificate verification against private CAs is preserved in all three exceptions |
+| FedRAMP SC-8 / SC-13 | No trust path is silently downgraded: certificate verification against private CAs is preserved in all four exceptions; development CA material is never staged on disk (memory-only staging, assuming the cluster default of disabled swap or effective tmpfs `noswap` support; the published webhook Secret persisting in etcd is the Job's purpose, not a staging path) |
 | SOC 2 CC7.2 | The exception inventory plus contract tests give auditable evidence of the deployment boundary |
 | OWASP ASVS V15.2.5 (V14/15 deployment boundaries) | No long-running container can persist staged TLS material to disk; staging is tmpfs-only and read-only after assembly |
 
 ## Enforcement
 
 - `UT-TLS-571-001..004` — `internal/resources/ambient_ca_2545_test.go`
+- `UT-TLS-571-005` — `test/helm/chart_test.go` (rendered chart: bootstrap
+  Job staging volume is memory-backed, 1Mi-bounded, container root stays
+  read-only)
 - Console lifecycle IT — `internal/controller/kubernaut_lifecycle_test.go`
   (memory-backed combined-ca assertion on the reconciled Deployment)
 - `UT-TLS-2545-OP-001/002` — the 11 migrated Deployments remain on the
