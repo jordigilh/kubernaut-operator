@@ -141,13 +141,19 @@ dedicated 1Mi bound: this Job's staged payload is fixed and tiny (~10 KiB
 of RSA-2048 CA and serving material), so 1Mi is ~100x headroom while
 remaining a tighter node-RAM exhaustion guard. It
 bounds the volume only, not total container memory (the Job sets no memory
-limit, so process RAM is bounded by kubelet eviction). The enforced
-anti-persistence contract is `medium: Memory`: generated TLS material is
-not written to the container's writable layer or node disk, except that on
-a swap-enabled node without effective tmpfs `noswap` support, tmpfs pages
-may be swapped to persistent storage — Kubernetes clusters are expected to
-run with swap disabled (the default and long-standing requirement), which
-closes that residual path.
+limit, so process RAM is not capped: it may consume available node memory,
+with kubelet eviction and OOM handling responding to node pressure rather
+than imposing a bound). The enforced
+anti-persistence contract is `medium: Memory`: it removes disk-backed
+*staging* of the generated material — the container's writable layer and
+node disk are never used as a scratch location (except on
+a swap-enabled node without effective tmpfs `noswap` support, where tmpfs
+pages may be swapped to persistent storage; clusters are expected to run
+with swap disabled, the Kubernetes default). It does not mean the material
+never touches any persistent store by design: the Job publishes `tls.key`
+to the `kubernaut-operator-webhook-cert` Secret, which Kubernetes persists
+in etcd like any Secret — that publication is the Job's purpose and is
+outside this exception's staging scope.
 
 **Unblock condition**: none tracked upstream. Remove this exception when the
 chart stops bootstrapping development certificates (for example if the
@@ -171,7 +177,7 @@ scope** for #571 per the issue's own boundary:
 | Control | How this register satisfies it |
 |---|---|
 | FedRAMP AC-6 / CM-7 | Retained writable locations are minimized to memory-backed, init-only, read-only-to-workload staging; every exception is enumerated and test-enforced |
-| FedRAMP SC-8 / SC-13 | No trust path is silently downgraded: certificate verification against private CAs is preserved in all four exceptions; generated development CA material leaves no disk-backed footprint in the container (memory-only staging, assuming the cluster default of disabled swap or effective tmpfs `noswap` support) |
+| FedRAMP SC-8 / SC-13 | No trust path is silently downgraded: certificate verification against private CAs is preserved in all four exceptions; development CA material is never staged on disk (memory-only staging, assuming the cluster default of disabled swap or effective tmpfs `noswap` support; the published webhook Secret persisting in etcd is the Job's purpose, not a staging path) |
 | SOC 2 CC7.2 | The exception inventory plus contract tests give auditable evidence of the deployment boundary |
 | OWASP ASVS V15.2.5 (V14/15 deployment boundaries) | No long-running container can persist staged TLS material to disk; staging is tmpfs-only and read-only after assembly |
 
