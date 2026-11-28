@@ -110,6 +110,13 @@ spec:
             - name: cert-bootstrap-tmp
               mountPath: /tmp
       volumes:
+        # #571 register E-4 (docs/security/ISSUE-571-AMBIENT-CA-EXCEPTIONS.md):
+        # init-only hook Job staging generated CA material must be memory-backed
+        # and bounded; disk-backed staging is the persistence location #571
+        # eliminates. sizeLimit is advisory (no container memory limit is set);
+        # medium: Memory is the enforced contract.
         - name: cert-bootstrap-tmp
-          emptyDir: {}
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
 {{- end }}
