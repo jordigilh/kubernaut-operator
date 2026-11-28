@@ -134,7 +134,11 @@ bounded** (`emptyDir.medium: Memory`, `sizeLimit: 16Mi`) — the shape the
 upstream rendered-bundle gate (kubernaut#2548, PR kubernaut#2721,
 `UT-TLS-2548-009`) requires for init-only `kind: Job` certificate staging.
 The `sizeLimit` is a **tmpfs volume capacity limit**: kubelet passes it to
-the mount as `size=`, so the kernel caps the staging directory at 16Mi. It
+the mount as `size=`, so the kernel caps the staging directory at 16Mi. The
+16Mi value is the register-inherited bound (`ambientCAStagingSizeLimit`,
+PR #689) — a deliberate single number across all #571 exceptions, not
+payload math (the staged material is ~10 KiB; the ceiling is a node-RAM
+exhaustion guard). It
 bounds the volume only, not total container memory (the Job sets no memory
 limit, so process RAM is bounded by kubelet eviction). The enforced
 anti-persistence contract is `medium: Memory`: generated TLS material is
