@@ -76,8 +76,8 @@ var _ = Describe("operator bootstrap chart", func() {
 		Expect(bootstrap.nestedString("spec", "template", "spec", "volumes", "0", "emptyDir", "medium")).To(Equal("Memory"),
 			"the pre-install bootstrap Job stages generated CA material in a writable /tmp; "+
 				"disk-backed staging is the post-compromise persistence location #571 eliminates (register E-4)")
-		Expect(bootstrap.nestedString("spec", "template", "spec", "volumes", "0", "emptyDir", "sizeLimit")).To(Equal("16Mi"),
-			"staging must stay bounded, matching the E-1/E-2 register bound")
+		Expect(bootstrap.nestedString("spec", "template", "spec", "volumes", "0", "emptyDir", "sizeLimit")).To(Equal("1Mi"),
+			"staging must stay bounded: dedicated E-4 bound, ample headroom over the ~10KiB payload")
 		Expect(bootstrap.nestedString(
 			"spec", "template", "spec", "containers", "0", "securityContext", "readOnlyRootFilesystem",
 		)).To(Equal("true"),

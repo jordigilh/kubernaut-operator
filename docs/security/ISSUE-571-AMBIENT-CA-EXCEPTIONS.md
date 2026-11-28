@@ -130,15 +130,16 @@ treated as a production-operand exception.
 **Exception shape**: the ephemeral hook Job's sole container keeps
 `readOnlyRootFilesystem: true`; its only writable path is the
 `cert-bootstrap-tmp` volume at `/tmp`, which is **memory-backed and
-bounded** (`emptyDir.medium: Memory`, `sizeLimit: 16Mi`) — the shape the
+bounded** (`emptyDir.medium: Memory`, `sizeLimit: 1Mi`) — the shape the
 upstream rendered-bundle gate (kubernaut#2548, PR kubernaut#2721,
 `UT-TLS-2548-009`) requires for init-only `kind: Job` certificate staging.
 The `sizeLimit` is a **tmpfs volume capacity limit**: kubelet passes it to
-the mount as `size=`, so the kernel caps the staging directory at 16Mi. The
-16Mi value is the register-inherited bound (`ambientCAStagingSizeLimit`,
-PR #689) — a deliberate single number across all #571 exceptions, not
-payload math (the staged material is ~10 KiB; the ceiling is a node-RAM
-exhaustion guard). It
+the mount as `size=`, so the kernel caps the staging directory at 1Mi.
+Unlike the E-1/E-2 register bound (`ambientCAStagingSizeLimit`, 16Mi, PR
+#689 — sized for merged CA bundles of unknown count), E-4 carries a
+dedicated 1Mi bound: this Job's staged payload is fixed and tiny (~10 KiB
+of RSA-2048 CA and serving material), so 1Mi is ~100x headroom while
+remaining a tighter node-RAM exhaustion guard. It
 bounds the volume only, not total container memory (the Job sets no memory
 limit, so process RAM is bounded by kubelet eviction). The enforced
 anti-persistence contract is `medium: Memory`: generated TLS material is
@@ -178,7 +179,7 @@ scope** for #571 per the issue's own boundary:
 
 - `UT-TLS-571-001..004` — `internal/resources/ambient_ca_2545_test.go`
 - `UT-TLS-571-005` — `test/helm/chart_test.go` (rendered chart: bootstrap
-  Job staging volume is memory-backed, 16Mi-bounded, container root stays
+  Job staging volume is memory-backed, 1Mi-bounded, container root stays
   read-only)
 - Console lifecycle IT — `internal/controller/kubernaut_lifecycle_test.go`
   (memory-backed combined-ca assertion on the reconciled Deployment)
